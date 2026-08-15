@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>YouTube Music</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <h1>내 플레이리스트</h1>
+
+    <form id="add-form">
+      <input id="name-input" type="text" placeholder="플레이리스트 이름" autocomplete="off" />
+      <input id="url-input" type="text" placeholder="유튜브 재생목록 링크 붙여넣기" autocomplete="off" />
+      <div class="form-buttons">
+        <button type="submit" id="save-btn">저장</button>
+        <button type="button" id="play-now-btn">바로 재생</button>
+      </div>
+      <p id="form-error" class="error" hidden></p>
+    </form>
+
+    <ul id="playlist-list"></ul>
+  </aside>
+
+  <main id="content">
+    <div id="player-wrap">
+      <div id="player"></div>
+      <webview id="fallback-view" src="about:blank"></webview>
+      <div id="player-placeholder">재생목록 링크를 붙여넣거나 저장된 플레이리스트를 선택하세요</div>
+      <button id="fs-exit-btn" title="전체화면 해제 (Esc)">전체화면 해제</button>
+    </div>
+    <div id="controls">
+      <button id="prev-btn" title="이전 곡">이전</button>
+      <button id="next-btn" title="다음 곡">다음</button>
+      <button id="shuffle-btn" title="현재 재생목록 셔플">셔플</button>
+      <span id="now-playing"></span>
+    </div>
+  </main>
+
+  <aside id="queue-panel">
+    <h2>재생 대기열 <span id="queue-count"></span></h2>
+    <ol id="queue-list"></ol>
+  </aside>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
