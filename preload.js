@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('titles', {
 
 contextBridge.exposeInMainWorld('playlist', {
   fetch: (listId) => ipcRenderer.invoke('playlist:fetch', listId),
+  meta: (listId) => ipcRenderer.invoke('playlist:meta', listId),
 });
 
 contextBridge.exposeInMainWorld('winctl', {

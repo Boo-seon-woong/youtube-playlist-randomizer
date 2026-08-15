@@ -125,6 +125,172 @@ body {
   color: #fff;
 }
 
+/* ── 사이드바 폴더 & 드래그 앤 드롭 ── */
+
+#sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#new-folder-btn {
+  border: none;
+  border-radius: 6px;
+  background: #303030;
+  color: #ccc;
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+#new-folder-btn:hover {
+  color: #fff;
+  background: #404040;
+}
+
+#playlist-list svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#playlist-list .pl-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
+
+#playlist-list li.child {
+  margin-left: 18px;
+}
+
+#playlist-list li.playlist-row {
+  cursor: pointer;
+}
+
+#playlist-list li.playlist-row:hover {
+  background: #2a2a2a;
+}
+
+.pl-thumb-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 76px;
+  height: 43px;
+}
+
+.pl-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 5px;
+  background: #000;
+}
+
+.pl-count-badge {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
+#playlist-list li.folder-row {
+  background: #262626;
+}
+
+.pl-caret {
+  display: flex;
+  flex-shrink: 0;
+  transition: transform 0.12s;
+}
+
+.pl-caret svg {
+  width: 12px;
+  height: 12px;
+}
+
+.pl-caret.open {
+  transform: rotate(90deg);
+}
+
+.pl-folder-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: #e8b339;
+}
+
+.pl-count {
+  font-size: 11px;
+  color: #888;
+  flex-shrink: 0;
+}
+
+#playlist-list li.folder-empty {
+  background: none;
+  border: 1px dashed #3a3a3a;
+  color: #777;
+  font-size: 12px;
+  justify-content: center;
+}
+
+#playlist-list li.dragging {
+  opacity: 0.5;
+}
+
+#playlist-list li.drag-over {
+  outline: 1px dashed #ff4444;
+  background: #2c2222;
+}
+
+#playlist-list.drag-over-root {
+  outline: 1px dashed #ff4444;
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.pl-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pl-edit-form input {
+  padding: 6px 8px;
+  border: 1px solid #404040;
+  border-radius: 6px;
+  background: #0f0f0f;
+  color: #f1f1f1;
+  font-size: 12px;
+}
+
+.pl-edit-form input:focus {
+  outline: none;
+  border-color: #ff0000;
+}
+
+.pl-edit-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.pl-edit-buttons button {
+  flex: 1;
+  padding: 5px 0;
+}
+
 #content {
   flex: 1;
   display: flex;

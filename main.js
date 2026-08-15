@@ -186,6 +186,45 @@ async function fetchPlaylistItems(listId) {
   return out.items;
 }
 
+// 헤더의 "동영상 N개" 텍스트에서 총 곡 수 추출. 완전일치로만 매칭해야 한다 —
+// 페이지 전체에는 UI 언어팩의 "동영상 1개..." 같은 가짜 매치가 앞서 존재한다.
+function findVideoCountText(node) {
+  if (!node || typeof node !== 'object') return null;
+  for (const value of Object.values(node)) {
+    if (typeof value === 'string') {
+      const m = value.match(/^동영상\s*([\d,]+)개$/) || value.match(/^([\d,]+)개의\s*동영상$/) || value.match(/^([\d,]+)\s*videos?$/);
+      if (m) return parseInt(m[1].replace(/,/g, ''), 10);
+    } else {
+      const found = findVideoCountText(value);
+      if (found != null) return found;
+    }
+  }
+  return null;
+}
+
+// 사이드바 표시용 경량 메타: 재생목록 첫 페이지만 요청해 첫 곡 ID(썸네일용)와 총 곡 수를 얻는다
+async function fetchPlaylistMeta(listId) {
+  const res = await fetch(`https://www.youtube.com/playlist?list=${listId}&hl=ko`, {
+    headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8' },
+  });
+  if (!res.ok) return null;
+  const html = await res.text();
+  const dataMatch = html.match(/ytInitialData\s*=\s*(\{.+?\})\s*;\s*<\/script>/s);
+  const out = { items: [], continuation: null };
+  let count = null;
+  if (dataMatch) {
+    try {
+      const data = JSON.parse(dataMatch[1]);
+      collectPlaylistNodes(data, out);
+      // 곡 수 텍스트는 헤더(신형 pageHeaderViewModel) 서브트리에서만 찾는다
+      count = findVideoCountText(data.header);
+      if (count == null) count = findVideoCountText(data.sidebar);
+    } catch {}
+  }
+  if (count == null && out.items.length > 0 && !out.continuation) count = out.items.length;
+  return { firstVideoId: out.items.length > 0 ? out.items[0].id : null, count };
+}
+
 function createWindow(port) {
   const win = new BrowserWindow({
     width: 1420,
@@ -213,6 +252,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('playlists:save', (_event, playlists) => savePlaylists(playlists));
   ipcMain.handle('titles:fetch', (_event, ids) => fetchTitles(ids));
   ipcMain.handle('playlist:fetch', (_event, listId) => fetchPlaylistItems(listId));
+  ipcMain.handle('playlist:meta', (_event, listId) => fetchPlaylistMeta(listId));
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.setFullScreen(!!flag);

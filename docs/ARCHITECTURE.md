@@ -4,10 +4,39 @@
 
 | 파일 | 역할 |
 |---|---|
-| `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 곡 제목 조회(oEmbed), 플레이리스트 저장 IPC, 광고 도메인 차단 |
+| `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 재생목록 메타(첫 곡·곡 수) 조회, 곡 제목 조회(oEmbed), 플레이리스트 저장 IPC, 광고 도메인 차단 |
 | `preload.js` | contextBridge — 렌더러에 `store` / `titles` / `playlist` / `winctl` API 노출 |
-| `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드 |
+| `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리 |
 | `index.html`, `styles.css` | 3열 레이아웃 (저장 목록 / 플레이어 / 대기열) |
+
+## 사이드바 폴더 (playlists.json 구조)
+
+저장된 재생목록은 Windows 탐색기처럼 드래그로 폴더에 정리할 수 있다 (중첩은 1단계까지).
+
+```json
+[
+  { "type": "playlist", "name": "이름", "url": "https://…list=PL…", "listId": "PL…" },
+  { "type": "folder", "name": "폴더명", "open": true, "items": [ /* playlist 항목들 */ ] }
+]
+```
+
+- HTML5 드래그 앤 드롭: 재생목록→재생목록 = 그 자리에 새 폴더로 묶기(즉시 이름 입력),
+  재생목록→폴더 = 폴더에 추가, 폴더→폴더 = 병합, 목록 빈 공간 = 루트로 이동.
+- `type` 없는 구버전 항목은 로드 시 `type:"playlist"`로 자동 마이그레이션 (`normalizeItems`).
+- 폴더 삭제 시 안의 재생목록은 루트로 이동한다 (비파괴).
+- 이름/링크는 연필 버튼의 인라인 폼으로 수정하며, 링크 수정 시 `listId`를 다시 추출한다.
+
+### 재생목록 썸네일·곡 수 (`thumb` / `count` 필드)
+
+각 재생목록 행에 첫 영상 썸네일(`i.ytimg.com/vi/<thumb>/mqdefault.jpg`)과 곡 수 배지를
+표시한다. `playlist:meta` IPC(`fetchPlaylistMeta`)가 재생목록 페이지 **첫 페이지만** 요청해
+첫 곡 ID와 총 곡 수를 얻고, 값은 `playlists.json`의 `thumb`/`count`에 캐시된다.
+
+- 없는 항목만 앱 시작·추가 시 백그라운드로 수집하고, 재생 시 전곡 수집 결과로 최신화.
+- 링크 수정으로 `listId`가 바뀌면 `thumb`/`count`를 비워 재수집한다.
+- **곡 수 텍스트("동영상 N개")는 ytInitialData의 header 서브트리에서 문자열 완전일치로만
+  찾는다** (`findVideoCountText`). 페이지 HTML 전체를 정규식으로 긁으면 UI 언어팩의
+  "동영상 1개..." 같은 가짜 매치가 먼저 걸린다 (실제로 겪은 버그).
 
 ## 재생 구조: 자체 대기열
 
@@ -64,6 +93,12 @@ InnerTube `youtubei/v1/browse` continuation을 끝까지 따라가 전곡(ID·�
 점유한 채 남는다. 그래서 모드 전환 시 요소 전체화면을 해제하고 **창 전체화면 +
 사이드바 숨김(body.immersive)** 으로 이어간다. 이후 임베드↔폴백을 오가도 유지되며,
 Esc 또는 우상단 버튼으로 해제한다.
+
+- 폴백→임베드 방향은 `stopFallback()` 안에서 전환한다. 웹뷰가 요소 전체화면을 쥔 채
+  `display:none`으로 숨겨지면 전체화면이 통째로 풀리기 때문에, 숨기기 **전에** 몰입 모드로
+  전환해야 한다.
+- `exitFullscreen()`은 비동기다. 완료를 기다리지 않고 창 전체화면을 걸면 해제 완료 시점에
+  창 상태까지 되돌아가 간헐적으로 전체화면이 풀린다 → `then()`으로 순서를 보장한다.
 
 ## 곡 제목·아티스트
 
