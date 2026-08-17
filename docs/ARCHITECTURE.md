@@ -51,19 +51,28 @@
 - `onError` → 폴백 재생으로 전환 (아래 참고)
 - 셔플 = 배열 Fisher–Yates 셔플, 삭제 = `splice`
 
-## 전곡 수집 (200곡 제한 우회)
+## 전곡 수집 (200곡 제한 우회, 스트리밍 로드)
 
 `getPlaylist()`는 앞 200곡만 반환하므로, 재생목록 웹페이지의 `ytInitialData`를 파싱하고
-InnerTube `youtubei/v1/browse` continuation을 끝까지 따라가 전곡(ID·제목·아티스트)을
-가져온다. API 키 불필요 (페이지에 내장된 공개 키 사용).
+InnerTube `youtubei/v1/browse` continuation을 따라가 전곡(ID·제목·아티스트)을 가져온다.
+API 키 불필요 (페이지에 내장된 공개 키 사용).
 
+**전곡 완료를 기다리지 않는다** — 첫 페이지(~100곡)가 도착하면 그 즉시 대기열을 만들어
+재생/셔플을 시작하고(`playlist:fetchFirst`), 나머지는 continuation을 백그라운드로 반복 호출해
+(`playlist:fetchMore`) 도착하는 대로 대기열에 이어 붙인다. 453곡 기준 클릭→재생이
+약 3초→1.7초로 단축 (재생목록이 길수록 격차 커짐, 100곡당 continuation ~0.5초).
+
+- 셔플 재생 중 뒤늦게 도착한 곡은 **아직 재생하지 않은 구간에 무작위 삽입**된다.
+- 로드 도중 다른 재생목록을 시작하면 `loadToken` 불일치로 이어받기 루프가 중단된다.
+- 곡 수 배지/썸네일 메타는 전곡 확보 후에 갱신·저장한다.
+- 대기열 썸네일은 `loading=lazy`라 원래 비동기 — 로드 속도의 병목은 continuation 대기였다.
 - 2026-08 현재 페이지는 신형 **`lockupViewModel`** 구조를 사용한다
   (`contentId`, `lockupMetadataViewModel.title.content`,
   `metadataRows[0].metadataParts[0].text.content`). 구형 `playlistVideoRenderer`도 병행 지원.
 - continuation 토큰은
   `continuationItemViewModel.continuationCommand.innertubeCommand.continuationCommand.token`처럼
   중첩 위치가 자주 바뀌므로 **심층 탐색으로 찾는다** (경로 하드코딩 금지).
-- 수집 실패 시 iframe `cuePlaylist` → `getPlaylist()` 방식(최대 200곡)으로 자동 폴백.
+- 첫 페이지 수집 실패 시 iframe `cuePlaylist` → `getPlaylist()` 방식(최대 200곡)으로 자동 폴백.
 
 ## 개발 중 확인된 유튜브 제약 (경험적 사실)
 

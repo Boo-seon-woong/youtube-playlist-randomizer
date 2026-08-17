@@ -100,7 +100,8 @@ async function fetchTitles(ids) {
 
 // 재생목록 전체 곡 목록 수집: iframe 플레이어의 getPlaylist()는 200곡까지만 노출하므로
 // 재생목록 페이지의 ytInitialData를 파싱하고 continuation API를 따라가 전곡을 가져온다.
-// 신형 lockupViewModel / 구형 playlistVideoRenderer 구조 모두 지원.
+// 첫 페이지와 continuation을 별도 IPC로 나눠, 렌더러가 첫 ~100곡으로 즉시 재생을 시작하고
+// 나머지는 백그라운드로 스트리밍한다. 신형 lockupViewModel / 구형 playlistVideoRenderer 모두 지원.
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
 function lockupToItem(vm) {
@@ -153,7 +154,9 @@ function collectPlaylistNodes(node, out) {
   for (const value of Object.values(node)) collectPlaylistNodes(value, out);
 }
 
-async function fetchPlaylistItems(listId) {
+// 첫 페이지(~100곡)만 파싱해 즉시 반환 — 렌더러는 이 시점에 바로 재생을 시작하고,
+// 나머지는 cont 정보로 fetchPlaylistMore를 반복 호출해 백그라운드로 이어 받는다.
+async function fetchPlaylistFirst(listId) {
   const res = await fetch(`https://www.youtube.com/playlist?list=${listId}&hl=ko`, {
     headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8' },
   });
@@ -163,27 +166,34 @@ async function fetchPlaylistItems(listId) {
   const verMatch = html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"/);
   const dataMatch = html.match(/ytInitialData\s*=\s*(\{.+?\})\s*;\s*<\/script>/s);
   if (!keyMatch || !dataMatch) throw new Error('playlist page parse failed');
-  const clientVersion = verMatch ? verMatch[1] : '2.20240701.00.00';
 
   const out = { items: [], continuation: null };
   collectPlaylistNodes(JSON.parse(dataMatch[1]), out);
+  return {
+    items: out.items,
+    cont: out.continuation
+      ? { token: out.continuation, key: keyMatch[1], clientVersion: verMatch ? verMatch[1] : '2.20240701.00.00' }
+      : null,
+  };
+}
 
-  let guard = 50; // 무한 루프 방지 (최대 ~5000곡)
-  while (out.continuation && guard-- > 0) {
-    const token = out.continuation;
-    out.continuation = null;
-    const contRes = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${keyMatch[1]}&prettyPrint=false`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-      body: JSON.stringify({
-        context: { client: { clientName: 'WEB', clientVersion, hl: 'ko' } },
-        continuation: token,
-      }),
-    });
-    if (!contRes.ok) break;
-    collectPlaylistNodes(await contRes.json(), out);
-  }
-  return out.items;
+// continuation 한 단계(다음 ~100곡)만 따라간다
+async function fetchPlaylistMore(cont) {
+  const res = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${cont.key}&prettyPrint=false`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
+    body: JSON.stringify({
+      context: { client: { clientName: 'WEB', clientVersion: cont.clientVersion, hl: 'ko' } },
+      continuation: cont.token,
+    }),
+  });
+  if (!res.ok) throw new Error('continuation HTTP ' + res.status);
+  const out = { items: [], continuation: null };
+  collectPlaylistNodes(await res.json(), out);
+  return {
+    items: out.items,
+    cont: out.continuation ? { ...cont, token: out.continuation } : null,
+  };
 }
 
 // 헤더의 "동영상 N개" 텍스트에서 총 곡 수 추출. 완전일치로만 매칭해야 한다 —
@@ -251,7 +261,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('playlists:load', () => loadPlaylists());
   ipcMain.handle('playlists:save', (_event, playlists) => savePlaylists(playlists));
   ipcMain.handle('titles:fetch', (_event, ids) => fetchTitles(ids));
-  ipcMain.handle('playlist:fetch', (_event, listId) => fetchPlaylistItems(listId));
+  ipcMain.handle('playlist:fetchFirst', (_event, listId) => fetchPlaylistFirst(listId));
+  ipcMain.handle('playlist:fetchMore', (_event, cont) => fetchPlaylistMore(cont));
   ipcMain.handle('playlist:meta', (_event, listId) => fetchPlaylistMeta(listId));
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);

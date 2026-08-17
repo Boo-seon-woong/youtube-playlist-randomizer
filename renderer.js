@@ -246,23 +246,58 @@ async function playPlaylist(listId, shuffle) {
   renderList();
   queueCount.textContent = '(불러오는 중…)';
 
-  // 전곡 수집(200곡 제한 없음) + 제목/아티스트 동시 확보
-  let items = null;
+  // 첫 페이지(~100곡, 제목/아티스트 포함)만 받는 즉시 재생을 시작하고,
+  // 나머지는 continuation을 백그라운드로 따라가며 대기열에 이어 붙인다 (전곡 완료를 기다리지 않음)
+  let first = null;
   try {
-    items = await window.playlist.fetch(listId);
+    first = await window.playlist.fetchFirst(listId);
   } catch {}
   if (token !== loadToken) return;
 
-  if (items && items.length > 0) {
-    for (const it of items) {
+  if (first && first.items.length > 0) {
+    for (const it of first.items) {
       if (it.title) titleCache.set(it.id, { title: it.title, author: it.author || '' });
     }
-    // 전곡 수집 결과로 사이드바 썸네일/곡 수 최신화
+    const firstVideoId = first.items[0].id;
+    queue = first.items.map((it) => it.id);
+    if (shuffle) shuffleArray(queue);
+    queueIndex = 0;
+    renderQueue();
+    playCurrent();
+
+    // 백그라운드 이어받기: 도착하는 대로 추가. 셔플 중이면 아직 안 들은 구간에 무작위 삽입.
+    let total = first.items.length;
+    let cont = first.cont;
+    let guard = 50; // 무한 루프 방지 (최대 ~5000곡)
+    while (cont && guard-- > 0) {
+      queueCount.textContent = `(${total}곡 불러오는 중…)`;
+      let more = null;
+      try {
+        more = await window.playlist.fetchMore(cont);
+      } catch {}
+      if (token !== loadToken) return; // 다른 재생목록이 시작됨 → 이어받기 중단
+      if (!more) break;
+      for (const it of more.items) {
+        if (it.title) titleCache.set(it.id, { title: it.title, author: it.author || '' });
+        if (shuffle) {
+          const pos = queueIndex + 1 + Math.floor(Math.random() * (queue.length - queueIndex));
+          queue.splice(pos, 0, it.id);
+        } else {
+          queue.push(it.id);
+        }
+      }
+      total += more.items.length;
+      renderQueue();
+      cont = more.cont;
+    }
+    if (token !== loadToken) return;
+
+    // 전곡 확보 후 사이드바 썸네일/곡 수 최신화
     let metaChanged = false;
     for (const p of allPlaylistRefs()) {
-      if (p.listId === listId && (p.thumb !== items[0].id || p.count !== items.length)) {
-        p.thumb = items[0].id;
-        p.count = items.length;
+      if (p.listId === listId && (p.thumb !== firstVideoId || p.count !== total)) {
+        p.thumb = firstVideoId;
+        p.count = total;
         metaChanged = true;
       }
     }
@@ -270,11 +305,6 @@ async function playPlaylist(listId, shuffle) {
       window.store.save(playlists);
       renderList();
     }
-    queue = items.map((it) => it.id);
-    if (shuffle) shuffleArray(queue);
-    queueIndex = 0;
-    renderQueue();
-    playCurrent();
   } else {
     // 수집 실패 시 예비 경로: iframe 재생목록에서 ID 수집 (최대 200곡)
     player.cuePlaylist({ list: listId });

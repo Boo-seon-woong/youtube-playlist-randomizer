@@ -10,7 +10,8 @@ contextBridge.exposeInMainWorld('titles', {
 });
 
 contextBridge.exposeInMainWorld('playlist', {
-  fetch: (listId) => ipcRenderer.invoke('playlist:fetch', listId),
+  fetchFirst: (listId) => ipcRenderer.invoke('playlist:fetchFirst', listId),
+  fetchMore: (cont) => ipcRenderer.invoke('playlist:fetchMore', cont),
   meta: (listId) => ipcRenderer.invoke('playlist:meta', listId),
 });
 
