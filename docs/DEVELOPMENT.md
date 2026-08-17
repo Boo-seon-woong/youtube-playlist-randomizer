@@ -35,4 +35,16 @@ rcedit-x64.exe "...\YouTube Music Player.exe" --set-icon icon.ico
 - 아이콘 교체 후 탐색기·검색에 옛 아이콘이 보이면 Windows 아이콘 캐시 때문입니다.
   앱을 새 파일로 재배포하면 다시 인덱싱됩니다.
 
+## GitHub Release 배포 (일반 사용자용 다운로드)
+
+일반 사용자는 저장소를 클론하지 않고 Releases의 ZIP만 받도록 안내합니다 (README 최상단).
+
+1. 위 절차로 패키징 + devDependencies 제거 + exe 아이콘 적용.
+2. 패키징 폴더를 `YouTube Music Player/` 이름으로 zip:
+   `zip -r9 YouTube-Music-Player-windows-x64.zip "YouTube Music Player"`
+3. GitHub Release(태그 `vX.Y.Z`)를 만들고 ZIP을 자산으로 업로드.
+   - **자산 파일명은 버전 없이 `YouTube-Music-Player-windows-x64.zip`으로 고정**합니다 —
+     README의 원클릭 링크가 `releases/latest/download/<이 파일명>`을 가리키므로,
+     이름을 유지해야 새 버전을 올릴 때마다 링크가 자동으로 최신을 가리킵니다.
+
 동작 원리와 유튜브 관련 기술 제약은 [ARCHITECTURE.md](ARCHITECTURE.md)를 참고하세요.

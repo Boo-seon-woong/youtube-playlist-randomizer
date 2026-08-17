@@ -1,8 +1,19 @@
 # YouTube Music Player
 
-유튜브 재생목록 링크를 붙여넣어 음악과 영상을 감상하는 데스크톱 플레이어입니다.
+유튜브 재생목록 링크를 붙여넣어 음악과 영상을 감상하는 **무설치 Windows 데스크톱 플레이어**입니다.
 유튜브 로그인이나 API 키 없이 동작하며, 미디어 파일을 내려받지 않고
 재생목록 **링크만** 로컬에 저장·관리합니다.
+
+## 📥 다운로드 (Windows)
+
+### **[⬇ 최신 버전 내려받기 (ZIP)](https://github.com/Boo-seon-woong/youtube-playlist-randomizer/releases/latest/download/YouTube-Music-Player-windows-x64.zip)**
+
+1. 내려받은 ZIP의 압축을 풉니다. **설치 과정이 없습니다** — 폴더째 아무 데나 두면 됩니다.
+2. 폴더 안의 `YouTube Music Player.exe`를 실행합니다.
+3. 처음 실행할 때 Windows SmartScreen 파란 경고가 뜨면 **추가 정보 → 실행**을 누르세요.
+   (서명되지 않은 앱이라 표시되는 안내로, 앱은 유튜브 페이지 열람 외에 아무것도 내려받지 않습니다.)
+
+전체 버전 목록은 [Releases](https://github.com/Boo-seon-woong/youtube-playlist-randomizer/releases) 페이지에 있습니다.
 
 ![스크린샷](docs/screenshot.png)
 
@@ -20,10 +31,6 @@
 - **광고 처리** — 광고 도메인 차단 + 직접 재생 모드의 영상 광고 자동 스킵
 - **몰입 모드** — 재생 바의 **전체화면** 버튼 또는 **F 키**로 켜고 끄는 앱 자체 전체화면. 일반 재생·직접 재생 구분 없이 화면을 꽉 채우고 곡 전환 시에도 끊기지 않으며, 마우스를 멈추면 해제 버튼이 자동으로 숨겨짐
 - **자동 진행** — 곡이 끝나면 다음 곡, 마지막 곡 이후 처음부터 반복. 재생 불가 곡(삭제/비공개)은 표시 후 자동 스킵
-
-## 실행 방법
-
-Windows: `YouTube Music Player.exe`를 실행하세요. 설치 과정 없이 폴더째 어디에 두어도 동작합니다.
 
 ## 사용법
 
@@ -47,6 +54,8 @@ Windows: `YouTube Music Player.exe`를 실행하세요. 설치 과정 없이 폴
 - 저장한 플레이리스트는 `%APPDATA%\YouTube Music Player\playlists.json`에 보관됩니다. 앱 폴더를 지워도 유지됩니다.
 
 ## 개발자 문서
+
+일반 사용자는 위의 다운로드만으로 충분합니다. 소스에서 직접 실행하거나 빌드하려면:
 
 - [빌드 및 패키징](docs/DEVELOPMENT.md)
 - [아키텍처 및 기술 노트](docs/ARCHITECTURE.md)
