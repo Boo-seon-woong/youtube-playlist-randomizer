@@ -54,7 +54,8 @@ function shuffleArray(array) {
 
 window.onYouTubeIframeAPIReady = () => {
   player = new YT.Player('player', {
-    playerVars: { rel: 0 },
+    // fs=0: 유튜브 자체 전체화면 버튼 제거 — 전체화면 진입은 앱의 몰입 모드로 일원화
+    playerVars: { rel: 0, fs: 0 },
     events: {
       onReady: () => {
         playerReady = true;
@@ -77,8 +78,11 @@ window.onYouTubeIframeAPIReady = () => {
   });
 };
 
-// ── 몰입 모드: 전체화면 시청 중 임베드↔폴백 전환이 일어나면
-// 요소 전체화면(전환 시 화면을 점유한 채 남음) 대신 창 전체화면 + 사이드바 숨김으로 이어간다 ──
+// ── 몰입 모드: 앱이 직접 관리하는 전체화면 (창 전체화면 + 사이드바 숨김) ──
+// 유튜브 자체(요소) 전체화면은 소유자가 iframe/webview라 임베드↔폴백 전환 때 풀리기 쉽다.
+// 그래서 임베드는 fs=0으로 버튼을 없애고 폴백은 CSS로 버튼을 숨겨, 전체화면 진입을
+// 컨트롤 바의 앱 자체 버튼(몰입 모드)으로 일원화한다. 그 외 경로(워치페이지 단축키 등)로
+// 요소 전체화면이 되더라도 아래 fullscreenchange 훅이 즉시 몰입 모드로 흡수한다.
 
 function enterImmersive() {
   document.body.classList.add('immersive');
@@ -90,10 +94,10 @@ function exitImmersive() {
   window.winctl.setFullScreen(false);
 }
 
-// 요소 전체화면(iframe/webview 소유)을 해제하고 몰입 모드(창 전체화면)로 이어간다.
+// 요소 전체화면(iframe/webview 소유)을 해제하고 몰입 모드(창 전체화면)로 흡수한다.
 // exitFullscreen 완료 후에 창 전체화면을 걸어야 한다 — 동시에 던지면 해제 완료 시점에
 // 창 전체화면까지 되돌아가 간헐적으로 전체화면이 풀린다.
-function handleModeSwitchFullscreen() {
+function absorbElementFullscreen() {
   if (!document.fullscreenElement) return;
   const keep = () => {
     if (!document.body.classList.contains('immersive')) enterImmersive();
@@ -102,6 +106,11 @@ function handleModeSwitchFullscreen() {
   document.exitFullscreen().then(keep, keep);
 }
 
+// 어떤 경로로든 요소 전체화면이 시작되면 즉시 몰입 모드로 전환
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement) absorbElementFullscreen();
+});
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.body.classList.contains('immersive') && !document.fullscreenElement) {
     exitImmersive();
@@ -109,11 +118,12 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.getElementById('fs-exit-btn').addEventListener('click', exitImmersive);
+document.getElementById('fs-btn').addEventListener('click', enterImmersive);
 
 // ── 폴백 재생: 임베드가 차단된 곡을 앱 내장 브라우저 뷰(유튜브 워치페이지)로 재생 ──
 
 function startFallback(id) {
-  handleModeSwitchFullscreen();
+  absorbElementFullscreen();
   fallbackActive = true;
   fallbackStall = 0;
   clearTimeout(watchdogTimer);
@@ -132,7 +142,7 @@ function stopFallback() {
   if (!fallbackActive) return;
   // 웹뷰가 요소 전체화면을 쥔 채 숨겨지면(display:none) 전체화면이 통째로 풀린다
   // → 숨기기 전에 몰입 모드로 전환해 전체화면을 이어간다 (폴백→임베드 전환 시 풀림 방지)
-  handleModeSwitchFullscreen();
+  absorbElementFullscreen();
   fallbackActive = false;
   clearInterval(fallbackPollTimer);
   fallbackView.classList.remove('active');
@@ -173,35 +183,43 @@ fallbackView.addEventListener('dom-ready', () => {
     #masthead-container, #secondary, #below, ytd-comments, tp-yt-app-drawer { display: none !important; }
     #player-ads, #masthead-ad, ytd-ad-slot-renderer, .ytp-ad-overlay-container,
     ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
+    .ytp-fullscreen-button { display: none !important; } /* 전체화면은 앱 버튼(몰입 모드)으로만 */
+    .ad-showing .html5-main-video { visibility: hidden !important; } /* 광고 영상은 스킵될 때까지 화면에서 숨김 */
     ytd-app { background: #0f0f0f !important; }
     ytd-watch-flexy #columns, ytd-watch-flexy #primary { padding: 0 !important; margin: 0 !important; max-width: 100% !important; }
     ytd-watch-flexy #player { max-height: 100vh; }
     html, body { overflow: hidden !important; }
   `).catch(() => {});
-  // 영상 광고: 감지 즉시 무음 + 끝으로 점프, 스킵 버튼 자동 클릭, 프리미엄 팝업/일시정지 확인창 자동 처리
+  // 영상 광고: 감지 즉시 무음 + 16배속 + 끝으로 점프, 스킵 버튼 자동 클릭,
+  // 프리미엄 팝업/일시정지 확인창 자동 처리. 100ms 주기로 돌아 광고 노출 시간을 최소화한다.
   fallbackView.executeJavaScript(`
     if (!window.__adSkipInstalled) {
       window.__adSkipInstalled = true;
-      window.__adMuted = false;
+      window.__adActive = false;
       setInterval(() => {
         const video = document.querySelector('video');
         const adShowing = !!document.querySelector('.ad-showing');
         if (adShowing && video) {
-          if (!video.muted) { video.muted = true; window.__adMuted = true; }
+          window.__adActive = true;
+          if (!video.muted) video.muted = true;
+          // duration을 모르는 광고(스트리밍형)도 배속으로 빨리 소진 — 스킵 카운트다운도 같이 줄어든다
+          try { if (video.playbackRate !== 16) video.playbackRate = 16; } catch {}
           if (isFinite(video.duration) && video.duration > 0) video.currentTime = video.duration;
-        } else if (window.__adMuted && video) {
+        } else if (window.__adActive && video) {
           video.muted = false;
-          window.__adMuted = false;
+          try { video.playbackRate = 1; } catch {}
+          window.__adActive = false;
         }
-        for (const sel of ['.ytp-skip-ad-button', '.ytp-ad-skip-button', '.ytp-ad-skip-button-modern']) {
-          const btn = document.querySelector(sel);
-          if (btn) btn.click();
-        }
+        const skips = document.querySelectorAll(
+          '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, ' +
+          '.ytp-ad-skip-button-slot button, .ytp-ad-skip-button-container button'
+        );
+        for (const btn of skips) btn.click();
         const dismiss = document.querySelector('ytd-mealbar-promo-renderer #dismiss-button button, yt-mealbar-promo-renderer #dismiss-button button');
         if (dismiss) dismiss.click();
         const cont = document.querySelector('yt-confirm-dialog-renderer #confirm-button button');
         if (cont) cont.click();
-      }, 300);
+      }, 100);
     }
     0;
   `).catch(() => {});
@@ -468,19 +486,23 @@ async function fetchMissingTitles() {
 }
 
 // ── 사이드바: 폴더 관리 (Windows 탐색기 스타일 드래그 앤 드롭) ──
-// playlists 항목: {type:'playlist', name, url, listId} 또는 {type:'folder', name, open, items:[재생목록]}
-// 폴더 중첩은 1단계까지만. 구버전 데이터({name,url,listId})는 로드 시 type을 붙여 마이그레이션.
+// playlists 항목: {type:'playlist', name, url, listId} 또는 {type:'folder', name, open, items:[...]}
+// 폴더 안에 폴더를 넣을 수 있다(중첩 깊이 제한 없음). 구버전 데이터({name,url,listId})는
+// 로드 시 type을 붙여 마이그레이션.
 
 function normalizeItems(raw) {
-  return (raw || []).map((it) => (it.type ? it : { type: 'playlist', ...it }));
+  return (raw || []).map((it) => {
+    if (it.type === 'folder') return { ...it, items: normalizeItems(it.items) };
+    return it.type ? it : { type: 'playlist', ...it };
+  });
 }
 
-function findLocation(item) {
-  for (let i = 0; i < playlists.length; i++) {
-    if (playlists[i] === item) return { arr: playlists, index: i, folder: null };
-    if (playlists[i].type === 'folder') {
-      const j = playlists[i].items.indexOf(item);
-      if (j !== -1) return { arr: playlists[i].items, index: j, folder: playlists[i] };
+function findLocation(item, arr = playlists, folder = null) {
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] === item) return { arr, index: i, folder };
+    if (arr[i].type === 'folder') {
+      const loc = findLocation(item, arr[i].items, arr[i]);
+      if (loc) return loc;
     }
   }
   return null;
@@ -496,10 +518,10 @@ async function persistAndRender() {
   renderList();
 }
 
-function allPlaylistRefs() {
+function allPlaylistRefs(arr = playlists) {
   const refs = [];
-  for (const item of playlists) {
-    if (item.type === 'folder') refs.push(...item.items);
+  for (const item of arr) {
+    if (item.type === 'folder') refs.push(...allPlaylistRefs(item.items));
     else refs.push(item);
   }
   return refs;
@@ -535,11 +557,21 @@ async function fetchMissingMeta() {
   }
 }
 
+// folder 안(자손 포함)에 item이 들어 있는지 — 폴더를 자기 자신의 하위로 넣는 순환 방지용
+function folderContains(folder, item) {
+  for (const it of folder.items) {
+    if (it === item) return true;
+    if (it.type === 'folder' && folderContains(it, item)) return true;
+  }
+  return false;
+}
+
 function canDrop(source, target) {
   if (!source) return false;
   if (target === null) return true; // 목록 빈 공간 → 루트(폴더 밖)로 이동
   if (source === target) return false;
-  if (target.type === 'folder') return true; // 재생목록 추가 또는 폴더 병합
+  if (source.type === 'folder' && folderContains(source, target)) return false; // 자기 하위로 이동 불가
+  if (target.type === 'folder') return true; // 재생목록 추가 또는 폴더 중첩
   return source.type !== 'folder'; // 폴더를 재생목록 위에 놓는 것은 불가
 }
 
@@ -550,8 +582,7 @@ function performDrop(source, target) {
     playlists.push(source);
   } else if (target.type === 'folder') {
     removeItem(source);
-    if (source.type === 'folder') target.items.push(...source.items); // 폴더 병합
-    else target.items.push(source);
+    target.items.push(source); // 재생목록 추가 또는 폴더 중첩(폴더 안 폴더)
     target.open = true;
   } else {
     const targetLoc = findLocation(target);
@@ -694,10 +725,10 @@ function buildEditForm(item) {
   return form;
 }
 
-function buildPlaylistRow(pl, isChild) {
+function buildPlaylistRow(pl, depth) {
   const li = document.createElement('li');
   li.classList.add('playlist-row');
-  if (isChild) li.classList.add('child');
+  if (depth) li.style.marginLeft = depth * 18 + 'px';
   if (pl.listId === activeListId) li.classList.add('active');
   if (editingItem === pl) {
     li.appendChild(buildEditForm(pl));
@@ -749,9 +780,10 @@ function buildPlaylistRow(pl, isChild) {
   return li;
 }
 
-function buildFolderRow(folder) {
+function buildFolderRow(folder, depth) {
   const li = document.createElement('li');
   li.classList.add('folder-row');
+  if (depth) li.style.marginLeft = depth * 18 + 'px';
   if (editingItem === folder) {
     li.appendChild(buildEditForm(folder));
     return li;
@@ -779,15 +811,15 @@ function buildFolderRow(folder) {
     editingItem = folder;
     renderList();
   });
-  const deleteBtn = iconButton(TRASH_SVG, '폴더 삭제 (안의 재생목록은 밖으로 이동)', () => {
-    removeItem(folder);
-    playlists.push(...folder.items);
+  const deleteBtn = iconButton(TRASH_SVG, '폴더 삭제 (안의 항목은 한 단계 밖으로 이동)', () => {
+    const loc = findLocation(folder);
+    loc.arr.splice(loc.index, 1, ...folder.items); // 폴더 자리를 안의 항목들로 대체
     persistAndRender();
   });
 
   li.append(caret, icon, name, count, editBtn, deleteBtn);
   li.style.cursor = 'pointer';
-  li.title = '클릭하여 접기/펼치기 · 재생목록을 여기로 드래그하면 폴더에 추가';
+  li.title = '클릭하여 접기/펼치기 · 재생목록이나 폴더를 여기로 드래그하면 폴더 안에 들어갑니다';
   li.onclick = () => {
     folder.open = !folder.open;
     persistAndRender();
@@ -795,9 +827,10 @@ function buildFolderRow(folder) {
   return li;
 }
 
-function buildEmptyFolderHint(folder) {
+function buildEmptyFolderHint(folder, depth) {
   const li = document.createElement('li');
-  li.className = 'child folder-empty';
+  li.className = 'folder-empty';
+  li.style.marginLeft = depth * 18 + 'px';
   li.textContent = '비어 있음 — 재생목록을 여기로 드래그';
   makeDropTarget(li, folder);
   return li;
@@ -805,17 +838,20 @@ function buildEmptyFolderHint(folder) {
 
 function renderList() {
   listEl.innerHTML = '';
-  for (const item of playlists) {
-    if (item.type === 'folder') {
-      listEl.appendChild(buildFolderRow(item));
-      if (item.open) {
-        if (item.items.length === 0) listEl.appendChild(buildEmptyFolderHint(item));
-        for (const child of item.items) listEl.appendChild(buildPlaylistRow(child, true));
+  const renderInto = (items, depth) => {
+    for (const item of items) {
+      if (item.type === 'folder') {
+        listEl.appendChild(buildFolderRow(item, depth));
+        if (item.open) {
+          if (item.items.length === 0) listEl.appendChild(buildEmptyFolderHint(item, depth + 1));
+          else renderInto(item.items, depth + 1);
+        }
+      } else {
+        listEl.appendChild(buildPlaylistRow(item, depth));
       }
-    } else {
-      listEl.appendChild(buildPlaylistRow(item, false));
     }
-  }
+  };
+  renderInto(playlists, 0);
   // 수정 폼이 열렸으면 이름 입력창에 바로 포커스
   const focusIn = listEl.querySelector('.pl-edit-form input');
   if (focusIn) {

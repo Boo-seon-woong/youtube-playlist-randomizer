@@ -166,9 +166,7 @@ body {
   padding: 4px;
 }
 
-#playlist-list li.child {
-  margin-left: 18px;
-}
+/* 폴더 안 항목의 들여쓰기는 renderer.js가 깊이에 따라 인라인 margin-left로 지정 */
 
 #playlist-list li.playlist-row {
   cursor: pointer;
