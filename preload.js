@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld('playlist', {
 
 contextBridge.exposeInMainWorld('winctl', {
   setFullScreen: (flag) => ipcRenderer.send('window:set-fullscreen', flag),
+  cursor: () => ipcRenderer.invoke('window:cursor'),
+  onFsKey: (callback) => ipcRenderer.on('window:fs-key', () => callback()),
 });

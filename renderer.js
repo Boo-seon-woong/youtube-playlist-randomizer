@@ -84,14 +84,53 @@ window.onYouTubeIframeAPIReady = () => {
 // 컨트롤 바의 앱 자체 버튼(몰입 모드)으로 일원화한다. 그 외 경로(워치페이지 단축키 등)로
 // 요소 전체화면이 되더라도 아래 fullscreenchange 훅이 즉시 몰입 모드로 흡수한다.
 
+const fsExitBtn = document.getElementById('fs-exit-btn');
+
 function enterImmersive() {
   document.body.classList.add('immersive');
   window.winctl.setFullScreen(true);
+  startCursorWatch();
 }
 
 function exitImmersive() {
   document.body.classList.remove('immersive');
   window.winctl.setFullScreen(false);
+  stopCursorWatch();
+}
+
+function toggleImmersive() {
+  if (document.body.classList.contains('immersive')) exitImmersive();
+  else enterImmersive();
+}
+
+// 몰입 모드에서 마우스가 2.5초간 멈추면 해제 버튼을 투명하게. 마우스가 iframe/webview 위에
+// 있으면 DOM mousemove가 오지 않으므로, 커서 화면 좌표를 IPC로 폴링해 움직임을 감지한다.
+let cursorWatchTimer = null;
+let lastCursor = null;
+let lastCursorMove = 0;
+
+function startCursorWatch() {
+  lastCursor = null;
+  lastCursorMove = Date.now();
+  fsExitBtn.classList.remove('idle');
+  clearInterval(cursorWatchTimer);
+  cursorWatchTimer = setInterval(async () => {
+    let pt = null;
+    try { pt = await window.winctl.cursor(); } catch {}
+    if (!pt) return;
+    if (!lastCursor || pt.x !== lastCursor.x || pt.y !== lastCursor.y) {
+      lastCursor = pt;
+      lastCursorMove = Date.now();
+      fsExitBtn.classList.remove('idle');
+    } else if (Date.now() - lastCursorMove > 2500) {
+      fsExitBtn.classList.add('idle');
+    }
+  }, 500);
+}
+
+function stopCursorWatch() {
+  clearInterval(cursorWatchTimer);
+  fsExitBtn.classList.remove('idle');
 }
 
 // 요소 전체화면(iframe/webview 소유)을 해제하고 몰입 모드(창 전체화면)로 흡수한다.
@@ -114,11 +153,15 @@ document.addEventListener('fullscreenchange', () => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && document.body.classList.contains('immersive') && !document.fullscreenElement) {
     exitImmersive();
+  } else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT') {
+    toggleImmersive(); // f: 전체화면 토글 (입력창 타이핑 중에는 무시)
   }
 });
 
-document.getElementById('fs-exit-btn').addEventListener('click', exitImmersive);
-document.getElementById('fs-btn').addEventListener('click', enterImmersive);
+fsExitBtn.addEventListener('click', exitImmersive);
+document.getElementById('fs-btn').addEventListener('click', toggleImmersive);
+// 직접 재생(webview) 화면에서 누른 f — main이 before-input-event로 가로채 전달
+window.winctl.onFsKey(() => toggleImmersive());
 
 // ── 폴백 재생: 임베드가 차단된 곡을 앱 내장 브라우저 뷰(유튜브 워치페이지)로 재생 ──
 
@@ -185,6 +228,10 @@ fallbackView.addEventListener('dom-ready', () => {
     ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
     .ytp-fullscreen-button { display: none !important; } /* 전체화면은 앱 버튼(몰입 모드)으로만 */
     .ad-showing .html5-main-video { visibility: hidden !important; } /* 광고 영상은 스킵될 때까지 화면에서 숨김 */
+    /* 플레이어를 웹뷰 뷰포트 전체에 고정 — 페이지 배치 크기 때문에 몰입(전체화면) 시
+       화면을 꽉 채우지 못하는 문제 해결. 크기 재계산은 주입 스크립트의 resize 디스패치가 유도 */
+    #movie_player { position: fixed !important; top: 0 !important; left: 0 !important;
+      width: 100vw !important; height: 100vh !important; z-index: 999; background: #000 !important; }
     ytd-app { background: #0f0f0f !important; }
     ytd-watch-flexy #columns, ytd-watch-flexy #primary { padding: 0 !important; margin: 0 !important; max-width: 100% !important; }
     ytd-watch-flexy #player { max-height: 100vh; }
@@ -193,6 +240,9 @@ fallbackView.addEventListener('dom-ready', () => {
   // 영상 광고: 감지 즉시 무음 + 16배속 + 끝으로 점프, 스킵 버튼 자동 클릭,
   // 프리미엄 팝업/일시정지 확인창 자동 처리. 100ms 주기로 돌아 광고 노출 시간을 최소화한다.
   fallbackView.executeJavaScript(`
+    // 고정 배치된 플레이어에 맞춰 유튜브가 영상/컨트롤 크기를 다시 계산하도록 유도
+    window.dispatchEvent(new Event('resize'));
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 1500);
     if (!window.__adSkipInstalled) {
       window.__adSkipInstalled = true;
       window.__adActive = false;

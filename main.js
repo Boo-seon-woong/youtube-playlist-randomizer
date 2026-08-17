@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -267,6 +267,21 @@ app.whenReady().then(async () => {
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.setFullScreen(!!flag);
+  });
+  // 몰입 모드 해제 버튼 페이드용: 커서가 iframe/webview 위에 있어도 움직임을 알 수 있게 좌표 제공
+  ipcMain.handle('window:cursor', () => screen.getCursorScreenPoint());
+
+  // 직접 재생(webview)에서 누른 f 키를 가로채 앱 전체화면 토글로 전달
+  // (preventDefault로 유튜브 자체 전체화면 단축키와의 충돌을 차단)
+  app.on('web-contents-created', (_event, wc) => {
+    if (wc.getType() !== 'webview') return;
+    wc.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && input.key.toLowerCase() === 'f'
+          && !input.control && !input.alt && !input.meta && !input.shift) {
+        event.preventDefault();
+        if (wc.hostWebContents) wc.hostWebContents.send('window:fs-key');
+      }
+    });
   });
 
   createWindow(port);

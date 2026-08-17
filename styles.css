@@ -467,6 +467,12 @@ body.immersive #fs-exit-btn {
   display: block;
 }
 
+/* 몰입 모드에서 마우스가 멈추면 해제 버튼을 감춘다 (renderer가 커서 폴링으로 .idle 토글) */
+body.immersive #fs-exit-btn.idle {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .q-idx {
   min-width: 26px;
   flex-shrink: 0;
