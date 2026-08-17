@@ -18,6 +18,7 @@ const unplayableIds = new Set(); // 직접 재생조차 불가(삭제/비공개 
 let watchdogTimer = null;
 let fallbackActive = false;
 let fallbackPollTimer = null;
+let skipPollTimer = null;
 let fallbackStall = 0;
 
 const nameInput = document.getElementById('name-input');
@@ -179,6 +180,8 @@ function startFallback(id) {
   nowPlaying.textContent = '♪ ' + ((info && info.title) || id) + ' (직접 재생)';
   clearInterval(fallbackPollTimer);
   fallbackPollTimer = setInterval(() => pollFallback(id), 1000);
+  clearInterval(skipPollTimer);
+  skipPollTimer = setInterval(pollSkipClick, 300);
 }
 
 function stopFallback() {
@@ -188,8 +191,31 @@ function stopFallback() {
   absorbElementFullscreen();
   fallbackActive = false;
   clearInterval(fallbackPollTimer);
+  clearInterval(skipPollTimer);
   fallbackView.classList.remove('active');
   fallbackView.src = 'about:blank';
+}
+
+// 광고 스킵 버튼 네이티브 클릭: 주입 스크립트의 click()이 신뢰되지 않은 이벤트라 무시되는
+// 경우를 대비해, 주입 스크립트가 남긴 버튼 좌표(__skipRect)를 소비해 main이 실제 마우스
+// 입력을 보낸다. 클릭 직전 elementFromPoint로 그 자리가 여전히 스킵 버튼인지 재검증해
+// 좌표가 낡았을 때의 오클릭(영상 일시정지 등)을 방지한다.
+async function pollSkipClick() {
+  if (!fallbackActive) return;
+  let rect = null;
+  try {
+    rect = await fallbackView.executeJavaScript(`(() => {
+      const r = window.__skipRect;
+      window.__skipRect = null;
+      if (!r) return null;
+      const el = document.elementFromPoint(r.x, r.y);
+      const btn = el && el.closest('button, [role="button"]');
+      if (!btn) return null;
+      const label = (btn.textContent || '') + (btn.getAttribute('aria-label') || '');
+      return (label.includes('건너뛰기') || /skip/i.test(label)) ? r : null;
+    })()`);
+  } catch {}
+  if (rect) window.fallbackctl.click(rect.x, rect.y);
 }
 
 // 종료/이탈 감지: 영상이 끝났거나 유튜브 자동재생으로 다른 영상에 넘어가면 다음 곡으로
@@ -260,11 +286,26 @@ fallbackView.addEventListener('dom-ready', () => {
           try { video.playbackRate = 1; } catch {}
           window.__adActive = false;
         }
-        const skips = document.querySelectorAll(
+        // 스킵 버튼: 클래스는 자주 바뀌므로 텍스트/aria-label('건너뛰기'/'Skip')로도 찾는다.
+        // 전면 스폰서 카드(인터스티셜)는 영상이 없어 배속/점프가 안 통하므로 버튼 클릭이 유일한 길.
+        // 페이지 내 click()은 유튜브가 신뢰되지 않은 이벤트로 무시할 수 있어, 좌표를
+        // __skipRect에 남겨 호스트가 네이티브 입력(sendInputEvent)으로도 클릭한다.
+        const cands = new Set(document.querySelectorAll(
           '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, ' +
           '.ytp-ad-skip-button-slot button, .ytp-ad-skip-button-container button'
-        );
-        for (const btn of skips) btn.click();
+        ));
+        for (const b of document.querySelectorAll('#movie_player button, #movie_player [role="button"]')) {
+          const label = (b.textContent || '') + (b.getAttribute('aria-label') || '');
+          if (label.includes('건너뛰기') || /skip ?ads?/i.test(label) || /^\\s*skip\\s*$/i.test(label)) cands.add(b);
+        }
+        window.__skipRect = null;
+        for (const btn of cands) {
+          const r = btn.getBoundingClientRect();
+          if (!window.__skipRect && r.width > 0 && r.height > 0) {
+            window.__skipRect = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+          }
+          btn.click();
+        }
         const dismiss = document.querySelector('ytd-mealbar-promo-renderer #dismiss-button button, yt-mealbar-promo-renderer #dismiss-button button');
         if (dismiss) dismiss.click();
         const cont = document.querySelector('yt-confirm-dialog-renderer #confirm-button button');

@@ -20,3 +20,7 @@ contextBridge.exposeInMainWorld('winctl', {
   cursor: () => ipcRenderer.invoke('window:cursor'),
   onFsKey: (callback) => ipcRenderer.on('window:fs-key', () => callback()),
 });
+
+contextBridge.exposeInMainWorld('fallbackctl', {
+  click: (x, y) => ipcRenderer.send('fallback:click', { x, y }),
+});

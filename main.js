@@ -273,8 +273,10 @@ app.whenReady().then(async () => {
 
   // 직접 재생(webview)에서 누른 f 키를 가로채 앱 전체화면 토글로 전달
   // (preventDefault로 유튜브 자체 전체화면 단축키와의 충돌을 차단)
+  let webviewWC = null; // 폴백 웹뷰의 webContents (창에 하나뿐)
   app.on('web-contents-created', (_event, wc) => {
     if (wc.getType() !== 'webview') return;
+    webviewWC = wc;
     wc.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && input.key.toLowerCase() === 'f'
           && !input.control && !input.alt && !input.meta && !input.shift) {
@@ -282,6 +284,18 @@ app.whenReady().then(async () => {
         if (wc.hostWebContents) wc.hostWebContents.send('window:fs-key');
       }
     });
+  });
+
+  // 광고 스킵 버튼을 신뢰된 네이티브 마우스 입력으로 클릭 —
+  // 페이지 안에서 부르는 click()은 유튜브가 신뢰되지 않은 이벤트로 무시할 수 있다
+  ipcMain.on('fallback:click', (_event, pt) => {
+    if (!webviewWC || webviewWC.isDestroyed()) return;
+    const x = Math.round(Number(pt && pt.x));
+    const y = Math.round(Number(pt && pt.y));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    webviewWC.sendInputEvent({ type: 'mouseMove', x, y });
+    webviewWC.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+    webviewWC.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
   });
 
   createWindow(port);
