@@ -1,16 +1,18 @@
 /* ── Spotify 데스크톱을 참고한 다크 테마: 검은 프레임 위에 둥근 패널 + 하단 재생 바 ── */
 
+/* 디자인 토큰. 기본 3색(--accent/--bg-base/--panel)은 디자인 설정에서 사용자 지정 가능하며
+   (renderer가 documentElement 인라인 스타일로 덮어씀), 나머지 표면 색은 패널 색에서 파생된다. */
 :root {
   --bg-base: #000;
   --panel: #121212;
-  --panel-hover: #1f1f1f;
-  --panel-active: #2a2a2a;
-  --input-bg: #242424;
-  --tile: #282828;
+  --accent: #ff5252;
+  --panel-hover: color-mix(in srgb, var(--panel) 94%, #fff);
+  --panel-active: color-mix(in srgb, var(--panel) 90%, #fff);
+  --input-bg: color-mix(in srgb, var(--panel) 92%, #fff);
+  --tile: color-mix(in srgb, var(--panel) 91%, #fff);
   --text: #fff;
   --text-sub: #b3b3b3;
   --text-dim: #757575;
-  --accent: #ff5252;
   --radius: 8px;
 }
 
@@ -336,7 +338,7 @@ input {
 #playlist-list li.drag-over {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
-  background: rgba(255, 82, 82, 0.08);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 #playlist-list.drag-over-root {
@@ -706,12 +708,185 @@ input {
 
 #controls svg,
 #ctx-menu svg,
-#sidebar-head svg {
+#sidebar-head svg,
+#settings-panel svg {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ── 디자인 설정 모달: 테마 프리셋 + 색상 사용자 지정 ── */
+
+#settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+#settings-panel {
+  width: 400px;
+  background: var(--panel);
+  border: 1px solid var(--panel-active);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+}
+
+#settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#settings-head h2 {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+#settings-close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+#settings-close:hover {
+  color: var(--text);
+  background: var(--panel-hover);
+}
+
+#settings-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sub);
+  margin: 16px 0 8px;
+}
+
+#theme-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.theme-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--panel-active);
+  border-radius: 8px;
+  background: none;
+  color: var(--text-sub);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.theme-preset:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.theme-preset.selected {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.preset-preview {
+  position: relative;
+  width: 100%;
+  height: 36px;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.preset-preview .pv-panel {
+  position: absolute;
+  inset: 6px;
+  border-radius: 4px;
+}
+
+.preset-preview .pv-accent {
+  position: absolute;
+  left: 12px;
+  bottom: 11px;
+  width: 22px;
+  height: 5px;
+  border-radius: 3px;
+}
+
+#settings-colors {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+#settings-colors label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 6px 9px;
+  border: 1px solid var(--panel-active);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+#settings-colors input[type='color'] {
+  width: 46px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+
+#settings-colors input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+#settings-colors input[type='color']::-webkit-color-swatch {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 5px;
+}
+
+#settings-reset {
+  width: 100%;
+  margin-top: 16px;
+  padding: 9px 0;
+  border: 1px solid #727272;
+  border-radius: 999px;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+#settings-reset:hover {
+  border-color: var(--text);
 }
 
 /* ── 우클릭 컨텍스트 메뉴 ── */

@@ -11,6 +11,7 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 const STORE_FILE = () => path.join(app.getPath('userData'), 'playlists.json');
 const TITLE_CACHE_FILE = () => path.join(app.getPath('userData'), 'titles.json');
+const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json'); // 디자인 설정 (테마 색)
 
 // Block known ad/tracking domains so the embedded player stays ad-free.
 const AD_URL_PATTERNS = [
@@ -260,6 +261,18 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('playlists:load', () => loadPlaylists());
   ipcMain.handle('playlists:save', (_event, playlists) => savePlaylists(playlists));
+  // 디자인 설정: 렌더러 localStorage는 서버 포트가 매번 바뀌어(오리진 변경) 유지되지 않으므로 파일로 저장
+  ipcMain.handle('settings:load', () => {
+    try {
+      return JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8'));
+    } catch {
+      return null;
+    }
+  });
+  ipcMain.handle('settings:save', (_event, settings) => {
+    fs.mkdirSync(path.dirname(SETTINGS_FILE()), { recursive: true });
+    fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
+  });
   ipcMain.handle('titles:fetch', (_event, ids) => fetchTitles(ids));
   ipcMain.handle('playlist:fetchFirst', (_event, listId) => fetchPlaylistFirst(listId));
   ipcMain.handle('playlist:fetchMore', (_event, cont) => fetchPlaylistMore(cont));

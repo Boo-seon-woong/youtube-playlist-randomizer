@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('playlist', {
   meta: (listId) => ipcRenderer.invoke('playlist:meta', listId),
 });
 
+contextBridge.exposeInMainWorld('uiSettings', {
+  load: () => ipcRenderer.invoke('settings:load'),
+  save: (settings) => ipcRenderer.invoke('settings:save', settings),
+});
+
 contextBridge.exposeInMainWorld('winctl', {
   setFullScreen: (flag) => ipcRenderer.send('window:set-fullscreen', flag),
   cursor: () => ipcRenderer.invoke('window:cursor'),

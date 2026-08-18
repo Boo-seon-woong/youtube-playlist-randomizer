@@ -63,11 +63,32 @@
       </button>
     </div>
     <div id="controls-right">
+      <button id="settings-btn" class="ctl-btn" title="디자인 설정">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
       <button id="fs-btn" class="ctl-btn" title="전체화면 (f, Esc 또는 우상단 버튼으로 해제)">
         <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
       </button>
     </div>
   </footer>
+
+  <div id="settings-backdrop" hidden>
+    <div id="settings-panel">
+      <div id="settings-head">
+        <h2>디자인 설정</h2>
+        <button id="settings-close" title="닫기"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
+      <p class="settings-label">테마</p>
+      <div id="theme-presets"></div>
+      <p class="settings-label">사용자 지정 색</p>
+      <div id="settings-colors">
+        <label>포인트 색<input type="color" id="color-accent" /></label>
+        <label>배경 색<input type="color" id="color-base" /></label>
+        <label>패널 색<input type="color" id="color-panel" /></label>
+      </div>
+      <button id="settings-reset">기본 테마로 되돌리기</button>
+    </div>
+  </div>
 
   <div id="ctx-menu" hidden></div>
 

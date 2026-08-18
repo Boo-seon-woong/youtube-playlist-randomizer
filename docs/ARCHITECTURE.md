@@ -4,8 +4,8 @@
 
 | 파일 | 역할 |
 |---|---|
-| `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 재생목록 메타(첫 곡·곡 수) 조회, 곡 제목 조회(oEmbed), 플레이리스트 저장 IPC, 광고 도메인 차단 |
-| `preload.js` | contextBridge — 렌더러에 `store` / `titles` / `playlist` / `winctl` API 노출 |
+| `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 재생목록 메타(첫 곡·곡 수) 조회, 곡 제목 조회(oEmbed), 플레이리스트·디자인 설정 저장 IPC, 광고 도메인 차단 |
+| `preload.js` | contextBridge — 렌더러에 `store` / `titles` / `playlist` / `uiSettings` / `winctl` API 노출 |
 | `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리, 우클릭 컨텍스트 메뉴 |
 | `index.html`, `styles.css` | Spotify를 참고한 다크 테마 — 검은 프레임 위 패널 3개(저장 목록 / 플레이어 / 대기열) + 하단 전폭 재생 바 |
 
@@ -149,6 +149,19 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   (폴백은 "직접 재생" 배지 표시).
 - **폴백 재생 중에는 iframe의 잔여 상태 변화를 무시한다** (`fallbackActive` 가드) —
   `stopVideo()` 등이 발화시키는 onStateChange가 폴백 곡 표시·배지를 덮어쓰는 것 방지.
+
+## 디자인 설정 (테마 커스터마이징)
+
+하단 재생 바의 톱니 버튼 → 모달에서 테마를 바꾼다 (Slack의 테마 설정 참고).
+
+- 저장 값은 **기본 3색뿐**: `settings.json` = `{ accent, base, panel }` (포인트/배경/패널).
+  나머지 표면 색(hover·active·input·tile)은 styles.css의 `color-mix()`가 패널 색에서
+  파생하므로 어떤 색을 골라도 단계가 자동으로 맞는다.
+- 적용은 renderer `applyTheme()`이 `documentElement` 인라인 스타일로 `--accent`/`--bg-base`/`--panel`을
+  덮어쓰는 방식. 프리셋 6종 + `input[type=color]` 3개(input 이벤트로 실시간 미리보기,
+  change에서 저장) + 기본 테마 복원 버튼.
+- **localStorage를 쓰지 않는 이유**: UI 서버 포트가 실행마다 랜덤이라 오리진이 바뀌어
+  localStorage가 유지되지 않는다 → `settings:load/save` IPC로 파일에 저장.
 
 ## 곡 제목·아티스트
 

@@ -171,7 +171,9 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.body.classList.contains('immersive') && !document.fullscreenElement) {
+  if (e.key === 'Escape' && !settingsBackdrop.hidden) {
+    closeSettings();
+  } else if (e.key === 'Escape' && document.body.classList.contains('immersive') && !document.fullscreenElement) {
     exitImmersive();
   } else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT') {
     toggleImmersive(); // f: 전체화면 토글 (입력창 타이핑 중에는 무시)
@@ -850,6 +852,99 @@ listEl.addEventListener('contextmenu', (e) => {
   ]);
 });
 
+// ── 디자인 설정: 테마 프리셋 + 색상 사용자 지정 (Slack의 테마 설정 참고) ──
+// 기본 3색(포인트/배경/패널)만 저장하고, 나머지 표면 색(hover·active·input·tile)은
+// styles.css의 color-mix가 패널 색에서 파생한다. 저장은 settings.json (localStorage는
+// 서버 포트가 매번 바뀌어 오리진이 달라지므로 유지되지 않는다).
+
+const THEME_PRESETS = [
+  { name: '미드나이트', accent: '#ff5252', base: '#000000', panel: '#121212' },
+  { name: '그린', accent: '#1db954', base: '#000000', panel: '#121212' },
+  { name: '오션', accent: '#4da3ff', base: '#020c14', panel: '#0e1a24' },
+  { name: '바이올렛', accent: '#b18cff', base: '#0a0512', panel: '#180f26' },
+  { name: '로즈', accent: '#ff6b9d', base: '#12040a', panel: '#1f0d16' },
+  { name: '앰버', accent: '#ffb02e', base: '#0c0800', panel: '#1a1408' },
+];
+const DEFAULT_THEME = THEME_PRESETS[0];
+let theme = { ...DEFAULT_THEME };
+
+const settingsBackdrop = document.getElementById('settings-backdrop');
+const colorInputs = {
+  accent: document.getElementById('color-accent'),
+  base: document.getElementById('color-base'),
+  panel: document.getElementById('color-panel'),
+};
+
+function applyTheme(t) {
+  theme = { accent: t.accent, base: t.base, panel: t.panel };
+  const root = document.documentElement.style;
+  root.setProperty('--accent', theme.accent);
+  root.setProperty('--bg-base', theme.base);
+  root.setProperty('--panel', theme.panel);
+  syncSettingsUI();
+}
+
+function saveTheme() {
+  window.uiSettings.save(theme);
+}
+
+function syncSettingsUI() {
+  for (const [key, input] of Object.entries(colorInputs)) input.value = theme[key];
+  for (const btn of document.querySelectorAll('.theme-preset')) {
+    const p = THEME_PRESETS[btn.dataset.index];
+    btn.classList.toggle('selected', p.accent === theme.accent && p.base === theme.base && p.panel === theme.panel);
+  }
+}
+
+// 프리셋 스와치 렌더링 (배경 위 패널 + 포인트 색 미리보기)
+for (const [i, p] of THEME_PRESETS.entries()) {
+  const btn = document.createElement('button');
+  btn.className = 'theme-preset';
+  btn.dataset.index = i;
+  const preview = document.createElement('span');
+  preview.className = 'preset-preview';
+  preview.style.background = p.base;
+  const panelChip = document.createElement('span');
+  panelChip.className = 'pv-panel';
+  panelChip.style.background = p.panel;
+  const accentBar = document.createElement('span');
+  accentBar.className = 'pv-accent';
+  accentBar.style.background = p.accent;
+  preview.append(panelChip, accentBar);
+  const name = document.createElement('span');
+  name.textContent = p.name;
+  btn.append(preview, name);
+  btn.onclick = () => {
+    applyTheme(p);
+    saveTheme();
+  };
+  document.getElementById('theme-presets').appendChild(btn);
+}
+
+for (const [key, input] of Object.entries(colorInputs)) {
+  input.addEventListener('input', () => applyTheme({ ...theme, [key]: input.value })); // 실시간 미리보기
+  input.addEventListener('change', saveTheme); // 색 선택을 마쳤을 때만 저장
+}
+
+function openSettings() {
+  syncSettingsUI();
+  settingsBackdrop.hidden = false;
+}
+
+function closeSettings() {
+  settingsBackdrop.hidden = true;
+}
+
+document.getElementById('settings-btn').addEventListener('click', openSettings);
+document.getElementById('settings-close').addEventListener('click', closeSettings);
+document.getElementById('settings-reset').addEventListener('click', () => {
+  applyTheme(DEFAULT_THEME);
+  saveTheme();
+});
+settingsBackdrop.addEventListener('click', (e) => {
+  if (e.target === settingsBackdrop) closeSettings();
+});
+
 function iconButton(svg, title, onClick) {
   const btn = document.createElement('button');
   btn.className = 'pl-icon';
@@ -1129,6 +1224,9 @@ document.getElementById('next-btn').addEventListener('click', nextTrack);
 document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue);
 
 (async () => {
+  const savedTheme = await window.uiSettings.load();
+  if (savedTheme && savedTheme.accent && savedTheme.base && savedTheme.panel) applyTheme(savedTheme);
+  else syncSettingsUI();
   playlists = normalizeItems(await window.store.load());
   renderList();
   fetchMissingMeta();
