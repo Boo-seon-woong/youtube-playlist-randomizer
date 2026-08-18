@@ -29,14 +29,33 @@ const queueList = document.getElementById('queue-list');
 const queueCount = document.getElementById('queue-count');
 const placeholder = document.getElementById('player-placeholder');
 const fallbackView = document.getElementById('fallback-view');
-const nowPlaying = document.getElementById('now-playing');
+const npThumb = document.getElementById('np-thumb');
+const npTitle = document.getElementById('np-title');
+const npArtist = document.getElementById('np-artist');
+const npBadge = document.getElementById('np-badge');
+
+// 하단 재생 바의 현재 곡 표시. id가 없으면 썸네일 없이 메시지만 보여준다.
+function setNowPlaying(id, title, author, badge) {
+  if (id) {
+    npThumb.src = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+    npThumb.hidden = false;
+  } else {
+    npThumb.hidden = true;
+  }
+  npTitle.textContent = title || '';
+  npTitle.title = title || '';
+  npArtist.textContent = author || '';
+  npBadge.hidden = !badge;
+}
 
 const TRASH_SVG = '<svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6"/></svg>';
 // WSLg에는 이모지 폰트가 없어 tofu로 보이므로 아이콘은 전부 SVG 사용
 const PENCIL_SVG = '<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 const FOLDER_SVG = '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
-const CARET_SVG = '<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>';
+const FOLDER_OPEN_SVG = '<svg viewBox="0 0 24 24"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>';
 const SHUFFLE_SVG = '<svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>';
+const PLAY_SVG = '<svg viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></svg>';
+const PLUS_SVG = '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>';
 
 // "https://www.youtube.com/playlist?list=PL..." / "watch?v=...&list=PL..." / raw ID
 function extractListId(url) {
@@ -177,7 +196,7 @@ function startFallback(id) {
   fallbackView.src = `https://www.youtube.com/watch?v=${id}`;
   updateQueueHighlight();
   const info = titleCache.get(id);
-  nowPlaying.textContent = '♪ ' + ((info && info.title) || id) + ' (직접 재생)';
+  setNowPlaying(id, (info && info.title) || id, (info && info.author) || '', true);
   clearInterval(fallbackPollTimer);
   fallbackPollTimer = setInterval(() => pollFallback(id), 1000);
   clearInterval(skipPollTimer);
@@ -321,8 +340,10 @@ function onPlayerStateChange(event) {
     nextTrack();
     return;
   }
+  // 폴백 재생 중에는 iframe의 잔여 상태 변화(stopVideo 등)가 재생 바 표시를 덮어쓰지 않도록
+  if (fallbackActive) return;
   const data = player.getVideoData();
-  if (data && data.title) nowPlaying.textContent = '♪ ' + data.title;
+  if (data && data.title) setNowPlaying(data.video_id || queue[queueIndex], data.title, data.author || '');
 }
 
 async function playPlaylist(listId, shuffle) {
@@ -335,7 +356,7 @@ async function playPlaylist(listId, shuffle) {
   placeholder.hidden = true;
   const token = ++loadToken;
   renderList();
-  queueCount.textContent = '(불러오는 중…)';
+  queueCount.textContent = '불러오는 중…';
 
   // 첫 페이지(~100곡, 제목/아티스트 포함)만 받는 즉시 재생을 시작하고,
   // 나머지는 continuation을 백그라운드로 따라가며 대기열에 이어 붙인다 (전곡 완료를 기다리지 않음)
@@ -361,7 +382,7 @@ async function playPlaylist(listId, shuffle) {
     let cont = first.cont;
     let guard = 50; // 무한 루프 방지 (최대 ~5000곡)
     while (cont && guard-- > 0) {
-      queueCount.textContent = `(${total}곡 불러오는 중…)`;
+      queueCount.textContent = `${total}곡 불러오는 중…`;
       let more = null;
       try {
         more = await window.playlist.fetchMore(cont);
@@ -456,7 +477,7 @@ function stepTrack(direction) {
       return;
     }
   }
-  nowPlaying.textContent = '재생 가능한 곡이 없습니다';
+  setNowPlaying(null, '재생 가능한 곡이 없습니다');
 }
 
 function nextTrack() {
@@ -501,7 +522,7 @@ function removeFromQueue(i) {
 
 function renderQueue() {
   queueList.innerHTML = '';
-  queueCount.textContent = queue.length ? `(${queue.length}곡)` : '';
+  queueCount.textContent = queue.length ? `${queue.length}곡` : '';
   queue.forEach((id, i) => {
     const li = document.createElement('li');
     li.dataset.videoId = id;
@@ -770,6 +791,65 @@ listEl.addEventListener('drop', (e) => {
   performDrop(dragItem, null);
 });
 
+// ── 우클릭 컨텍스트 메뉴: 행 위치를 기준으로 동작해 원하는 위치에 새 폴더를 만들 수 있다 ──
+
+const ctxMenu = document.getElementById('ctx-menu');
+
+function closeCtxMenu() {
+  ctxMenu.hidden = true;
+}
+
+function openCtxMenu(x, y, entries) {
+  ctxMenu.innerHTML = '';
+  for (const entry of entries) {
+    if (entry === '-') {
+      const sep = document.createElement('div');
+      sep.className = 'ctx-sep';
+      ctxMenu.appendChild(sep);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.innerHTML = entry.svg;
+    const label = document.createElement('span');
+    label.textContent = entry.label;
+    btn.appendChild(label);
+    btn.onclick = () => {
+      closeCtxMenu();
+      entry.action();
+    };
+    ctxMenu.appendChild(btn);
+  }
+  // 화면 밖으로 나가지 않도록 일단 그린 뒤 크기를 재서 배치
+  ctxMenu.style.left = '-9999px';
+  ctxMenu.style.top = '0px';
+  ctxMenu.hidden = false;
+  const rect = ctxMenu.getBoundingClientRect();
+  ctxMenu.style.left = Math.min(x, window.innerWidth - rect.width - 8) + 'px';
+  ctxMenu.style.top = Math.min(y, window.innerHeight - rect.height - 8) + 'px';
+}
+
+document.addEventListener('click', closeCtxMenu);
+window.addEventListener('blur', closeCtxMenu);
+document.addEventListener('contextmenu', closeCtxMenu); // 행 핸들러는 stopPropagation으로 자신을 제외
+
+// 새 폴더를 arr의 index 자리(생략 시 맨 뒤)에 만들고 바로 이름 입력으로 들어간다
+function createFolder(arr, index) {
+  const folder = { type: 'folder', name: '새 폴더', open: true, items: [] };
+  arr.splice(index == null ? arr.length : index, 0, folder);
+  editingItem = folder;
+  persistAndRender();
+}
+
+// 목록 빈 공간 우클릭 → 최상위에 새 폴더
+listEl.addEventListener('contextmenu', (e) => {
+  if (e.target !== listEl) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openCtxMenu(e.clientX, e.clientY, [
+    { svg: PLUS_SVG, label: '새 폴더', action: () => createFolder(playlists) },
+  ]);
+});
+
 function iconButton(svg, title, onClick) {
   const btn = document.createElement('button');
   btn.className = 'pl-icon';
@@ -849,7 +929,7 @@ function buildEditForm(item) {
 function buildPlaylistRow(pl, depth) {
   const li = document.createElement('li');
   li.classList.add('playlist-row');
-  if (depth) li.style.marginLeft = depth * 18 + 'px';
+  if (depth) li.style.marginLeft = depth * 24 + 'px';
   if (pl.listId === activeListId) li.classList.add('active');
   if (editingItem === pl) {
     li.appendChild(buildEditForm(pl));
@@ -858,9 +938,7 @@ function buildPlaylistRow(pl, depth) {
   makeDraggable(li, pl);
   makeDropTarget(li, pl);
 
-  // 첫 곡 썸네일 + 곡 수 배지 (fetchMissingMeta가 채우기 전에는 빈 박스)
-  const thumbWrap = document.createElement('div');
-  thumbWrap.className = 'pl-thumb-wrap';
+  // 첫 곡 썸네일 (fetchMissingMeta가 채우기 전에는 빈 타일)
   let thumb;
   if (pl.thumb) {
     thumb = document.createElement('img');
@@ -871,19 +949,17 @@ function buildPlaylistRow(pl, depth) {
     thumb = document.createElement('div');
   }
   thumb.className = 'pl-thumb';
-  thumbWrap.appendChild(thumb);
-  if (pl.count != null) {
-    const badge = document.createElement('span');
-    badge.className = 'pl-count-badge';
-    badge.textContent = `${pl.count}개`;
-    badge.title = `동영상 ${pl.count}개`;
-    thumbWrap.appendChild(badge);
-  }
 
+  const meta = document.createElement('div');
+  meta.className = 'pl-meta';
   const name = document.createElement('span');
   name.className = 'pl-name';
   name.textContent = pl.name;
   name.title = pl.url;
+  const sub = document.createElement('span');
+  sub.className = 'pl-sub';
+  sub.textContent = pl.count != null ? `재생목록 · ${pl.count}곡` : '재생목록';
+  meta.append(name, sub);
 
   const shuffleBtn = iconButton(SHUFFLE_SVG, '셔플 재생', () => playPlaylist(pl.listId, true));
   const editBtn = iconButton(PENCIL_SVG, '이름/링크 수정', () => {
@@ -895,16 +971,35 @@ function buildPlaylistRow(pl, depth) {
     persistAndRender();
   });
 
-  li.append(thumbWrap, name, shuffleBtn, editBtn, deleteBtn);
-  li.title = '클릭하여 재생';
+  li.append(thumb, meta, shuffleBtn, editBtn, deleteBtn);
+  li.title = '클릭하여 재생 · 우클릭으로 더 보기';
   li.onclick = () => playPlaylist(pl.listId, false);
+  li.oncontextmenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openCtxMenu(e.clientX, e.clientY, [
+      { svg: PLAY_SVG, label: '재생', action: () => playPlaylist(pl.listId, false) },
+      { svg: SHUFFLE_SVG, label: '셔플 재생', action: () => playPlaylist(pl.listId, true) },
+      '-',
+      {
+        svg: FOLDER_SVG,
+        label: '같은 위치에 새 폴더',
+        action: () => {
+          const loc = findLocation(pl);
+          createFolder(loc.arr, loc.index + 1);
+        },
+      },
+      { svg: PENCIL_SVG, label: '이름/링크 수정', action: () => { editingItem = pl; renderList(); } },
+      { svg: TRASH_SVG, label: '삭제', action: () => { removeItem(pl); persistAndRender(); } },
+    ]);
+  };
   return li;
 }
 
 function buildFolderRow(folder, depth) {
   const li = document.createElement('li');
   li.classList.add('folder-row');
-  if (depth) li.style.marginLeft = depth * 18 + 'px';
+  if (depth) li.style.marginLeft = depth * 24 + 'px';
   if (editingItem === folder) {
     li.appendChild(buildEditForm(folder));
     return li;
@@ -912,38 +1007,56 @@ function buildFolderRow(folder, depth) {
   makeDraggable(li, folder);
   makeDropTarget(li, folder);
 
-  const caret = document.createElement('span');
-  caret.className = 'pl-caret' + (folder.open ? ' open' : '');
-  caret.innerHTML = CARET_SVG;
-
+  // 열림/닫힘은 폴더 아이콘 모양으로 표현 (별도 caret 컬럼을 두면 재생목록 행과 정렬이 어긋난다)
   const icon = document.createElement('span');
   icon.className = 'pl-folder-icon';
-  icon.innerHTML = FOLDER_SVG;
+  icon.innerHTML = folder.open ? FOLDER_OPEN_SVG : FOLDER_SVG;
 
+  const meta = document.createElement('div');
+  meta.className = 'pl-meta';
   const name = document.createElement('span');
   name.className = 'pl-name';
   name.textContent = folder.name;
+  const sub = document.createElement('span');
+  sub.className = 'pl-sub';
+  sub.textContent = `폴더 · ${folder.items.length}개 항목`;
+  meta.append(name, sub);
 
-  const count = document.createElement('span');
-  count.className = 'pl-count';
-  count.textContent = folder.items.length;
+  const removeFolder = () => {
+    const loc = findLocation(folder);
+    loc.arr.splice(loc.index, 1, ...folder.items); // 폴더 자리를 안의 항목들로 대체
+    persistAndRender();
+  };
 
   const editBtn = iconButton(PENCIL_SVG, '폴더 이름 수정', () => {
     editingItem = folder;
     renderList();
   });
-  const deleteBtn = iconButton(TRASH_SVG, '폴더 삭제 (안의 항목은 한 단계 밖으로 이동)', () => {
-    const loc = findLocation(folder);
-    loc.arr.splice(loc.index, 1, ...folder.items); // 폴더 자리를 안의 항목들로 대체
-    persistAndRender();
-  });
+  const deleteBtn = iconButton(TRASH_SVG, '폴더 삭제 (안의 항목은 한 단계 밖으로 이동)', removeFolder);
 
-  li.append(caret, icon, name, count, editBtn, deleteBtn);
+  li.append(icon, meta, editBtn, deleteBtn);
   li.style.cursor = 'pointer';
-  li.title = '클릭하여 접기/펼치기 · 재생목록이나 폴더를 여기로 드래그하면 폴더 안에 들어갑니다';
+  li.title = '클릭하여 접기/펼치기 · 우클릭으로 더 보기 · 재생목록이나 폴더를 여기로 드래그하면 폴더 안에 들어갑니다';
   li.onclick = () => {
     folder.open = !folder.open;
     persistAndRender();
+  };
+  li.oncontextmenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openCtxMenu(e.clientX, e.clientY, [
+      {
+        svg: PLUS_SVG,
+        label: '이 폴더 안에 새 폴더',
+        action: () => {
+          folder.open = true;
+          createFolder(folder.items);
+        },
+      },
+      '-',
+      { svg: PENCIL_SVG, label: '폴더 이름 수정', action: () => { editingItem = folder; renderList(); } },
+      { svg: TRASH_SVG, label: '폴더 삭제 (항목은 밖으로 이동)', action: removeFolder },
+    ]);
   };
   return li;
 }
@@ -951,7 +1064,7 @@ function buildFolderRow(folder, depth) {
 function buildEmptyFolderHint(folder, depth) {
   const li = document.createElement('li');
   li.className = 'folder-empty';
-  li.style.marginLeft = depth * 18 + 'px';
+  li.style.marginLeft = depth * 24 + 'px';
   li.textContent = '비어 있음 — 재생목록을 여기로 드래그';
   makeDropTarget(li, folder);
   return li;
@@ -1002,12 +1115,7 @@ document.getElementById('add-form').addEventListener('submit', async (event) => 
   fetchMissingMeta();
 });
 
-document.getElementById('new-folder-btn').addEventListener('click', () => {
-  const folder = { type: 'folder', name: '새 폴더', open: true, items: [] };
-  playlists.push(folder);
-  editingItem = folder; // 만들자마자 이름 입력
-  persistAndRender();
-});
+document.getElementById('new-folder-btn').addEventListener('click', () => createFolder(playlists));
 
 document.getElementById('play-now-btn').addEventListener('click', () => {
   const listId = extractListId(urlInput.value.trim());

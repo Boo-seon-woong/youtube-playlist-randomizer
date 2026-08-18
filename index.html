@@ -6,45 +6,70 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <aside id="sidebar">
-    <div id="sidebar-head">
-      <h1>내 플레이리스트</h1>
-      <button id="new-folder-btn" title="새 폴더 만들기 (재생목록을 다른 재생목록 위에 드래그해도 폴더가 됩니다)">+ 새 폴더</button>
-    </div>
-
-    <form id="add-form">
-      <input id="name-input" type="text" placeholder="플레이리스트 이름" autocomplete="off" />
-      <input id="url-input" type="text" placeholder="유튜브 재생목록 링크 붙여넣기" autocomplete="off" />
-      <div class="form-buttons">
-        <button type="submit" id="save-btn">저장</button>
-        <button type="button" id="play-now-btn">바로 재생</button>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sidebar-head">
+        <h1><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>내 플레이리스트</h1>
+        <button id="new-folder-btn" title="새 폴더 만들기 — 목록에서 우클릭하면 원하는 위치에 만들 수 있습니다">
+          <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 11v6M9 14h6"/></svg>
+        </button>
       </div>
-      <p id="form-error" class="error" hidden></p>
-    </form>
 
-    <ul id="playlist-list"></ul>
-  </aside>
+      <form id="add-form">
+        <input id="name-input" type="text" placeholder="플레이리스트 이름" autocomplete="off" />
+        <input id="url-input" type="text" placeholder="유튜브 재생목록 링크 붙여넣기" autocomplete="off" />
+        <div class="form-buttons">
+          <button type="submit" id="save-btn">저장</button>
+          <button type="button" id="play-now-btn">바로 재생</button>
+        </div>
+        <p id="form-error" class="error" hidden></p>
+      </form>
 
-  <main id="content">
-    <div id="player-wrap">
-      <div id="player"></div>
-      <webview id="fallback-view" src="about:blank"></webview>
-      <div id="player-placeholder">재생목록 링크를 붙여넣거나 저장된 플레이리스트를 선택하세요</div>
-      <button id="fs-exit-btn" title="전체화면 해제 (Esc)">전체화면 해제</button>
+      <ul id="playlist-list"></ul>
+    </aside>
+
+    <main id="content">
+      <div id="player-wrap">
+        <div id="player"></div>
+        <webview id="fallback-view" src="about:blank"></webview>
+        <div id="player-placeholder">재생목록 링크를 붙여넣거나 저장된 플레이리스트를 선택하세요</div>
+        <button id="fs-exit-btn" title="전체화면 해제 (Esc)">전체화면 해제</button>
+      </div>
+    </main>
+
+    <aside id="queue-panel">
+      <h2>재생 대기열 <span id="queue-count"></span></h2>
+      <ol id="queue-list"></ol>
+    </aside>
+  </div>
+
+  <footer id="controls">
+    <div id="np">
+      <img id="np-thumb" alt="" hidden />
+      <div id="np-meta">
+        <div id="np-title"></div>
+        <div id="np-sub"><span id="np-badge" hidden>직접 재생</span><span id="np-artist"></span></div>
+      </div>
     </div>
-    <div id="controls">
-      <button id="prev-btn" title="이전 곡">이전</button>
-      <button id="next-btn" title="다음 곡">다음</button>
-      <button id="shuffle-btn" title="현재 재생목록 셔플">셔플</button>
-      <button id="fs-btn" title="전체화면 (Esc 또는 우상단 버튼으로 해제)">전체화면</button>
-      <span id="now-playing"></span>
+    <div id="controls-center">
+      <button id="shuffle-btn" class="ctl-btn" title="현재 재생목록 셔플">
+        <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+      </button>
+      <button id="prev-btn" class="ctl-btn" title="이전 곡">
+        <svg viewBox="0 0 24 24"><path d="M19 20L9 12l10-8v16z"/><path d="M5 19V5"/></svg>
+      </button>
+      <button id="next-btn" class="ctl-btn" title="다음 곡">
+        <svg viewBox="0 0 24 24"><path d="M5 4l10 8-10 8V4z"/><path d="M19 5v14"/></svg>
+      </button>
     </div>
-  </main>
+    <div id="controls-right">
+      <button id="fs-btn" class="ctl-btn" title="전체화면 (f, Esc 또는 우상단 버튼으로 해제)">
+        <svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+      </button>
+    </div>
+  </footer>
 
-  <aside id="queue-panel">
-    <h2>재생 대기열 <span id="queue-count"></span></h2>
-    <ol id="queue-list"></ol>
-  </aside>
+  <div id="ctx-menu" hidden></div>
 
   <script src="https://www.youtube.com/iframe_api"></script>
   <script src="renderer.js"></script>

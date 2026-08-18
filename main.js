@@ -240,7 +240,7 @@ function createWindow(port) {
     width: 1420,
     height: 800,
     title: 'YouTube Music',
-    backgroundColor: '#0f0f0f',
+    backgroundColor: '#000000',
     autoHideMenuBar: true,
     icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: {

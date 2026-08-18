@@ -6,8 +6,8 @@
 |---|---|
 | `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 재생목록 메타(첫 곡·곡 수) 조회, 곡 제목 조회(oEmbed), 플레이리스트 저장 IPC, 광고 도메인 차단 |
 | `preload.js` | contextBridge — 렌더러에 `store` / `titles` / `playlist` / `winctl` API 노출 |
-| `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리 |
-| `index.html`, `styles.css` | 3열 레이아웃 (저장 목록 / 플레이어 / 대기열) |
+| `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리, 우클릭 컨텍스트 메뉴 |
+| `index.html`, `styles.css` | Spotify를 참고한 다크 테마 — 검은 프레임 위 패널 3개(저장 목록 / 플레이어 / 대기열) + 하단 전폭 재생 바 |
 
 ## 사이드바 폴더 (playlists.json 구조)
 
@@ -21,18 +21,23 @@
 ]
 ```
 
+- **새 폴더는 우클릭 컨텍스트 메뉴로 원하는 위치에 바로 만든다** (`createFolder(arr, index)`):
+  폴더 행 → 그 폴더 안, 재생목록 행 → 같은 위치(바로 아래), 목록 빈 공간·상단 + 버튼 → 최상위.
+  어느 경로든 만들자마자 인라인 이름 입력으로 들어간다. 재생목록 행 메뉴에는 재생/셔플/수정/삭제도 있다.
 - HTML5 드래그 앤 드롭: 재생목록→재생목록 = 그 자리에 새 폴더로 묶기(즉시 이름 입력),
   재생목록/폴더→폴더 = 그 폴더 안으로 이동(폴더 중첩), 목록 빈 공간 = 루트로 이동.
   폴더를 자기 자신·자기 하위 폴더 안으로 넣는 순환은 `folderContains`로 차단한다.
-- 렌더링은 재귀(`renderList` 안 `renderInto`)이며 들여쓰기는 깊이×18px 인라인 margin.
+- 렌더링은 재귀(`renderList` 안 `renderInto`)이며 들여쓰기는 깊이×24px 인라인 margin.
+- 폴더 열림/닫힘 상태는 별도 caret 없이 **아이콘 모양(닫힌 폴더 ↔ 열린 폴더)**으로 표시한다
+  (caret 컬럼을 두면 같은 깊이의 재생목록 행과 정렬이 어긋난다).
 - `type` 없는 구버전 항목은 로드 시 `type:"playlist"`로 자동 마이그레이션 (`normalizeItems`, 재귀).
 - 폴더 삭제 시 안의 항목은 한 단계 위(부모 배열의 그 자리)로 이동한다 (비파괴).
 - 이름/링크는 연필 버튼의 인라인 폼으로 수정하며, 링크 수정 시 `listId`를 다시 추출한다.
 
 ### 재생목록 썸네일·곡 수 (`thumb` / `count` 필드)
 
-각 재생목록 행에 첫 영상 썸네일(`i.ytimg.com/vi/<thumb>/mqdefault.jpg`)과 곡 수 배지를
-표시한다. `playlist:meta` IPC(`fetchPlaylistMeta`)가 재생목록 페이지 **첫 페이지만** 요청해
+각 재생목록 행에 첫 영상 썸네일(`i.ytimg.com/vi/<thumb>/mqdefault.jpg`)과
+부제("재생목록 · N곡")를 표시한다. `playlist:meta` IPC(`fetchPlaylistMeta`)가 재생목록 페이지 **첫 페이지만** 요청해
 첫 곡 ID와 총 곡 수를 얻고, 값은 `playlists.json`의 `thumb`/`count`에 캐시된다.
 
 - 없는 항목만 앱 시작·추가 시 백그라운드로 수집하고, 재생 시 전곡 수집 결과로 최신화.
@@ -134,6 +139,16 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   때문에, `stopFallback()`은 숨기기 **전에** 흡수를 호출한다.
 - `exitFullscreen()`은 비동기다. 완료를 기다리지 않고 창 전체화면을 걸면 해제 완료 시점에
   창 상태까지 되돌아가 간헐적으로 전체화면이 풀린다 → `then()`으로 순서를 보장한다.
+
+## 하단 재생 바 (현재 곡 표시)
+
+화면 하단 전폭 바에 현재 곡 썸네일·제목·아티스트와 셔플/이전/다음/전체화면 버튼을 표시한다.
+
+- 표시 갱신은 `setNowPlaying(id, title, author, badge)` 단일 진입점 — 임베드 재생은
+  `onStateChange`의 `getVideoData()`로, 폴백 재생은 `startFallback`이 titleCache로 채운다
+  (폴백은 "직접 재생" 배지 표시).
+- **폴백 재생 중에는 iframe의 잔여 상태 변화를 무시한다** (`fallbackActive` 가드) —
+  `stopVideo()` 등이 발화시키는 onStateChange가 폴백 곡 표시·배지를 덮어쓰는 것 방지.
 
 ## 곡 제목·아티스트
 
