@@ -160,6 +160,10 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
 - 적용은 renderer `applyTheme()`이 `documentElement` 인라인 스타일로 `--accent`/`--bg-base`/`--panel`을
   덮어쓰는 방식. 프리셋 6종 + `input[type=color]` 3개(input 이벤트로 실시간 미리보기,
   change에서 저장) + 기본 테마 복원 버튼.
+- 포인트 색은 **대기 상태에서도 보이도록** 저장 버튼(CTA)·사이드바 헤더 아이콘·입력창 포커스
+  테두리·대기열 곡 수 pill에 쓰고, 재생 중에는 활성 재생목록·현재 곡 강조에 쓴다.
+  포인트 색 위 글자색은 `--on-accent` — `applyTheme()`이 포인트 색 상대 명도(< 0.2 → 흰색,
+  아니면 검정)로 정한다. 배경/패널만 바꾸는 테마와 달리 포인트 색만 달라도 구분돼야 한다.
 - **localStorage를 쓰지 않는 이유**: UI 서버 포트가 실행마다 랜덤이라 오리진이 바뀌어
   localStorage가 유지되지 않는다 → `settings:load/save` IPC로 파일에 저장.
 

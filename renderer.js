@@ -875,10 +875,22 @@ const colorInputs = {
   panel: document.getElementById('color-panel'),
 };
 
+// 포인트 색 위에 올라가는 글자색: 상대 명도가 낮으면(어두운 포인트 색) 흰색, 아니면 검정
+function accentTextColor(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lin = (v) => {
+    v /= 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  const lum = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return lum < 0.2 ? '#fff' : '#000';
+}
+
 function applyTheme(t) {
   theme = { accent: t.accent, base: t.base, panel: t.panel };
   const root = document.documentElement.style;
   root.setProperty('--accent', theme.accent);
+  root.setProperty('--on-accent', accentTextColor(theme.accent));
   root.setProperty('--bg-base', theme.base);
   root.setProperty('--panel', theme.panel);
   syncSettingsUI();

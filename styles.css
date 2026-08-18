@@ -6,6 +6,7 @@
   --bg-base: #000;
   --panel: #121212;
   --accent: #ff5252;
+  --on-accent: #000; /* 포인트 색 위 글자색 — applyTheme이 포인트 색 명도에 따라 흑/백 선택 */
   --panel-hover: color-mix(in srgb, var(--panel) 94%, #fff);
   --panel-active: color-mix(in srgb, var(--panel) 90%, #fff);
   --input-bg: color-mix(in srgb, var(--panel) 92%, #fff);
@@ -100,7 +101,7 @@ input {
 #sidebar h1 svg {
   width: 20px;
   height: 20px;
-  color: var(--text-sub);
+  color: var(--accent);
 }
 
 #new-folder-btn {
@@ -151,7 +152,7 @@ input {
 
 #add-form input:focus {
   outline: none;
-  border-color: #727272;
+  border-color: var(--accent);
 }
 
 .form-buttons {
@@ -177,8 +178,8 @@ input {
 }
 
 #save-btn {
-  background: var(--text);
-  color: #000;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 #play-now-btn {
@@ -367,7 +368,7 @@ input {
 
 .pl-edit-form input:focus {
   outline: none;
-  border-color: #727272;
+  border-color: var(--accent);
 }
 
 .pl-edit-buttons {
@@ -387,8 +388,8 @@ input {
 }
 
 #playlist-list .pl-edit-buttons button[type='submit'] {
-  background: var(--text);
-  color: #000;
+  background: var(--accent);
+  color: var(--on-accent);
   border: none;
 }
 
@@ -472,8 +473,8 @@ input {
 #queue-count {
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-sub);
-  background: var(--panel-active);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   padding: 3px 9px;
   border-radius: 999px;
 }
