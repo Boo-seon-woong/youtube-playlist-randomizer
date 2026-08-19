@@ -10,6 +10,9 @@ if (process.platform === 'linux') app.disableHardwareAcceleration();
 // 폴백(워치페이지) 재생 시 사용자 제스처 없이도 자동 재생되도록
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+// 구글 로그인 차단 완화: 자동화 도구 흔적(navigator.webdriver 등)을 노출하지 않도록
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
+
 const STORE_FILE = () => path.join(app.getPath('userData'), 'playlists.json');
 const TITLE_CACHE_FILE = () => path.join(app.getPath('userData'), 'titles.json');
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json'); // 디자인 설정 (테마 색)
@@ -379,7 +382,7 @@ async function addToPlaylist(playlistId, videoId) {
 // 위장해도 Sec-CH-UA(클라이언트 힌트)와 크롬 전용 API 검사에서 걸린다(실측). 그래서
 // 로그인 창과 accounts.google.com 요청에는 Firefox UA를 쓰고 힌트 헤더를 제거한다 —
 // Firefox에는 해당 검사가 적용되지 않아 통과된다 (Electron 앱들의 통용 우회법).
-const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0';
+const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0';
 let loginWin = null;
 
 function openLoginWindow(parent) {
@@ -404,17 +407,25 @@ function openLoginWindow(parent) {
       backgroundColor: '#ffffff',
     });
     loginWin.webContents.setUserAgent(FIREFOX_UA);
+    let closing = false;
     const check = async () => {
+      if (closing) return;
       const cookies = await getSessionCookies();
       if (cookies.some((c) => c.name === 'SAPISID' || c.name === '__Secure-3PAPISID')) {
-        finish({ loggedIn: true });
-        if (loginWin && !loginWin.isDestroyed()) loginWin.close();
+        closing = true;
+        // 마지막 리디렉트가 나머지 쿠키를 마저 심도록 잠시 두었다가 닫고,
+        // 쿠키를 즉시 디스크에 기록해 강제 종료돼도 로그인이 유지되게 한다
+        setTimeout(async () => {
+          try { await session.defaultSession.cookies.flushStore(); } catch {}
+          finish({ loggedIn: true });
+          if (loginWin && !loginWin.isDestroyed()) loginWin.close();
+        }, 1500);
       }
     };
     loginWin.webContents.on('did-navigate', check);
     loginWin.on('closed', () => {
       loginWin = null;
-      finish({ loggedIn: false });
+      finish({ loggedIn: closing }); // 성공 감지 후 닫힘 대기 중에 닫혀도 성공으로 처리
     });
     loginWin.loadURL('https://accounts.google.com/ServiceLogin?service=youtube&hl=ko&continue=' + encodeURIComponent(YT_ORIGIN + '/?hl=ko'));
   });
@@ -536,11 +547,23 @@ app.whenReady().then(async () => {
     })
   );
 
-  // 구글 로그인 도메인 요청은 Firefox로 위장 — UA 교체 + 크로미움 클라이언트 힌트 제거.
-  // (크롬 UA를 흉내 내면 Sec-CH-UA 불일치·크롬 전용 API 검사로 "안전하지 않은 브라우저" 차단)
+  // 구글 로그인 흐름은 Firefox로 위장 — UA 교체 + 크로미움 클라이언트 힌트(Sec-CH-UA) 제거.
+  // (크롬 UA를 흉내 내면 힌트 불일치·크롬 전용 API 검사로 "안전하지 않은 브라우저" 차단)
+  // accounts.* 도메인은 항상 적용하고, 로그인 흐름이 경유하는 나머지 구글 도메인
+  // (ogs.google.com·gstatic 등)은 로그인 창에서 나온 요청에만 적용해 위장을 흐름 전체에서
+  // 일관되게 유지한다. 그 외(웹뷰·임베드) 요청은 손대지 않는다.
   session.defaultSession.webRequest.onBeforeSendHeaders(
-    { urls: ['*://accounts.google.com/*', '*://accounts.youtube.com/*'] },
+    {
+      urls: [
+        '*://accounts.google.com/*', '*://accounts.youtube.com/*', '*://*.google.com/*',
+        '*://*.gstatic.com/*', '*://*.googleusercontent.com/*', '*://*.youtube.com/*',
+      ],
+    },
     (details, callback) => {
+      const fromLoginWin = loginWin && !loginWin.isDestroyed()
+        && details.webContentsId === loginWin.webContents.id;
+      const isAccounts = /^https:\/\/accounts\.(google|youtube)\.com\//.test(details.url);
+      if (!fromLoginWin && !isAccounts) return callback({ requestHeaders: details.requestHeaders });
       const headers = { ...details.requestHeaders };
       for (const key of Object.keys(headers)) {
         if (/^sec-ch-ua/i.test(key)) delete headers[key];
@@ -613,6 +636,12 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(port);
   });
+});
+
+// 종료 전에 쿠키를 디스크로 강제 플러시 — 크로미움의 지연 저장 때문에 로그인 직후
+// 앱을 닫으면 세션 쿠키가 유실돼 다음 실행에서 로그아웃되는 문제 방지
+app.on('before-quit', () => {
+  session.defaultSession.cookies.flushStore().catch(() => {});
 });
 
 app.on('window-all-closed', () => {
