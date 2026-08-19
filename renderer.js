@@ -3,6 +3,7 @@ let playerReady = false;
 let pendingPlay = null; // 플레이어 준비 전에 들어온 재생 요청
 let playlists = [];
 let activeListId = null;
+let activePlaylistName = ''; // 추천 패널 표시용
 let editingItem = null; // 사이드바에서 이름/링크 수정 중인 항목
 let dragItem = null; // 드래그 중인 사이드바 항목 (재생목록 또는 폴더)
 
@@ -385,10 +386,14 @@ async function playPlaylist(listId, shuffle) {
     return;
   }
   activeListId = listId;
+  const ref = allPlaylistRefs().find((p) => p.listId === listId)
+    || accountPlaylists.find((p) => p.listId === listId);
+  activePlaylistName = (ref && ref.name) || '';
   placeholder.hidden = true;
   const token = ++loadToken;
   renderList();
   queueCount.textContent = '불러오는 중…';
+  if (!recsPanel.hidden) loadRecs(true); // 추천 패널이 열려 있으면 새 재생목록 기준으로 갱신
 
   // 첫 페이지(~100곡, 제목/아티스트 포함)만 받는 즉시 재생을 시작하고,
   // 나머지는 continuation을 백그라운드로 따라가며 대기열에 이어 붙인다 (전곡 완료를 기다리지 않음)
@@ -1319,6 +1324,124 @@ searchForm.addEventListener('submit', async (e) => {
   } catch {}
   renderSearchResults(items);
 });
+
+// ── 추천 곡: 현재 곡을 시드로 유튜브 관련 동영상(watch next)을 하단 패널에 표시 ──
+// 재생 바의 토글 버튼으로 열고 닫으며, 새로고침은 대기열에서 무작위 곡을 시드로 뽑아
+// 매번 다른 추천을 보여준다. 이미 대기열에 있는 곡은 목록에서 제외.
+
+const recsPanel = document.getElementById('recs-panel');
+const recsListEl = document.getElementById('recs-list');
+const recsStatus = document.getElementById('recs-status');
+const recsSeedEl = document.getElementById('recs-seed');
+const recsBtn = document.getElementById('recs-btn');
+let recsLoading = false;
+let recsListId = null; // 추천을 불러온 재생목록
+let recsToken = null; // 다음 배치용 continuation (새로고침 때마다 전진)
+
+function setRecsStatus(message) {
+  recsListEl.innerHTML = '';
+  recsStatus.textContent = message || '';
+  recsStatus.hidden = !message;
+}
+
+// reset=true면 activeListId로 처음부터, 아니면 continuation을 이어받아 다음 추천 배치
+async function loadRecs(reset) {
+  if (recsLoading) return;
+  if (!activeListId) {
+    recsListEl.innerHTML = '';
+    recsSeedEl.textContent = '';
+    setRecsStatus('저장된 재생목록을 재생하면 그 재생목록 기준 추천이 표시됩니다');
+    return;
+  }
+  if (reset || recsListId !== activeListId) {
+    recsListId = activeListId;
+    recsToken = null;
+  }
+  recsLoading = true;
+  setRecsStatus('추천 불러오는 중…');
+  recsSeedEl.textContent = activePlaylistName ? `"${activePlaylistName}" 기준` : '';
+  let res = null;
+  try {
+    res = await window.recs.fetch(recsListId, recsToken);
+  } catch {}
+  recsLoading = false;
+  if (recsListId !== activeListId) return; // 그새 다른 재생목록으로 바뀜
+  recsToken = (res && res.next) || null;
+  const items = (res && res.items) || [];
+  const inQueue = new Set(queue);
+  renderRecs(items.filter((v) => v && !inQueue.has(v.id)), items.length > 0);
+}
+
+// hadRaw: 유튜브가 추천을 주긴 했는데 전부 대기열에 이미 있어 걸러진 경우와,
+// 애초에 "맞춤 동영상" 섹션이 없는 재생목록을 구분해 안내 문구를 다르게 낸다.
+function renderRecs(items, hadRaw) {
+  recsListEl.innerHTML = '';
+  if (!items || items.length === 0) {
+    if (hadRaw) {
+      setRecsStatus('새 추천이 없습니다 — 새로고침을 눌러 보세요');
+    } else if (!accountState.loggedIn) {
+      setRecsStatus('맞춤 추천은 로그인 후 내 재생목록에서 제공됩니다');
+    } else {
+      setRecsStatus('이 재생목록은 유튜브 맞춤 추천을 제공하지 않습니다');
+    }
+    return;
+  }
+  recsStatus.hidden = true;
+  for (const item of items) {
+    const li = document.createElement('li');
+    const thumb = document.createElement('img');
+    thumb.className = 'r-thumb';
+    thumb.src = `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg`;
+    thumb.loading = 'lazy';
+    thumb.draggable = false;
+    const title = document.createElement('div');
+    title.className = 'r-title';
+    title.textContent = item.title || item.id;
+    title.title = item.title || '';
+    const author = document.createElement('div');
+    author.className = 'r-author';
+    author.textContent = item.duration ? `${item.author} · ${item.duration}` : item.author;
+    const actions = document.createElement('div');
+    actions.className = 'r-actions';
+    const queueBtn = document.createElement('button');
+    queueBtn.title = '대기열에 추가';
+    queueBtn.innerHTML = PLUS_SVG;
+    queueBtn.onclick = (e) => {
+      e.stopPropagation();
+      enqueueVideo(item);
+      li.remove();
+    };
+    actions.appendChild(queueBtn);
+    if (accountState.loggedIn) {
+      const addBtn = document.createElement('button');
+      addBtn.title = '내 재생목록에 추가';
+      addBtn.innerHTML = LIST_PLUS_SVG;
+      addBtn.onclick = (e) => {
+        e.stopPropagation();
+        openAddToPlaylistMenu(item, addBtn);
+      };
+      actions.appendChild(addBtn);
+    }
+    li.append(thumb, actions, title, author);
+    li.title = '클릭하여 지금 재생';
+    li.onclick = () => {
+      playVideoNow(item);
+      li.remove();
+    };
+    recsListEl.appendChild(li);
+  }
+}
+
+function toggleRecs() {
+  const opening = recsPanel.hidden;
+  recsPanel.hidden = !opening;
+  recsBtn.classList.toggle('active', opening);
+  if (opening) loadRecs(false);
+}
+
+recsBtn.addEventListener('click', toggleRecs);
+document.getElementById('recs-refresh').addEventListener('click', () => loadRecs(false)); // 다음 추천 배치
+document.getElementById('recs-close').addEventListener('click', toggleRecs);
 
 function iconButton(svg, title, onClick) {
   const btn = document.createElement('button');

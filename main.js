@@ -205,11 +205,15 @@ async function getInnertubeCfg() {
   return innertubeCfg;
 }
 
-async function innertube(endpoint, body) {
+async function innertube(endpoint, body, opts) {
   const cfg = await getInnertubeCfg();
   const res = await fetch(`${YT_ORIGIN}/youtubei/v1/${endpoint}?key=${cfg.key}&prettyPrint=false`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': UA, ...(await authHeaders()) },
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': UA,
+      ...(opts && opts.anonymous ? {} : await authHeaders()),
+    },
     body: JSON.stringify({
       context: { client: { clientName: 'WEB', clientVersion: cfg.clientVersion, hl: 'ko' } },
       ...body,
@@ -361,6 +365,71 @@ async function searchVideos(query) {
   collectSearchVideos(data, out);
   return out.slice(0, 30);
 }
+
+// 재생목록의 "맞춤 동영상" 추천 — 재생목록 페이지의 그 섹션과 동일한 데이터.
+// 재생목록 browse 응답에는 continuation 토큰이 둘 있다: 하나는 영상 목록(다음 100곡),
+// 다른 하나는 섹션 continuation으로 이 쪽이 "맞춤 동영상" 섹션을 싣는다. 영상 목록 토큰은
+// playlistVideoListRenderer 서브트리 안에 있으므로, 그 밖에 있는 토큰이 섹션 토큰이다.
+function findRecsToken(node, insideVideoList) {
+  if (!node || typeof node !== 'object') return null;
+  if (Array.isArray(node)) {
+    for (const v of node) {
+      const t = findRecsToken(v, insideVideoList);
+      if (t) return t;
+    }
+    return null;
+  }
+  if (!insideVideoList && node.continuationCommand && typeof node.continuationCommand.token === 'string') {
+    return node.continuationCommand.token;
+  }
+  for (const [k, v] of Object.entries(node)) {
+    const t = findRecsToken(v, insideVideoList || k === 'playlistVideoListRenderer');
+    if (t) return t;
+  }
+  return null;
+}
+
+// 추천 응답에서 영상 항목 수집 (playlistVideoRenderer/videoRenderer/compactVideoRenderer 혼재)
+function collectRecVideos(node, out) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) return node.forEach((v) => collectRecVideos(v, out));
+  const r = node.playlistVideoRenderer || node.videoRenderer || node.compactVideoRenderer;
+  if (r && r.videoId) {
+    const title = r.title && (r.title.simpleText || (r.title.runs && r.title.runs[0] && r.title.runs[0].text));
+    const byline = r.shortBylineText || r.ownerText || r.longBylineText;
+    const author = byline && byline.runs && byline.runs[0] && byline.runs[0].text;
+    out.push({
+      id: r.videoId,
+      title: title || '',
+      author: author || '',
+      duration: (r.lengthText && r.lengthText.simpleText) || '',
+    });
+    return;
+  }
+  for (const v of Object.values(node)) collectRecVideos(v, out);
+}
+
+// 재생목록 추천 한 배치. token이 없으면 재생목록 browse에서 섹션 토큰을 찾아 첫 배치를,
+// 있으면 그 토큰으로 다음 배치를 받는다. 응답의 다음 continuation을 next로 돌려줘
+// 새로고침 때마다 다른 추천을 보여줄 수 있게 한다.
+async function fetchPlaylistRecs(listId, token) {
+  let contToken = token;
+  if (!contToken) {
+    const data = await innertube('browse', { browseId: 'VL' + String(listId).replace(/^VL/, '') });
+    contToken = findRecsToken(data, false);
+    if (!contToken) return { items: [], next: null };
+  }
+  // 같은 섹션 토큰을 다시 부르면 유튜브가 매번 다른 추천 묶음을 준다 — 새로고침이 이걸로 동작.
+  // (응답 안 continuation을 이어받으면 영상 목록 쪽으로 흘러 재생목록 곡만 오므로 그러지 않는다.)
+  const res = await innertube('browse', { continuation: contToken });
+  const items = [];
+  collectRecVideos(res, items);
+  const seen = new Set();
+  const deduped = items.filter((v) => v.id && !seen.has(v.id) && seen.add(v.id));
+  return { items: deduped, next: contToken };
+}
+
+
 
 // 계정 재생목록에 곡 추가 (유튜브 웹의 "재생목록에 저장"과 동일한 엔드포인트)
 async function addToPlaylist(playlistId, videoId) {
@@ -598,6 +667,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('account:playlists', () => fetchAccountPlaylists());
   ipcMain.handle('account:addToPlaylist', (_event, p) => addToPlaylist(p.playlistId, p.videoId));
   ipcMain.handle('search:videos', (_event, query) => searchVideos(query));
+  ipcMain.handle('recs:fetch', (_event, p) => fetchPlaylistRecs(p.listId, p.token));
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.setFullScreen(!!flag);

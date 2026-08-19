@@ -876,6 +876,162 @@ input {
   stroke: currentColor;
 }
 
+/* ── 하단 추천 곡 패널: 재생 바의 토글 버튼으로 열고 닫는 가로 스크롤 카드 목록 ── */
+
+#recs-panel {
+  flex-shrink: 0;
+  margin: 8px 8px 0;
+  padding: 10px 12px 12px;
+  background: var(--panel);
+  border-radius: var(--radius);
+}
+
+#recs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+}
+
+#recs-head h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  min-width: 0;
+}
+
+#recs-seed {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+  max-width: 45vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#recs-head-buttons {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+#recs-head-buttons button {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+#recs-head-buttons button:hover {
+  color: var(--text);
+  background: var(--panel-hover);
+}
+
+#recs-head-buttons svg,
+#recs-panel .r-actions svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#recs-list {
+  list-style: none;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+#recs-list li {
+  position: relative;
+  width: 168px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.r-thumb {
+  display: block;
+  width: 168px;
+  height: 94px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: var(--tile);
+}
+
+.r-title {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.r-author {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-sub);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 카드 호버 시 썸네일 우하단에 액션 버튼 (대기열 추가 / 내 재생목록 추가) */
+.r-actions {
+  position: absolute;
+  top: 60px;
+  right: 6px;
+  display: none;
+  gap: 6px;
+}
+
+#recs-list li:hover .r-actions {
+  display: flex;
+}
+
+.r-actions button {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  cursor: pointer;
+}
+
+.r-actions button:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+#recs-status {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.ctl-btn.active {
+  color: var(--accent);
+}
+
 /* ── 하단 재생 바: 현재 곡 정보 + 트랜스포트 버튼 ── */
 
 #controls {
@@ -1167,6 +1323,8 @@ input {
   position: fixed;
   z-index: 100;
   min-width: 210px;
+  max-height: 60vh;
+  overflow-y: auto;
   background: var(--tile);
   border-radius: 8px;
   padding: 4px;
@@ -1211,6 +1369,7 @@ input {
 body.immersive #topbar,
 body.immersive #sidebar,
 body.immersive #queue-panel,
+body.immersive #recs-panel,
 body.immersive #controls {
   display: none;
 }

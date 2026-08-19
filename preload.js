@@ -41,3 +41,7 @@ contextBridge.exposeInMainWorld('account', {
 contextBridge.exposeInMainWorld('ytsearch', {
   videos: (query) => ipcRenderer.invoke('search:videos', query),
 });
+
+contextBridge.exposeInMainWorld('recs', {
+  fetch: (listId, token) => ipcRenderer.invoke('recs:fetch', { listId, token }),
+});
