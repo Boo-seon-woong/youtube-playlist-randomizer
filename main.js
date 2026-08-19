@@ -2,6 +2,7 @@ const { app, BrowserWindow, session, ipcMain, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 
 // WSLg의 GPU 합성 버그로 영상이 창 밖에 그려지거나 검게 나오는 문제 방지 (Windows 네이티브에서는 불필요)
 if (process.platform === 'linux') app.disableHardwareAcceleration();
@@ -155,11 +156,279 @@ function collectPlaylistNodes(node, out) {
   for (const value of Object.values(node)) collectPlaylistNodes(value, out);
 }
 
+// ── 구글 계정 연동: 로그인 창에서 만들어진 세션 쿠키로 유튜브 웹과 동일하게 인증한다 ──
+// OAuth/API 키 없이, 웹 클라이언트의 SAPISIDHASH 서명(SHA1(ts + SAPISID + origin))을 그대로 사용.
+// 쿠키는 Electron 기본 세션에 저장되어 앱을 재시작해도 로그인이 유지된다.
+const YT_ORIGIN = 'https://www.youtube.com';
+
+async function getSessionCookies() {
+  try {
+    return await session.defaultSession.cookies.get({ url: YT_ORIGIN });
+  } catch {
+    return [];
+  }
+}
+
+// 로그인 상태면 인증 헤더(Cookie + SAPISIDHASH), 아니면 빈 객체.
+// 재생목록/검색 요청에 항상 섞어 보내므로 로그인하면 비공개 재생목록(WL/LL 포함)도 열린다.
+async function authHeaders() {
+  const cookies = await getSessionCookies();
+  const sapisid = cookies.find((c) => c.name === 'SAPISID') || cookies.find((c) => c.name === '__Secure-3PAPISID');
+  if (!sapisid) return {};
+  const ts = Math.floor(Date.now() / 1000);
+  const hash = crypto.createHash('sha1').update(`${ts} ${sapisid.value} ${YT_ORIGIN}`).digest('hex');
+  return {
+    Cookie: cookies.map((c) => `${c.name}=${c.value}`).join('; '),
+    Authorization: `SAPISIDHASH ${ts}_${hash}`,
+    'X-Origin': YT_ORIGIN,
+    Origin: YT_ORIGIN,
+    'X-Goog-AuthUser': '0',
+  };
+}
+
+// InnerTube API 키/클라이언트 버전: 홈 페이지에서 1회 추출 후 캐시 (페이지에 공개 포함된 값)
+let innertubeCfg = null;
+
+async function getInnertubeCfg() {
+  if (innertubeCfg) return innertubeCfg;
+  const res = await fetch(`${YT_ORIGIN}/?hl=ko`, {
+    headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8', ...(await authHeaders()) },
+  });
+  const html = await res.text();
+  const key = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
+  const ver = html.match(/"INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"/);
+  if (!key) throw new Error('innertube config parse failed');
+  innertubeCfg = { key: key[1], clientVersion: ver ? ver[1] : '2.20240701.00.00' };
+  return innertubeCfg;
+}
+
+async function innertube(endpoint, body) {
+  const cfg = await getInnertubeCfg();
+  const res = await fetch(`${YT_ORIGIN}/youtubei/v1/${endpoint}?key=${cfg.key}&prettyPrint=false`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': UA, ...(await authHeaders()) },
+    body: JSON.stringify({
+      context: { client: { clientName: 'WEB', clientVersion: cfg.clientVersion, hl: 'ko' } },
+      ...body,
+    }),
+  });
+  if (!res.ok) throw new Error(endpoint + ' HTTP ' + res.status);
+  return res.json();
+}
+
+// ytInitialData류 트리에서 특정 키를 깊이 우선으로 찾는다 (중첩 경로가 자주 바뀌므로 경로 하드코딩 금지)
+function findKey(node, key) {
+  if (!node || typeof node !== 'object') return null;
+  if (node[key]) return node[key];
+  for (const value of Object.values(node)) {
+    const found = findKey(value, key);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function fetchAccountStatus() {
+  const auth = await authHeaders();
+  if (!auth.Cookie) return { loggedIn: false };
+  try {
+    const data = await innertube('account/account_menu', {});
+    const hdr = findKey(data, 'activeAccountHeaderRenderer');
+    if (hdr) {
+      const name = (hdr.accountName && (hdr.accountName.simpleText || (hdr.accountName.runs || []).map((r) => r.text).join(''))) || '';
+      let photo = '';
+      try { photo = hdr.accountPhoto.thumbnails[0].url; } catch {}
+      return { loggedIn: true, name, photo };
+    }
+  } catch {}
+  // SAPISID 쿠키는 로그인 상태에서만 존재 — 메뉴 구조 파싱이 실패해도 로그인으로 취급
+  return { loggedIn: true, name: '', photo: '' };
+}
+
+// 계정 재생목록 파싱: 신형 lockupViewModel(LOCKUP_CONTENT_TYPE_PLAYLIST/ALBUM)과
+// 구형 gridPlaylistRenderer 모두 지원. 썸네일/곡 수는 노드 JSON 문자열에서 패턴으로 추출.
+function lockupToPlaylist(vm) {
+  if (!vm.contentId) return null;
+  if (vm.contentType && !/PLAYLIST|ALBUM|PODCAST/.test(vm.contentType)) return null;
+  const meta = vm.metadata && vm.metadata.lockupMetadataViewModel;
+  const name = (meta && meta.title && meta.title.content) || '';
+  const json = JSON.stringify(vm);
+  const thumbMatch = json.match(/\/vi\/([\w-]{11})\//);
+  let count = null;
+  const cm = json.match(/동영상\s*([\d,]+)개/) || json.match(/([\d,]+)개의?\s*동영상/) || json.match(/([\d,]+)\s*videos?/);
+  if (cm) count = parseInt(cm[1].replace(/,/g, ''), 10);
+  return { listId: vm.contentId.replace(/^VL/, ''), name, thumb: thumbMatch ? thumbMatch[1] : null, count };
+}
+
+function gridToPlaylist(r) {
+  if (!r.playlistId) return null;
+  const name = (r.title && (r.title.simpleText || (r.title.runs && r.title.runs[0] && r.title.runs[0].text))) || '';
+  let thumb = null;
+  try {
+    const m = JSON.stringify(r.thumbnail || r.thumbnails || '').match(/\/vi\/([\w-]{11})\//);
+    if (m) thumb = m[1];
+  } catch {}
+  let count = null;
+  try {
+    const m = (r.videoCountShortText.simpleText || '').match(/[\d,]+/);
+    if (m) count = parseInt(m[0].replace(/,/g, ''), 10);
+  } catch {}
+  return { listId: r.playlistId.replace(/^VL/, ''), name, thumb, count };
+}
+
+function collectAccountPlaylistNodes(node, out) {
+  if (!node || typeof node !== 'object') return;
+  if (node.lockupViewModel) {
+    const item = lockupToPlaylist(node.lockupViewModel);
+    if (item) out.items.push(item);
+    return;
+  }
+  if (node.gridPlaylistRenderer || node.playlistRenderer) {
+    const item = gridToPlaylist(node.gridPlaylistRenderer || node.playlistRenderer);
+    if (item) out.items.push(item);
+    return;
+  }
+  if (node.continuationItemViewModel || node.continuationItemRenderer) {
+    const token = findToken(node.continuationItemViewModel || node.continuationItemRenderer);
+    if (token && !out.continuation) out.continuation = token;
+    return;
+  }
+  for (const value of Object.values(node)) collectAccountPlaylistNodes(value, out);
+}
+
+// 로그인한 계정의 재생목록 전체 (feed/playlists 페이지 + continuation)
+async function fetchAccountPlaylists() {
+  const auth = await authHeaders();
+  if (!auth.Cookie) return [];
+  const res = await fetch(`${YT_ORIGIN}/feed/playlists?hl=ko`, {
+    headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8', ...auth },
+  });
+  if (!res.ok) throw new Error('feed/playlists HTTP ' + res.status);
+  const html = await res.text();
+  const dataMatch = html.match(/ytInitialData\s*=\s*(\{.+?\})\s*;\s*<\/script>/s);
+  if (!dataMatch) return [];
+  const out = { items: [], continuation: null };
+  collectAccountPlaylistNodes(JSON.parse(dataMatch[1]), out);
+  let guard = 20;
+  while (out.continuation && guard-- > 0) {
+    const token = out.continuation;
+    out.continuation = null;
+    try {
+      collectAccountPlaylistNodes(await innertube('browse', { continuation: token }), out);
+    } catch {
+      break;
+    }
+  }
+  const seen = new Set();
+  return out.items.filter((p) => p.listId && !seen.has(p.listId) && seen.add(p.listId));
+}
+
+// 유튜브 동영상 검색 (비로그인도 동작, params는 동영상 필터)
+function collectSearchVideos(node, out) {
+  if (!node || typeof node !== 'object') return;
+  if (node.videoRenderer) {
+    const r = node.videoRenderer;
+    if (r.videoId) {
+      out.push({
+        id: r.videoId,
+        title: (r.title && r.title.runs && r.title.runs[0] && r.title.runs[0].text) || '',
+        author: (r.ownerText && r.ownerText.runs && r.ownerText.runs[0] && r.ownerText.runs[0].text) || '',
+        duration: (r.lengthText && r.lengthText.simpleText) || '',
+      });
+    }
+    return;
+  }
+  if (node.lockupViewModel) {
+    const item = lockupToItem(node.lockupViewModel);
+    if (item) {
+      let duration = '';
+      try {
+        const m = JSON.stringify(node.lockupViewModel.contentImage || '').match(/"text":"(\d+:[\d:]+)"/);
+        if (m) duration = m[1];
+      } catch {}
+      out.push({ ...item, duration });
+    }
+    return;
+  }
+  for (const value of Object.values(node)) collectSearchVideos(value, out);
+}
+
+async function searchVideos(query) {
+  const data = await innertube('search', { query, params: 'EgIQAQ%3D%3D' });
+  const out = [];
+  collectSearchVideos(data, out);
+  return out.slice(0, 30);
+}
+
+// 계정 재생목록에 곡 추가 (유튜브 웹의 "재생목록에 저장"과 동일한 엔드포인트)
+async function addToPlaylist(playlistId, videoId) {
+  const auth = await authHeaders();
+  if (!auth.Cookie) return { ok: false, error: '로그인이 필요합니다' };
+  try {
+    const data = await innertube('browse/edit_playlist', {
+      playlistId: String(playlistId).replace(/^VL/, ''),
+      actions: [{ action: 'ACTION_ADD_VIDEO', addedVideoId: videoId }],
+    });
+    return { ok: !!data && data.status === 'STATUS_SUCCEEDED' };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+// 로그인 창: 구글 로그인 페이지를 별도 창으로 띄우고, SAPISID 쿠키가 생기면 성공으로 판단.
+// 구글은 임베디드 브라우저의 로그인을 "안전하지 않은 브라우저"로 차단하는데, 크롬 UA로
+// 위장해도 Sec-CH-UA(클라이언트 힌트)와 크롬 전용 API 검사에서 걸린다(실측). 그래서
+// 로그인 창과 accounts.google.com 요청에는 Firefox UA를 쓰고 힌트 헤더를 제거한다 —
+// Firefox에는 해당 검사가 적용되지 않아 통과된다 (Electron 앱들의 통용 우회법).
+const FIREFOX_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0';
+let loginWin = null;
+
+function openLoginWindow(parent) {
+  if (loginWin && !loginWin.isDestroyed()) {
+    loginWin.focus();
+    return Promise.resolve({ loggedIn: false });
+  }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (result) => {
+      if (!done) {
+        done = true;
+        resolve(result);
+      }
+    };
+    loginWin = new BrowserWindow({
+      width: 500,
+      height: 740,
+      parent,
+      autoHideMenuBar: true,
+      title: 'Google 계정으로 로그인',
+      backgroundColor: '#ffffff',
+    });
+    loginWin.webContents.setUserAgent(FIREFOX_UA);
+    const check = async () => {
+      const cookies = await getSessionCookies();
+      if (cookies.some((c) => c.name === 'SAPISID' || c.name === '__Secure-3PAPISID')) {
+        finish({ loggedIn: true });
+        if (loginWin && !loginWin.isDestroyed()) loginWin.close();
+      }
+    };
+    loginWin.webContents.on('did-navigate', check);
+    loginWin.on('closed', () => {
+      loginWin = null;
+      finish({ loggedIn: false });
+    });
+    loginWin.loadURL('https://accounts.google.com/ServiceLogin?service=youtube&hl=ko&continue=' + encodeURIComponent(YT_ORIGIN + '/?hl=ko'));
+  });
+}
+
+async function accountLogout() {
+  await session.defaultSession.clearStorageData({ storages: ['cookies'] });
+}
+
 // 첫 페이지(~100곡)만 파싱해 즉시 반환 — 렌더러는 이 시점에 바로 재생을 시작하고,
 // 나머지는 cont 정보로 fetchPlaylistMore를 반복 호출해 백그라운드로 이어 받는다.
 async function fetchPlaylistFirst(listId) {
   const res = await fetch(`https://www.youtube.com/playlist?list=${listId}&hl=ko`, {
-    headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8' },
+    headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8', ...(await authHeaders()) },
   });
   if (!res.ok) throw new Error('playlist page HTTP ' + res.status);
   const html = await res.text();
@@ -182,7 +451,7 @@ async function fetchPlaylistFirst(listId) {
 async function fetchPlaylistMore(cont) {
   const res = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${cont.key}&prettyPrint=false`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
+    headers: { 'Content-Type': 'application/json', 'User-Agent': UA, ...(await authHeaders()) },
     body: JSON.stringify({
       context: { client: { clientName: 'WEB', clientVersion: cont.clientVersion, hl: 'ko' } },
       continuation: cont.token,
@@ -216,7 +485,7 @@ function findVideoCountText(node) {
 // 사이드바 표시용 경량 메타: 재생목록 첫 페이지만 요청해 첫 곡 ID(썸네일용)와 총 곡 수를 얻는다
 async function fetchPlaylistMeta(listId) {
   const res = await fetch(`https://www.youtube.com/playlist?list=${listId}&hl=ko`, {
-    headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8' },
+    headers: { 'User-Agent': UA, 'Accept-Language': 'ko,en;q=0.8', ...(await authHeaders()) },
   });
   if (!res.ok) return null;
   const html = await res.text();
@@ -252,11 +521,33 @@ function createWindow(port) {
   win.loadURL(`http://127.0.0.1:${port}/`);
 }
 
+let webviewWC = null; // 폴백 웹뷰의 webContents (창에 하나뿐)
+
 app.whenReady().then(async () => {
   const port = await startServer();
+  // 광고/추적 도메인 차단 — 단, 폴백(워치페이지) 웹뷰의 요청은 예외.
+  // 웹뷰에서까지 광고 요청을 차단하면 유튜브가 광고 차단으로 감지해
+  // "광고 차단 프로그램은 YouTube에서 허용되지 않습니다" 팝업으로 재생을 막는다.
+  // 웹뷰의 광고는 주입 스크립트가 무음·16배속·자동 스킵으로 처리하므로 요청은 통과시킨다.
   session.defaultSession.webRequest.onBeforeRequest(
     { urls: AD_URL_PATTERNS },
-    (details, callback) => callback({ cancel: true })
+    (details, callback) => callback({
+      cancel: !(webviewWC && !webviewWC.isDestroyed() && details.webContentsId === webviewWC.id),
+    })
+  );
+
+  // 구글 로그인 도메인 요청은 Firefox로 위장 — UA 교체 + 크로미움 클라이언트 힌트 제거.
+  // (크롬 UA를 흉내 내면 Sec-CH-UA 불일치·크롬 전용 API 검사로 "안전하지 않은 브라우저" 차단)
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['*://accounts.google.com/*', '*://accounts.youtube.com/*'] },
+    (details, callback) => {
+      const headers = { ...details.requestHeaders };
+      for (const key of Object.keys(headers)) {
+        if (/^sec-ch-ua/i.test(key)) delete headers[key];
+      }
+      headers['User-Agent'] = FIREFOX_UA;
+      callback({ requestHeaders: headers });
+    }
   );
 
   ipcMain.handle('playlists:load', () => loadPlaylists());
@@ -277,6 +568,13 @@ app.whenReady().then(async () => {
   ipcMain.handle('playlist:fetchFirst', (_event, listId) => fetchPlaylistFirst(listId));
   ipcMain.handle('playlist:fetchMore', (_event, cont) => fetchPlaylistMore(cont));
   ipcMain.handle('playlist:meta', (_event, listId) => fetchPlaylistMeta(listId));
+  // 구글 계정 연동 + 유튜브 검색
+  ipcMain.handle('account:status', () => fetchAccountStatus());
+  ipcMain.handle('account:login', (event) => openLoginWindow(BrowserWindow.fromWebContents(event.sender)));
+  ipcMain.handle('account:logout', () => accountLogout());
+  ipcMain.handle('account:playlists', () => fetchAccountPlaylists());
+  ipcMain.handle('account:addToPlaylist', (_event, p) => addToPlaylist(p.playlistId, p.videoId));
+  ipcMain.handle('search:videos', (_event, query) => searchVideos(query));
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.setFullScreen(!!flag);
@@ -286,7 +584,6 @@ app.whenReady().then(async () => {
 
   // 직접 재생(webview)에서 누른 f 키를 가로채 앱 전체화면 토글로 전달
   // (preventDefault로 유튜브 자체 전체화면 단축키와의 충돌을 차단)
-  let webviewWC = null; // 폴백 웹뷰의 webContents (창에 하나뿐)
   app.on('web-contents-created', (_event, wc) => {
     if (wc.getType() !== 'webview') return;
     webviewWC = wc;

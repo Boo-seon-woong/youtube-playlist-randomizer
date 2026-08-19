@@ -29,3 +29,15 @@ contextBridge.exposeInMainWorld('winctl', {
 contextBridge.exposeInMainWorld('fallbackctl', {
   click: (x, y) => ipcRenderer.send('fallback:click', { x, y }),
 });
+
+contextBridge.exposeInMainWorld('account', {
+  status: () => ipcRenderer.invoke('account:status'),
+  login: () => ipcRenderer.invoke('account:login'),
+  logout: () => ipcRenderer.invoke('account:logout'),
+  playlists: () => ipcRenderer.invoke('account:playlists'),
+  addToPlaylist: (playlistId, videoId) => ipcRenderer.invoke('account:addToPlaylist', { playlistId, videoId }),
+});
+
+contextBridge.exposeInMainWorld('ytsearch', {
+  videos: (query) => ipcRenderer.invoke('search:videos', query),
+});

@@ -6,6 +6,29 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <header id="topbar">
+    <div id="brand">
+      <svg id="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3.5" y="5" width="3.6" height="14" rx="1.8"/>
+        <rect x="10.2" y="7.5" width="3.6" height="9" rx="1.8"/>
+        <rect x="16.9" y="9.5" width="3.6" height="5" rx="1.8"/>
+      </svg>
+      <span>YouTube Music Player</span>
+    </div>
+    <form id="search-form" autocomplete="off">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="search-input" type="text" placeholder="유튜브에서 곡·영상 검색" />
+    </form>
+    <div id="topbar-right">
+      <span id="guest-badge">게스트 모드</span>
+      <button id="login-btn" title="구글 계정으로 로그인하면 내 유튜브 재생목록을 불러옵니다">로그인</button>
+      <button id="account-btn" hidden>
+        <img id="account-avatar" alt="" hidden />
+        <span id="account-name"></span>
+      </button>
+    </div>
+  </header>
+
   <div id="app">
     <aside id="sidebar">
       <div id="sidebar-head">
@@ -34,6 +57,14 @@
         <webview id="fallback-view" src="about:blank"></webview>
         <div id="player-placeholder">재생목록 링크를 붙여넣거나 저장된 플레이리스트를 선택하세요</div>
         <button id="fs-exit-btn" title="전체화면 해제 (Esc)">전체화면 해제</button>
+        <div id="search-panel" hidden>
+          <div id="search-head">
+            <h2>검색 결과</h2>
+            <button id="search-close" title="닫기 (Esc)"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+          </div>
+          <ol id="search-list"></ol>
+          <p id="search-status" hidden></p>
+        </div>
       </div>
     </main>
 
@@ -91,6 +122,7 @@
   </div>
 
   <div id="ctx-menu" hidden></div>
+  <div id="toast"></div>
 
   <script src="https://www.youtube.com/iframe_api"></script>
   <script src="renderer.js"></script>
