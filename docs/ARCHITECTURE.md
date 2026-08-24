@@ -244,6 +244,21 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
 - **localStorage를 쓰지 않는 이유**: UI 서버 포트가 실행마다 랜덤이라 오리진이 바뀌어
   localStorage가 유지되지 않는다 → `settings:load/save` IPC로 파일에 저장.
 
+## 패널 접기 / 폭 조절 (사이드바·대기열)
+
+`#app`은 `사이드바 | .resizer | 플레이어 | .resizer | 대기열`의 flex 행이고, 패널 사이 8px
+간격 자체가 폭 조절 핸들(`.resizer`)이다. 핸들 가운데의 알약 버튼(`.resizer-btn`, ‹ ›)이
+접기/펼치기 토글 — 접힌 상태에서도 핸들과 버튼은 남아 있어 언제든 다시 펼칠 수 있다.
+
+- 상태는 `layout = { sidebarWidth, queueWidth, sidebarCollapsed, queueCollapsed }` 하나로,
+  `settings.json`의 `layout`에 저장 (테마·볼륨과 한 객체). `applyLayout()`이 인라인 `width`와
+  `body.sidebar-collapsed` / `body.queue-collapsed` 클래스, 버튼 아이콘·툴팁을 갱신한다.
+- 드래그는 Pointer Events + `setPointerCapture`. **드래그 중 `body.resizing`이 `#content`의
+  `pointer-events`를 끈다** — 마우스가 임베드 iframe/폴백 webview 위를 지나면 이벤트가 그쪽으로
+  넘어가 드래그가 끊기기 때문. 폭은 `PANEL_LIMITS`(사이드바 200~520, 대기열 220~560)와
+  창 폭의 45%로 클램프되어 플레이어가 짓눌리지 않는다. 접힌 패널의 핸들은 드래그를 무시한다.
+- 몰입 모드에서는 핸들도 함께 숨긴다 (`body.immersive .resizer`).
+
 ## 사운드 세팅 (앱 마스터 볼륨)
 
 유튜브 볼륨은 임베드 플레이어와 워치페이지가 **따로 기억해** 일반 재생↔직접 재생 전환 때마다

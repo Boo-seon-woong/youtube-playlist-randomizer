@@ -994,9 +994,9 @@ function applyTheme(t) {
   syncSettingsUI();
 }
 
-// settings.json은 테마 3색 + 마스터 볼륨을 한 객체로 저장한다
+// settings.json은 테마 3색 + 마스터 볼륨 + 패널 레이아웃을 한 객체로 저장한다
 function saveSettings() {
-  window.uiSettings.save({ ...theme, volume: masterVolume });
+  window.uiSettings.save({ ...theme, volume: masterVolume, layout });
 }
 
 function syncSettingsUI() {
@@ -1136,6 +1136,81 @@ document.getElementById('sound-close').addEventListener('click', closeSoundPanel
 soundBackdrop.addEventListener('click', (e) => {
   if (e.target === soundBackdrop) closeSoundPanel();
 });
+
+// ── 패널 접기 / 폭 조절: 사이드바·대기열 폭을 핸들 드래그로 바꾸고, 핸들 버튼으로 접는다 ──
+// 상태는 settings.json의 layout에 저장. 드래그 중에는 body.resizing으로 플레이어(iframe/webview)의
+// 포인터 이벤트를 막아 마우스가 영상 위를 지나도 드래그가 끊기지 않게 한다 (+ pointer capture).
+
+const PANEL_LIMITS = { sidebar: { min: 200, max: 520 }, queue: { min: 220, max: 560 } };
+const DEFAULT_LAYOUT = { sidebarWidth: 300, queueWidth: 320, sidebarCollapsed: false, queueCollapsed: false };
+let layout = { ...DEFAULT_LAYOUT };
+
+const sidebarEl = document.getElementById('sidebar');
+const queuePanelEl = document.getElementById('queue-panel');
+const CHEVRON_LEFT_SVG = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>';
+const CHEVRON_RIGHT_SVG = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+
+function clampPanelWidth(key, w) {
+  const lim = PANEL_LIMITS[key];
+  const max = Math.min(lim.max, Math.floor(window.innerWidth * 0.45)); // 좁은 창에서 플레이어가 짓눌리지 않게
+  return Math.round(Math.min(max, Math.max(lim.min, Number(w) || lim.min)));
+}
+
+function applyLayout() {
+  sidebarEl.style.width = clampPanelWidth('sidebar', layout.sidebarWidth) + 'px';
+  queuePanelEl.style.width = clampPanelWidth('queue', layout.queueWidth) + 'px';
+  document.body.classList.toggle('sidebar-collapsed', !!layout.sidebarCollapsed);
+  document.body.classList.toggle('queue-collapsed', !!layout.queueCollapsed);
+  const leftBtn = document.querySelector('#resize-left .resizer-btn');
+  const rightBtn = document.querySelector('#resize-right .resizer-btn');
+  leftBtn.innerHTML = layout.sidebarCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_LEFT_SVG;
+  leftBtn.title = layout.sidebarCollapsed ? '내 플레이리스트 펼치기' : '내 플레이리스트 접기';
+  rightBtn.innerHTML = layout.queueCollapsed ? CHEVRON_LEFT_SVG : CHEVRON_RIGHT_SVG;
+  rightBtn.title = layout.queueCollapsed ? '재생 대기열 펼치기' : '재생 대기열 접기';
+}
+
+// direction: 핸들을 오른쪽으로 끌 때 패널 폭이 커지면 1(왼쪽 패널), 작아지면 -1(오른쪽 패널)
+function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, direction) {
+  const handle = document.getElementById(handleId);
+  const btn = handle.querySelector('.resizer-btn');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    layout[collapsedKey] = !layout[collapsedKey];
+    applyLayout();
+    saveSettings();
+  });
+  let dragging = false;
+  let startX = 0;
+  let startWidth = 0;
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || btn.contains(e.target) || layout[collapsedKey]) return;
+    dragging = true;
+    startX = e.clientX;
+    startWidth = panelEl.getBoundingClientRect().width;
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add('active');
+    document.body.classList.add('resizing');
+    e.preventDefault();
+  });
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    layout[widthKey] = clampPanelWidth(key, startWidth + (e.clientX - startX) * direction);
+    panelEl.style.width = layout[widthKey] + 'px';
+  });
+  const endDrag = (e) => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('active');
+    document.body.classList.remove('resizing');
+    try { handle.releasePointerCapture(e.pointerId); } catch {}
+    saveSettings();
+  };
+  handle.addEventListener('pointerup', endDrag);
+  handle.addEventListener('pointercancel', endDrag);
+}
+
+setupResizer('resize-left', 'sidebar', sidebarEl, 'sidebarCollapsed', 'sidebarWidth', 1);
+setupResizer('resize-right', 'queue', queuePanelEl, 'queueCollapsed', 'queueWidth', -1);
 
 // ── 구글 계정 연동: 게스트 모드(기본) ↔ 로그인 시 계정 재생목록 섹션 표시 ──
 // 계정 재생목록은 유튜브 계정이 원본이므로 playlists.json에 저장하지 않고
@@ -1849,6 +1924,8 @@ document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue)
   else syncSettingsUI();
   if (saved && saved.volume != null) masterVolume = clampVolume(saved.volume);
   paintVolumeUI(); // 저장값이 없어도 슬라이더 채움 표시는 초기화 필요
+  if (saved && saved.layout) layout = { ...DEFAULT_LAYOUT, ...saved.layout };
+  applyLayout(); // 저장값이 없어도 핸들 버튼 아이콘은 그려야 한다
   playlists = normalizeItems(await window.store.load());
   renderList();
   fetchMissingMeta();

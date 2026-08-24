@@ -194,7 +194,7 @@ input {
 #app {
   flex: 1;
   display: flex;
-  gap: 8px;
+  gap: 0; /* 패널 사이 간격은 폭 조절 핸들(.resizer 8px)이 담당 */
   padding: 8px 8px 0;
   min-height: 0;
 }
@@ -1496,6 +1496,104 @@ input {
   height: 1px;
   background: rgba(255, 255, 255, 0.1);
   margin: 4px 6px;
+}
+
+/* ── 패널 폭 조절 핸들 (사이드바|플레이어|대기열 사이) + 접기/펼치기 버튼 ── */
+
+.resizer {
+  position: relative;
+  width: 8px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resizer::before {
+  /* 호버/드래그 중에만 보이는 세로 안내선 */
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.resizer:hover::before,
+.resizer.active::before {
+  background: var(--accent);
+}
+
+.resizer-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--panel-active);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  z-index: 2;
+}
+
+.resizer:hover .resizer-btn,
+.resizer-btn:hover,
+body.sidebar-collapsed #resize-left .resizer-btn,
+body.queue-collapsed #resize-right .resizer-btn {
+  opacity: 1;
+}
+
+.resizer-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.resizer-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+body.sidebar-collapsed #sidebar,
+body.queue-collapsed #queue-panel {
+  display: none;
+}
+
+body.sidebar-collapsed #resize-left,
+body.queue-collapsed #resize-right {
+  cursor: default;
+}
+
+body.sidebar-collapsed #resize-left::before,
+body.queue-collapsed #resize-right::before {
+  display: none;
+}
+
+/* 드래그 중: 마우스가 iframe/webview 위를 지나도 포인터 이벤트가 호스트에 남도록 플레이어를 통과시킴 */
+body.resizing {
+  cursor: col-resize;
+}
+
+body.resizing #content {
+  pointer-events: none;
+}
+
+body.immersive .resizer {
+  display: none;
 }
 
 /* ── 몰입 모드: 창 전체화면 + 플레이어만 표시 ── */
