@@ -62,6 +62,7 @@ const PERSON_SVG = '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a
 const REFRESH_SVG = '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>';
 const LOGOUT_SVG = '<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>';
 const LIST_PLUS_SVG = '<svg viewBox="0 0 24 24"><path d="M3 6h13M3 12h13M3 18h7M18 15v6M15 18h6"/></svg>';
+const LIST_SVG = '<svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>';
 
 // "https://www.youtube.com/playlist?list=PL..." / "watch?v=...&list=PL..." / raw ID
 function extractListId(url) {
@@ -89,7 +90,7 @@ window.onYouTubeIframeAPIReady = () => {
         if (pendingPlay) {
           const p = pendingPlay;
           pendingPlay = null;
-          playPlaylist(p.listId, p.shuffle);
+          playPlaylist(p.listId, p.shuffle, p.preset);
         }
         if (pendingQueuePlay) {
           pendingQueuePlay = false;
@@ -121,6 +122,7 @@ if (window.YT && window.YT.Player && !player) window.onYouTubeIframeAPIReady();
 const fsExitBtn = document.getElementById('fs-exit-btn');
 
 function enterImmersive() {
+  closeBrowse(); // 전체화면은 영상을 보려는 것 — 곡 구성 오버레이는 닫는다
   document.body.classList.add('immersive');
   window.winctl.setFullScreen(true);
   startCursorWatch();
@@ -191,6 +193,8 @@ document.addEventListener('keydown', (e) => {
     closeSettings();
   } else if (e.key === 'Escape' && !searchPanel.hidden) {
     closeSearchPanel();
+  } else if (e.key === 'Escape' && !browsePanel.hidden) {
+    closeBrowse();
   } else if (e.key === 'Escape' && document.body.classList.contains('immersive') && !document.fullscreenElement) {
     exitImmersive();
   } else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey && !e.metaKey
@@ -390,9 +394,10 @@ function onPlayerStateChange(event) {
   if (data && data.title) setNowPlaying(data.video_id || queue[queueIndex], data.title, data.author || '');
 }
 
-async function playPlaylist(listId, shuffle) {
+// preset: 곡 구성 화면에서 넘어온 경우 — items(이미 받아둔 전곡, 있으면 재수집 생략), startId(이 곡부터)
+async function playPlaylist(listId, shuffle, preset = {}) {
   if (!playerReady) {
-    pendingPlay = { listId, shuffle };
+    pendingPlay = { listId, shuffle, preset };
     placeholder.textContent = '플레이어 준비 중… 준비되면 자동으로 재생됩니다';
     return;
   }
@@ -400,6 +405,7 @@ async function playPlaylist(listId, shuffle) {
   const ref = allPlaylistRefs().find((p) => p.listId === listId)
     || accountPlaylists.find((p) => p.listId === listId);
   activePlaylistName = (ref && ref.name) || '';
+  closeBrowse(); // 재생을 누른 순간 중앙은 곡 구성 대신 영상
   placeholder.hidden = true;
   const token = ++loadToken;
   renderList();
@@ -409,9 +415,13 @@ async function playPlaylist(listId, shuffle) {
   // 첫 페이지(~100곡, 제목/아티스트 포함)만 받는 즉시 재생을 시작하고,
   // 나머지는 continuation을 백그라운드로 따라가며 대기열에 이어 붙인다 (전곡 완료를 기다리지 않음)
   let first = null;
-  try {
-    first = await window.playlist.fetchFirst(listId);
-  } catch {}
+  if (preset.items) {
+    first = { items: preset.items, cont: null }; // 곡 구성 화면이 전곡을 이미 받아둔 경우
+  } else {
+    try {
+      first = await window.playlist.fetchFirst(listId);
+    } catch {}
+  }
   if (token !== loadToken) return;
 
   if (first && first.items.length > 0) {
@@ -422,6 +432,7 @@ async function playPlaylist(listId, shuffle) {
     queue = first.items.map((it) => it.id);
     if (shuffle) shuffleArray(queue);
     queueIndex = 0;
+    if (preset.startId) queueIndex = Math.max(0, queue.indexOf(preset.startId)); // 곡 구성에서 고른 곡부터
     renderQueue();
     playCurrent();
 
@@ -627,6 +638,7 @@ function renderQueue() {
 
     li.append(num, thumb, meta, del);
     li.onclick = () => {
+      closeBrowse();
       queueIndex = i;
       playCurrent();
     };
@@ -1398,6 +1410,7 @@ function closeSearchPanel() {
 document.getElementById('search-close').addEventListener('click', closeSearchPanel);
 
 function playVideoNow(item) {
+  closeBrowse();
   titleCache.set(item.id, { title: item.title || item.id, author: item.author || '' });
   unplayableIds.delete(item.id);
   if (queue.length === 0) {
@@ -1493,6 +1506,127 @@ searchForm.addEventListener('submit', async (e) => {
   } catch {}
   renderSearchResults(items);
 });
+
+// ── 재생목록 곡 구성 보기: 사이드바 클릭 시 중앙 오버레이에 곡 목록만 표시, 재생은 버튼으로 ──
+// 재생 중인 대기열(셔플 순서 포함)을 덮어쓰지 않고 다른 재생목록을 살펴볼 수 있다.
+// 곡 목록은 재생과 같은 스트리밍 수집(fetchFirst/fetchMore)으로 받아 도착하는 대로 이어 붙이고,
+// 전곡을 받은 뒤 재생을 누르면 재수집 없이 그 목록으로 바로 대기열을 만든다.
+
+const browsePanel = document.getElementById('browse-panel');
+const browseListEl = document.getElementById('browse-list');
+const browseStatus = document.getElementById('browse-status');
+const browseThumb = document.getElementById('browse-thumb');
+const browseName = document.getElementById('browse-name');
+const browseSub = document.getElementById('browse-sub');
+let browse = null; // { listId, name, thumb, items, done, error }
+let browseToken = 0;
+
+function cacheTitles(items) {
+  for (const it of items) {
+    if (it.title) titleCache.set(it.id, { title: it.title, author: it.author || '' });
+  }
+}
+
+function renderBrowseHead() {
+  browseName.textContent = browse.name;
+  browseName.title = browse.name;
+  const n = browse.items.length;
+  browseSub.textContent = browse.error ? '곡 목록을 불러오지 못했습니다 (비공개이거나 빈 재생목록)' : browse.done ? `${n}곡` : `${n}곡 불러오는 중…`;
+  const firstId = browse.items[0] ? browse.items[0].id : browse.thumb;
+  browseThumb.hidden = !firstId;
+  if (firstId) browseThumb.src = `https://i.ytimg.com/vi/${firstId}/mqdefault.jpg`;
+  browseStatus.hidden = !(browse.error || (n === 0 && !browse.done));
+  browseStatus.textContent = browse.error ? '곡 목록을 불러오지 못했습니다' : '불러오는 중…';
+}
+
+// from 이후의 곡만 이어 붙인다 (배치마다 전체를 다시 그리지 않음)
+function appendBrowseRows(from) {
+  for (let i = from; i < browse.items.length; i++) {
+    const it = browse.items[i];
+    const li = document.createElement('li');
+    const num = document.createElement('span');
+    num.className = 'q-idx';
+    num.textContent = i + 1;
+    const thumb = document.createElement('img');
+    thumb.className = 'q-thumb';
+    thumb.src = `https://i.ytimg.com/vi/${it.id}/mqdefault.jpg`;
+    thumb.loading = 'lazy';
+    thumb.draggable = false;
+    const meta = document.createElement('div');
+    meta.className = 'q-meta';
+    const title = document.createElement('div');
+    title.className = 'q-title';
+    title.textContent = it.title || it.id;
+    const author = document.createElement('div');
+    author.className = 'q-author';
+    author.textContent = it.author || '';
+    meta.append(title, author);
+    li.append(num, thumb, meta);
+    li.title = '클릭하면 이 곡부터 재생목록을 재생합니다';
+    li.onclick = () => playFromBrowse(false, it.id);
+    browseListEl.appendChild(li);
+  }
+}
+
+async function openBrowse(pl) {
+  const token = ++browseToken;
+  browse = { listId: pl.listId, name: pl.name || pl.listId, thumb: pl.thumb, items: [], done: false, error: false };
+  browseListEl.innerHTML = '';
+  browseListEl.scrollTop = 0;
+  renderBrowseHead();
+  browsePanel.hidden = false;
+  let first = null;
+  try {
+    first = await window.playlist.fetchFirst(pl.listId);
+  } catch {}
+  if (token !== browseToken) return;
+  if (!first || first.items.length === 0) {
+    browse.error = true;
+    browse.done = true;
+    renderBrowseHead();
+    return;
+  }
+  cacheTitles(first.items);
+  browse.items.push(...first.items);
+  appendBrowseRows(0);
+  renderBrowseHead();
+  let cont = first.cont;
+  let guard = 50;
+  while (cont && guard-- > 0) {
+    let more = null;
+    try {
+      more = await window.playlist.fetchMore(cont);
+    } catch {}
+    if (token !== browseToken) return;
+    if (!more) break;
+    cacheTitles(more.items);
+    const from = browse.items.length;
+    browse.items.push(...more.items);
+    appendBrowseRows(from);
+    renderBrowseHead();
+    cont = more.cont;
+  }
+  browse.done = true;
+  renderBrowseHead();
+}
+
+function closeBrowse() {
+  if (browsePanel.hidden) return;
+  browseToken++; // 진행 중인 수집 중단
+  browse = null;
+  browsePanel.hidden = true;
+}
+
+// 곡 구성 화면의 재생/셔플/곡 클릭 → 대기열 교체. 전곡을 이미 받았으면 재수집 없이 바로 재생.
+function playFromBrowse(shuffle, startId) {
+  if (!browse) return;
+  const preset = browse.done && !browse.error ? { items: browse.items.slice(), startId } : { startId };
+  playPlaylist(browse.listId, shuffle, preset);
+}
+
+document.getElementById('browse-play').addEventListener('click', () => playFromBrowse(false));
+document.getElementById('browse-shuffle').addEventListener('click', () => playFromBrowse(true));
+document.getElementById('browse-close').addEventListener('click', closeBrowse);
 
 // ── 추천 곡: 현재 곡을 시드로 유튜브 관련 동영상(watch next)을 하단 패널에 표시 ──
 // 재생 바의 토글 버튼으로 열고 닫으며, 새로고침은 대기열에서 무작위 곡을 시드로 뽑아
@@ -1739,12 +1873,13 @@ function buildPlaylistRow(pl, depth) {
     });
     li.append(editBtn, deleteBtn);
   }
-  li.title = '클릭하여 재생 · 우클릭으로 더 보기';
-  li.onclick = () => playPlaylist(pl.listId, false);
+  li.title = '클릭하여 곡 구성 보기 · 우클릭으로 더 보기';
+  li.onclick = () => openBrowse(pl); // 바로 재생하지 않고 중앙에 곡 구성만 표시 — 재생은 그 화면의 버튼으로
   li.oncontextmenu = (e) => {
     e.preventDefault();
     e.stopPropagation();
     const entries = [
+      { svg: LIST_SVG, label: '곡 구성 보기', action: () => openBrowse(pl) },
       { svg: PLAY_SVG, label: '재생', action: () => playPlaylist(pl.listId, false) },
       { svg: SHUFFLE_SVG, label: '셔플 재생', action: () => playPlaylist(pl.listId, true) },
     ];

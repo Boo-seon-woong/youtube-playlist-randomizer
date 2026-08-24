@@ -59,6 +59,23 @@
         <webview id="fallback-view" src="about:blank"></webview>
         <div id="player-placeholder">재생목록 링크를 붙여넣거나 저장된 플레이리스트를 선택하세요</div>
         <button id="fs-exit-btn" title="전체화면 해제 (Esc)">전체화면 해제</button>
+        <div id="browse-panel" hidden>
+          <div id="browse-head">
+            <img id="browse-thumb" alt="" hidden />
+            <div id="browse-meta">
+              <p class="browse-kicker">재생목록</p>
+              <h2 id="browse-name"></h2>
+              <p id="browse-sub"></p>
+              <div id="browse-actions">
+                <button id="browse-play"><svg viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></svg>재생</button>
+                <button id="browse-shuffle"><svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>셔플 재생</button>
+              </div>
+            </div>
+            <button id="browse-close" title="닫기 (Esc)"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+          </div>
+          <ol id="browse-list"></ol>
+          <p id="browse-status" hidden></p>
+        </div>
         <div id="search-panel" hidden>
           <div id="search-head">
             <h2>검색 결과</h2>

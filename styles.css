@@ -606,6 +606,133 @@ input {
   height: 100%;
 }
 
+/* ── 재생목록 곡 구성: 플레이어 위 오버레이 — 사이드바 클릭 시 곡 목록만 보여주고 재생은 버튼으로 ── */
+
+#browse-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 3; /* 검색 패널과 같은 층 — DOM 순서상 검색 패널이 위에 그려진다 */
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  padding: 20px 8px 8px;
+}
+
+#browse-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 0 12px 16px;
+}
+
+#browse-thumb {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: var(--tile);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+#browse-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.browse-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-sub);
+  letter-spacing: 0.06em;
+}
+
+#browse-name {
+  margin-top: 4px;
+  font-size: 24px;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#browse-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+#browse-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+#browse-actions button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+#browse-actions button:hover {
+  transform: scale(1.04);
+}
+
+#browse-actions #browse-play {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+#browse-actions #browse-shuffle {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid #727272;
+}
+
+#browse-actions #browse-shuffle:hover {
+  border-color: var(--text);
+}
+
+#browse-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+#browse-list {
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+}
+
+#browse-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+#browse-list li:hover {
+  background: var(--panel-hover);
+}
+
+#browse-status {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
 /* ── 검색 결과: 플레이어 패널 위 오버레이 (재생은 뒤에서 계속) ── */
 
 #search-panel {
@@ -630,7 +757,8 @@ input {
   font-weight: 700;
 }
 
-#search-close {
+#search-close,
+#browse-close {
   width: 32px;
   height: 32px;
   display: flex;
@@ -643,12 +771,14 @@ input {
   cursor: pointer;
 }
 
-#search-close:hover {
+#search-close:hover,
+#browse-close:hover {
   color: var(--text);
   background: var(--panel-hover);
 }
 
-#search-close svg {
+#search-close svg,
+#browse-close svg {
   width: 16px;
   height: 16px;
 }
@@ -1138,7 +1268,8 @@ input {
 #settings-panel svg,
 #sound-panel svg,
 #search-form svg,
-#search-panel svg {
+#search-panel svg,
+#browse-panel svg {
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
