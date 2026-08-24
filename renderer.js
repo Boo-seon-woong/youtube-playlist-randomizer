@@ -85,6 +85,7 @@ window.onYouTubeIframeAPIReady = () => {
     events: {
       onReady: () => {
         playerReady = true;
+        applyVolume(); // 저장된 마스터 볼륨을 임베드 플레이어에 반영
         if (pendingPlay) {
           const p = pendingPlay;
           pendingPlay = null;
@@ -184,14 +185,17 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !settingsBackdrop.hidden) {
+  if (e.key === 'Escape' && !soundBackdrop.hidden) {
+    closeSoundPanel();
+  } else if (e.key === 'Escape' && !settingsBackdrop.hidden) {
     closeSettings();
   } else if (e.key === 'Escape' && !searchPanel.hidden) {
     closeSearchPanel();
   } else if (e.key === 'Escape' && document.body.classList.contains('immersive') && !document.fullscreenElement) {
     exitImmersive();
-  } else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey && !e.metaKey && e.target.tagName !== 'INPUT') {
-    toggleImmersive(); // f: 전체화면 토글 (입력창 타이핑 중에는 무시)
+  } else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey && !e.metaKey
+    && (e.target.tagName !== 'INPUT' || e.target.type === 'range')) {
+    toggleImmersive(); // f: 전체화면 토글 (입력창 타이핑 중에는 무시 — 볼륨 슬라이더 포커스는 예외)
   }
 });
 
@@ -304,6 +308,8 @@ fallbackView.addEventListener('dom-ready', () => {
     ytd-watch-flexy #player { max-height: 100vh; }
     html, body { overflow: hidden !important; }
   `).catch(() => {});
+  // 앱 마스터 볼륨을 페이지에 전달 (주입 인터벌이 100ms 주기로 video.volume에 강제한다)
+  fallbackView.executeJavaScript(`window.__appVolume = ${masterVolume}; 0`).catch(() => {});
   // 영상 광고: 감지 즉시 무음 + 16배속 + 끝으로 점프, 스킵 버튼 자동 클릭,
   // 프리미엄 팝업/일시정지 확인창 자동 처리. 100ms 주기로 돌아 광고 노출 시간을 최소화한다.
   fallbackView.executeJavaScript(`
@@ -326,6 +332,11 @@ fallbackView.addEventListener('dom-ready', () => {
           video.muted = false;
           try { video.playbackRate = 1; } catch {}
           window.__adActive = false;
+        }
+        // 앱 마스터 볼륨 강제: 워치페이지(유튜브) 자체 볼륨 조작을 덮어써 앱 볼륨으로 통일
+        if (video && !adShowing && typeof window.__appVolume === 'number') {
+          const target = Math.min(1, Math.max(0, window.__appVolume / 100));
+          if (Math.abs(video.volume - target) > 0.0005) video.volume = target;
         }
         // 스킵 버튼: 클래스는 자주 바뀌므로 텍스트/aria-label('건너뛰기'/'Skip')로도 찾는다.
         // 전면 스폰서 카드(인터스티셜)는 영상이 없어 배속/점프가 안 통하므로 버튼 클릭이 유일한 길.
@@ -497,6 +508,7 @@ function playCurrent() {
   }
   if (fallbackActive) stopFallback(); // 전체화면 전환은 stopFallback이 처리
   player.loadVideoById(id);
+  applyVolume(); // 곡 로드 후에도 앱 마스터 볼륨 유지
   updateQueueHighlight();
   // 워치독: onError조차 오지 않고 시작도 못 하는 곡은 8초 후 폴백으로 전환
   clearTimeout(watchdogTimer);
@@ -982,8 +994,9 @@ function applyTheme(t) {
   syncSettingsUI();
 }
 
-function saveTheme() {
-  window.uiSettings.save(theme);
+// settings.json은 테마 3색 + 마스터 볼륨을 한 객체로 저장한다
+function saveSettings() {
+  window.uiSettings.save({ ...theme, volume: masterVolume });
 }
 
 function syncSettingsUI() {
@@ -1014,14 +1027,14 @@ for (const [i, p] of THEME_PRESETS.entries()) {
   btn.append(preview, name);
   btn.onclick = () => {
     applyTheme(p);
-    saveTheme();
+    saveSettings();
   };
   document.getElementById('theme-presets').appendChild(btn);
 }
 
 for (const [key, input] of Object.entries(colorInputs)) {
   input.addEventListener('input', () => applyTheme({ ...theme, [key]: input.value })); // 실시간 미리보기
-  input.addEventListener('change', saveTheme); // 색 선택을 마쳤을 때만 저장
+  input.addEventListener('change', saveSettings); // 색 선택을 마쳤을 때만 저장
 }
 
 function openSettings() {
@@ -1037,10 +1050,88 @@ document.getElementById('settings-btn').addEventListener('click', openSettings);
 document.getElementById('settings-close').addEventListener('click', closeSettings);
 document.getElementById('settings-reset').addEventListener('click', () => {
   applyTheme(DEFAULT_THEME);
-  saveTheme();
+  saveSettings();
 });
 settingsBackdrop.addEventListener('click', (e) => {
   if (e.target === settingsBackdrop) closeSettings();
+});
+
+// ── 사운드 세팅: 앱 마스터 볼륨 (일반 재생·직접 재생 공통) ──
+// 유튜브 볼륨은 임베드/워치페이지가 따로 기억해 모드 전환 때마다 따로 논다. 그래서 앱이
+// 볼륨의 단일 기준이 된다 — 임베드는 IFrame API setVolume, 직접 재생은 주입 인터벌이
+// video.volume을 100ms 주기로 강제(__appVolume). 값은 settings.json의 volume에 저장.
+
+let masterVolume = 100; // 0.00 ~ 100.00 (소숫점 둘째자리)
+
+const soundBackdrop = document.getElementById('sound-backdrop');
+const volSlider = document.getElementById('vol-slider');
+const soundVolSlider = document.getElementById('sound-vol-slider');
+const soundVolInput = document.getElementById('sound-vol-input');
+const soundVolReadout = document.getElementById('sound-vol-readout');
+const soundFill = document.getElementById('sound-fill');
+
+function clampVolume(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return masterVolume;
+  return Math.round(Math.min(100, Math.max(0, n)) * 100) / 100;
+}
+
+function paintVolumeUI() {
+  const v = masterVolume;
+  for (const el of [volSlider, soundVolSlider]) {
+    el.value = v;
+    // 채워진 구간을 포인트 색으로 — range 트랙을 요소 배경 그라디언트로 그린다
+    el.style.background = `linear-gradient(to right, var(--accent) ${v}%, var(--panel-active) ${v}%)`;
+  }
+  volSlider.title = `마스터 볼륨 ${v.toFixed(2)}`;
+  soundVolReadout.textContent = v.toFixed(2);
+  if (document.activeElement !== soundVolInput) soundVolInput.value = v.toFixed(2);
+  soundFill.style.width = v + '%';
+}
+
+function applyVolume() {
+  if (playerReady) {
+    try {
+      player.setVolume(masterVolume);
+      player.unMute();
+    } catch {}
+  }
+  if (fallbackActive) {
+    fallbackView.executeJavaScript(`window.__appVolume = ${masterVolume}; 0`).catch(() => {});
+  }
+}
+
+function setMasterVolume(v, save) {
+  masterVolume = clampVolume(v);
+  paintVolumeUI();
+  applyVolume();
+  if (save) saveSettings();
+}
+
+for (const el of [volSlider, soundVolSlider]) {
+  el.addEventListener('input', () => setMasterVolume(el.value, false)); // 드래그 중 실시간 반영
+  el.addEventListener('change', () => setMasterVolume(el.value, true)); // 조작을 마쳤을 때 저장
+}
+
+// 소숫점 둘째자리까지 실수 직접 입력 (Enter 또는 포커스 아웃 시 적용)
+soundVolInput.addEventListener('change', () => {
+  setMasterVolume(soundVolInput.value, true);
+  soundVolInput.value = masterVolume.toFixed(2);
+});
+
+function openSoundPanel() {
+  paintVolumeUI();
+  soundBackdrop.hidden = false;
+}
+
+function closeSoundPanel() {
+  soundBackdrop.hidden = true;
+}
+
+document.getElementById('sound-btn').addEventListener('click', openSoundPanel);
+document.getElementById('sound-close').addEventListener('click', closeSoundPanel);
+soundBackdrop.addEventListener('click', (e) => {
+  if (e.target === soundBackdrop) closeSoundPanel();
 });
 
 // ── 구글 계정 연동: 게스트 모드(기본) ↔ 로그인 시 계정 재생목록 섹션 표시 ──
@@ -1750,9 +1841,11 @@ document.getElementById('next-btn').addEventListener('click', nextTrack);
 document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue);
 
 (async () => {
-  const savedTheme = await window.uiSettings.load();
-  if (savedTheme && savedTheme.accent && savedTheme.base && savedTheme.panel) applyTheme(savedTheme);
+  const saved = await window.uiSettings.load();
+  if (saved && saved.accent && saved.base && saved.panel) applyTheme(saved);
   else syncSettingsUI();
+  if (saved && saved.volume != null) masterVolume = clampVolume(saved.volume);
+  paintVolumeUI(); // 저장값이 없어도 슬라이더 채움 표시는 초기화 필요
   playlists = normalizeItems(await window.store.load());
   renderList();
   fetchMissingMeta();

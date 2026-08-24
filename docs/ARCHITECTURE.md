@@ -218,7 +218,8 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
 
 ## 하단 재생 바 (현재 곡 표시)
 
-화면 하단 전폭 바에 현재 곡 썸네일·제목·아티스트와 셔플/이전/다음/전체화면 버튼을 표시한다.
+화면 하단 전폭 바에 현재 곡 썸네일·제목·아티스트와 셔플/이전/다음 버튼, 오른쪽에
+추천/사운드 세팅(+볼륨 슬라이더)/디자인 설정/전체화면 버튼을 표시한다.
 
 - 표시 갱신은 `setNowPlaying(id, title, author, badge)` 단일 진입점 — 임베드 재생은
   `onStateChange`의 `getVideoData()`로, 폴백 재생은 `startFallback`이 titleCache로 채운다
@@ -230,9 +231,9 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
 
 하단 재생 바의 톱니 버튼 → 모달에서 테마를 바꾼다 (Slack의 테마 설정 참고).
 
-- 저장 값은 **기본 3색뿐**: `settings.json` = `{ accent, base, panel }` (포인트/배경/패널).
-  나머지 표면 색(hover·active·input·tile)은 styles.css의 `color-mix()`가 패널 색에서
-  파생하므로 어떤 색을 골라도 단계가 자동으로 맞는다.
+- 저장 값은 **기본 3색뿐**: `settings.json` = `{ accent, base, panel }` (+ 사운드 세팅의
+  `volume` — 아래 섹션). 나머지 표면 색(hover·active·input·tile)은 styles.css의
+  `color-mix()`가 패널 색에서 파생하므로 어떤 색을 골라도 단계가 자동으로 맞는다.
 - 적용은 renderer `applyTheme()`이 `documentElement` 인라인 스타일로 `--accent`/`--bg-base`/`--panel`을
   덮어쓰는 방식. 프리셋 6종 + `input[type=color]` 3개(input 이벤트로 실시간 미리보기,
   change에서 저장) + 기본 테마 복원 버튼.
@@ -242,6 +243,25 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   아니면 검정)로 정한다. 배경/패널만 바꾸는 테마와 달리 포인트 색만 달라도 구분돼야 한다.
 - **localStorage를 쓰지 않는 이유**: UI 서버 포트가 실행마다 랜덤이라 오리진이 바뀌어
   localStorage가 유지되지 않는다 → `settings:load/save` IPC로 파일에 저장.
+
+## 사운드 세팅 (앱 마스터 볼륨)
+
+유튜브 볼륨은 임베드 플레이어와 워치페이지가 **따로 기억해** 일반 재생↔직접 재생 전환 때마다
+따로 논다 → 앱이 볼륨의 단일 기준이 된다. 하단 재생 바의 슬라이더(스피커 버튼 왼쪽) 또는
+스피커 버튼 → 사운드 세팅 모달에서 조절한다.
+
+- 값은 `masterVolume` (0.00 ~ 100.00, 소숫점 둘째자리) 하나 — `settings.json`의 `volume`으로
+  저장되어 재시작 후에도 유지. 슬라이더는 input(실시간 반영)/change(저장) 분리.
+- **임베드**: IFrame API `player.setVolume(masterVolume)` + `unMute()` — onReady·곡 로드
+  (`playCurrent`)·볼륨 변경 시 재적용. API가 정수로 반올림하므로 소숫점은 근사 적용된다.
+- **직접 재생(폴백)**: dom-ready와 볼륨 변경 시 `window.__appVolume`을 주입하고, 광고 스킵용
+  100ms 인터벌이 광고 중이 아닐 때 `video.volume`을 `__appVolume/100`으로 **계속 강제**한다
+  — 워치페이지 자체 볼륨 슬라이더 조작도 앱 볼륨으로 되돌아온다 (소숫점까지 정확).
+  광고 중 무음 처리는 `muted`라 볼륨 강제와 충돌하지 않는다.
+- 사운드 세팅 모달은 EQ 그래프 스타일(세로 눈금 + 포인트색 라인/면 그라디언트 + 링 노브)
+  — 정밀 조절용 `step 0.01` 슬라이더와 소숫점 둘째자리 실수 직접 입력 필드 제공.
+  하단 바 슬라이더는 `step 1`(빠른 조절용). f 키 전체화면 토글은 INPUT 포커스를 무시하지만
+  볼륨 슬라이더(`type=range`)는 예외로 허용.
 
 ## 곡 제목·아티스트
 

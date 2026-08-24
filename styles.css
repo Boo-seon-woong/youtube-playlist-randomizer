@@ -1136,6 +1136,7 @@ input {
 #ctx-menu svg,
 #sidebar-head svg,
 #settings-panel svg,
+#sound-panel svg,
 #search-form svg,
 #search-panel svg {
   fill: none;
@@ -1147,7 +1148,8 @@ input {
 
 /* ── 디자인 설정 모달: 테마 프리셋 + 색상 사용자 지정 ── */
 
-#settings-backdrop {
+#settings-backdrop,
+#sound-backdrop {
   position: fixed;
   inset: 0;
   z-index: 50;
@@ -1157,7 +1159,8 @@ input {
   background: rgba(0, 0, 0, 0.6);
 }
 
-#settings-panel {
+#settings-panel,
+#sound-panel {
   width: 400px;
   background: var(--panel);
   border: 1px solid var(--panel-active);
@@ -1166,18 +1169,21 @@ input {
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
 }
 
-#settings-head {
+#settings-head,
+#sound-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-#settings-head h2 {
+#settings-head h2,
+#sound-head h2 {
   font-size: 16px;
   font-weight: 700;
 }
 
-#settings-close {
+#settings-close,
+#sound-close {
   width: 32px;
   height: 32px;
   display: flex;
@@ -1190,12 +1196,14 @@ input {
   cursor: pointer;
 }
 
-#settings-close:hover {
+#settings-close:hover,
+#sound-close:hover {
   color: var(--text);
   background: var(--panel-hover);
 }
 
-#settings-close svg {
+#settings-close svg,
+#sound-close svg {
   width: 16px;
   height: 16px;
 }
@@ -1315,6 +1323,132 @@ input {
 
 #settings-reset:hover {
   border-color: var(--text);
+}
+
+/* ── 사운드 세팅: 하단 마스터 볼륨 슬라이더 + 상세설정 모달 ── */
+
+#vol-group {
+  display: flex;
+  align-items: center;
+}
+
+#vol-slider {
+  -webkit-appearance: none;
+  width: 92px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel-active); /* 채워진 구간 그라디언트는 renderer가 인라인으로 갱신 */
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+#vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+}
+
+#vol-slider:hover::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+/* 상세설정 그래프: 어두운 판 위 세로 눈금 + 포인트 색 라인/면 + 링 모양 노브 (EQ 이미지 참고) */
+#sound-graph {
+  position: relative;
+  height: 110px;
+  margin-top: 4px;
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(to right,
+      transparent 0 calc(10% - 1px),
+      color-mix(in srgb, var(--text-dim) 30%, transparent) calc(10% - 1px) 10%),
+    color-mix(in srgb, var(--panel) 60%, #000);
+  overflow: hidden;
+}
+
+#sound-fill {
+  position: absolute;
+  left: 0;
+  top: 40px;
+  bottom: 0;
+  width: 100%; /* 실제 폭은 renderer가 볼륨 %로 갱신 */
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--accent) 40%, transparent), transparent);
+  pointer-events: none;
+}
+
+#sound-graph input[type='range'] {
+  -webkit-appearance: none;
+  position: absolute;
+  left: 0;
+  top: 38px;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel-active);
+  cursor: pointer;
+  margin: 0;
+}
+
+#sound-graph input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 4px solid var(--accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+#sound-readout-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+#sound-vol-readout {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+#sound-input-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+#sound-vol-input {
+  width: 92px;
+  padding: 7px 9px;
+  border: 1px solid var(--panel-active);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: right;
+}
+
+#sound-vol-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+#sound-vol-input::-webkit-inner-spin-button,
+#sound-vol-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+}
+
+#sound-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 /* ── 우클릭 컨텍스트 메뉴 ── */
