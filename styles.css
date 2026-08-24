@@ -1727,6 +1727,78 @@ body.immersive .resizer {
   display: none;
 }
 
+/* ── 영상 최소화: 플레이어를 우하단 미니 플레이어로 띄우고 사이드바·대기열이 가운데를 채운다 ──
+   (display:none으로 숨기면 직접 재생 webview가 끊길 수 있어 작게 유지한다) */
+
+body.center-min #content {
+  position: fixed;
+  right: 16px;
+  bottom: 92px;
+  width: 320px;
+  height: 206px; /* 26px 헤더 띠(복원 버튼) + 16:9 영상 180px */
+  flex-direction: column;
+  z-index: 30;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+}
+
+body.center-min #player-wrap {
+  margin-top: 26px; /* 헤더 띠 — 유튜브 자체 컨트롤(우상단 톱니 등)과 복원 버튼이 겹치지 않도록 */
+}
+
+body.center-min #resize-right {
+  display: none; /* 가운데가 빠졌으니 사이드바|대기열 사이 핸들 하나만 남긴다 */
+}
+
+body.center-min #queue-panel {
+  flex: 1;
+  width: auto !important;
+}
+
+body.center-min.queue-collapsed #sidebar {
+  flex: 1;
+  width: auto !important;
+}
+
+body.center-min #player-placeholder {
+  font-size: 11px;
+  padding: 12px;
+  text-align: center;
+}
+
+#mini-restore {
+  display: none;
+  position: absolute;
+  top: -24px; /* #player-wrap 위 헤더 띠 안 */
+  right: 4px;
+  z-index: 5;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 5px;
+  background: var(--panel-active);
+  color: var(--text-sub);
+  cursor: pointer;
+}
+
+#mini-restore:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+#mini-restore svg {
+  width: 14px;
+  height: 14px;
+}
+
+body.center-min #mini-restore {
+  display: flex;
+}
+
 /* ── 몰입 모드: 창 전체화면 + 플레이어만 표시 ── */
 
 body.immersive #topbar,

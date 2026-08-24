@@ -122,7 +122,8 @@ if (window.YT && window.YT.Player && !player) window.onYouTubeIframeAPIReady();
 const fsExitBtn = document.getElementById('fs-exit-btn');
 
 function enterImmersive() {
-  closeBrowse(); // 전체화면은 영상을 보려는 것 — 곡 구성 오버레이는 닫는다
+  closeBrowse(); // 전체화면은 영상을 보려는 것 — 곡 구성 오버레이는 닫고 미니 플레이어도 원래 크기로
+  setCenterMin(false);
   document.body.classList.add('immersive');
   window.winctl.setFullScreen(true);
   startCursorWatch();
@@ -1154,11 +1155,12 @@ soundBackdrop.addEventListener('click', (e) => {
 // 포인터 이벤트를 막아 마우스가 영상 위를 지나도 드래그가 끊기지 않게 한다 (+ pointer capture).
 
 const PANEL_LIMITS = { sidebar: { min: 200, max: 520 }, queue: { min: 220, max: 560 } };
-const DEFAULT_LAYOUT = { sidebarWidth: 300, queueWidth: 320, sidebarCollapsed: false, queueCollapsed: false };
+const DEFAULT_LAYOUT = { sidebarWidth: 300, queueWidth: 320, sidebarCollapsed: false, queueCollapsed: false, centerMin: false };
 let layout = { ...DEFAULT_LAYOUT };
 
 const sidebarEl = document.getElementById('sidebar');
 const queuePanelEl = document.getElementById('queue-panel');
+const minimizeBtn = document.getElementById('minimize-btn');
 const CHEVRON_LEFT_SVG = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>';
 const CHEVRON_RIGHT_SVG = '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
 
@@ -1173,6 +1175,9 @@ function applyLayout() {
   queuePanelEl.style.width = clampPanelWidth('queue', layout.queueWidth) + 'px';
   document.body.classList.toggle('sidebar-collapsed', !!layout.sidebarCollapsed);
   document.body.classList.toggle('queue-collapsed', !!layout.queueCollapsed);
+  document.body.classList.toggle('center-min', !!layout.centerMin);
+  minimizeBtn.classList.toggle('active', !!layout.centerMin);
+  minimizeBtn.title = layout.centerMin ? '영상 원래 크기로' : '영상 최소화 — 우하단 미니 플레이어로 줄이고 목록을 넓게';
   const leftBtn = document.querySelector('#resize-left .resizer-btn');
   const rightBtn = document.querySelector('#resize-right .resizer-btn');
   leftBtn.innerHTML = layout.sidebarCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_LEFT_SVG;
@@ -1223,6 +1228,18 @@ function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, direction)
 
 setupResizer('resize-left', 'sidebar', sidebarEl, 'sidebarCollapsed', 'sidebarWidth', 1);
 setupResizer('resize-right', 'queue', queuePanelEl, 'queueCollapsed', 'queueWidth', -1);
+
+// 영상 최소화: 플레이어를 우하단 미니 플레이어로 (재생은 그대로). 곡 구성/검색 오버레이를 열거나
+// 전체화면에 들어가면 자동으로 원래 크기로 돌아온다 — 그 화면들은 플레이어 영역 안에 그려지므로.
+function setCenterMin(flag) {
+  if (!!layout.centerMin === !!flag) return;
+  layout.centerMin = !!flag;
+  applyLayout();
+  saveSettings();
+}
+
+minimizeBtn.addEventListener('click', () => setCenterMin(!layout.centerMin));
+document.getElementById('mini-restore').addEventListener('click', () => setCenterMin(false));
 
 // ── 구글 계정 연동: 게스트 모드(기본) ↔ 로그인 시 계정 재생목록 섹션 표시 ──
 // 계정 재생목록은 유튜브 계정이 원본이므로 playlists.json에 저장하지 않고
@@ -1496,6 +1513,7 @@ searchForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const query = searchInput.value.trim();
   if (!query) return;
+  setCenterMin(false); // 검색 결과도 플레이어 영역 오버레이
   searchPanel.hidden = false;
   searchList.innerHTML = '';
   searchStatus.textContent = '검색 중…';
@@ -1569,6 +1587,7 @@ function appendBrowseRows(from) {
 }
 
 async function openBrowse(pl) {
+  setCenterMin(false); // 곡 구성은 플레이어 영역에 그려진다 — 미니 플레이어 상태면 원래 크기로
   const token = ++browseToken;
   browse = { listId: pl.listId, name: pl.name || pl.listId, thumb: pl.thumb, items: [], done: false, error: false };
   browseListEl.innerHTML = '';
