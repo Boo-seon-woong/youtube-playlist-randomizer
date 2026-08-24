@@ -1727,29 +1727,38 @@ body.immersive .resizer {
   display: none;
 }
 
-/* ── 영상 최소화: 플레이어를 우하단 미니 플레이어로 띄우고 사이드바·대기열이 가운데를 채운다 ──
-   (display:none으로 숨기면 직접 재생 webview가 끊길 수 있어 작게 유지한다) */
+/* ── 영상 최소화: 좌우 패널을 접듯 중앙을 화면 구성에서 없애고 목록이 그 자리를 채운다 ──
+   display:none이 아니라 폭 0으로 접는 이유: 직접 재생 webview는 레이아웃에서 빠지면 게스트가 끊긴다.
+   폭 0이면 보이지 않으면서 임베드·직접 재생 모두 소리가 이어진다. */
 
 body.center-min #content {
-  position: fixed;
-  right: 16px;
-  bottom: 92px;
-  width: 320px;
-  height: 206px; /* 26px 헤더 띠(복원 버튼) + 16:9 영상 180px */
-  flex-direction: column;
-  z-index: 30;
-  border-radius: 8px;
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
   overflow: hidden;
-  background: var(--panel);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  border-radius: 0;
 }
 
-body.center-min #player-wrap {
-  margin-top: 26px; /* 헤더 띠 — 유튜브 자체 컨트롤(우상단 톱니 등)과 복원 버튼이 겹치지 않도록 */
+/* 중앙이 빠지면 두 핸들이 나란히 붙는다 → 각 4px로 줄여 합쳐서 8px 경계 하나처럼 보이게 하고,
+   접기 버튼은 위(사이드바 ‹)·아래(대기열 ›)로 어긋나게 배치해 둘 다 누를 수 있게 한다 */
+body.center-min .resizer {
+  width: 4px;
+}
+
+body.center-min .resizer::before {
+  left: 1px;
+}
+
+body.center-min #resize-left .resizer-btn {
+  transform: translate(calc(-50% + 2px), calc(-50% - 26px));
+}
+
+body.center-min #resize-right .resizer-btn {
+  transform: translate(calc(-50% - 2px), calc(-50% + 26px));
 }
 
 body.center-min #resize-right {
-  display: none; /* 가운데가 빠졌으니 사이드바|대기열 사이 핸들 하나만 남긴다 */
+  cursor: default; /* 대기열이 남은 폭을 다 차지하므로 드래그 의미 없음 — 접기 버튼만 */
 }
 
 body.center-min #queue-panel {
@@ -1760,43 +1769,6 @@ body.center-min #queue-panel {
 body.center-min.queue-collapsed #sidebar {
   flex: 1;
   width: auto !important;
-}
-
-body.center-min #player-placeholder {
-  font-size: 11px;
-  padding: 12px;
-  text-align: center;
-}
-
-#mini-restore {
-  display: none;
-  position: absolute;
-  top: -24px; /* #player-wrap 위 헤더 띠 안 */
-  right: 4px;
-  z-index: 5;
-  width: 22px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 5px;
-  background: var(--panel-active);
-  color: var(--text-sub);
-  cursor: pointer;
-}
-
-#mini-restore:hover {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-#mini-restore svg {
-  width: 14px;
-  height: 14px;
-}
-
-body.center-min #mini-restore {
-  display: flex;
 }
 
 /* ── 몰입 모드: 창 전체화면 + 플레이어만 표시 ── */

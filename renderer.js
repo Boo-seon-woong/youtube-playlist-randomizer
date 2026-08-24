@@ -1177,7 +1177,7 @@ function applyLayout() {
   document.body.classList.toggle('queue-collapsed', !!layout.queueCollapsed);
   document.body.classList.toggle('center-min', !!layout.centerMin);
   minimizeBtn.classList.toggle('active', !!layout.centerMin);
-  minimizeBtn.title = layout.centerMin ? '영상 원래 크기로' : '영상 최소화 — 우하단 미니 플레이어로 줄이고 목록을 넓게';
+  minimizeBtn.title = layout.centerMin ? '영상 다시 표시' : '영상 최소화 — 화면 구성에서 숨기고 목록을 넓게 (재생은 계속)';
   const leftBtn = document.querySelector('#resize-left .resizer-btn');
   const rightBtn = document.querySelector('#resize-right .resizer-btn');
   leftBtn.innerHTML = layout.sidebarCollapsed ? CHEVRON_RIGHT_SVG : CHEVRON_LEFT_SVG;
@@ -1201,6 +1201,7 @@ function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, direction)
   let startWidth = 0;
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || btn.contains(e.target) || layout[collapsedKey]) return;
+    if (layout.centerMin && key === 'queue') return; // 중앙 최소화 중엔 대기열이 남은 폭을 다 차지
     dragging = true;
     startX = e.clientX;
     startWidth = panelEl.getBoundingClientRect().width;
@@ -1229,8 +1230,9 @@ function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, direction)
 setupResizer('resize-left', 'sidebar', sidebarEl, 'sidebarCollapsed', 'sidebarWidth', 1);
 setupResizer('resize-right', 'queue', queuePanelEl, 'queueCollapsed', 'queueWidth', -1);
 
-// 영상 최소화: 플레이어를 우하단 미니 플레이어로 (재생은 그대로). 곡 구성/검색 오버레이를 열거나
-// 전체화면에 들어가면 자동으로 원래 크기로 돌아온다 — 그 화면들은 플레이어 영역 안에 그려지므로.
+// 영상 최소화: 좌우 패널을 접듯 중앙을 화면 구성에서 없앤다 (CSS가 폭 0으로 접어 재생은 그대로).
+// 곡 구성/검색 오버레이를 열거나 전체화면에 들어가면 자동으로 다시 펼친다 — 그 화면들은 플레이어
+// 영역 안에 그려지므로. 최소화 상태에서 재생목록을 틀 때는 사이드바 행의 재생/셔플 버튼을 쓴다.
 function setCenterMin(flag) {
   if (!!layout.centerMin === !!flag) return;
   layout.centerMin = !!flag;
@@ -1239,7 +1241,6 @@ function setCenterMin(flag) {
 }
 
 minimizeBtn.addEventListener('click', () => setCenterMin(!layout.centerMin));
-document.getElementById('mini-restore').addEventListener('click', () => setCenterMin(false));
 
 // ── 구글 계정 연동: 게스트 모드(기본) ↔ 로그인 시 계정 재생목록 섹션 표시 ──
 // 계정 재생목록은 유튜브 계정이 원본이므로 playlists.json에 저장하지 않고
@@ -1587,7 +1588,7 @@ function appendBrowseRows(from) {
 }
 
 async function openBrowse(pl) {
-  setCenterMin(false); // 곡 구성은 플레이어 영역에 그려진다 — 미니 플레이어 상태면 원래 크기로
+  setCenterMin(false); // 곡 구성은 플레이어 영역에 그려진다 — 중앙이 최소화돼 있으면 다시 펼친다
   const token = ++browseToken;
   browse = { listId: pl.listId, name: pl.name || pl.listId, thumb: pl.thumb, items: [], done: false, error: false };
   browseListEl.innerHTML = '';
@@ -1879,8 +1880,10 @@ function buildPlaylistRow(pl, depth) {
   sub.textContent = pl.count != null ? `재생목록 · ${pl.count}곡` : '재생목록';
   meta.append(name, sub);
 
+  // 행 클릭은 곡 구성 보기이므로, 바로 재생하는 버튼을 따로 둔다 (중앙을 최소화한 상태에서도 재생 가능)
+  const playBtn = iconButton(PLAY_SVG, '재생', () => playPlaylist(pl.listId, false));
   const shuffleBtn = iconButton(SHUFFLE_SVG, '셔플 재생', () => playPlaylist(pl.listId, true));
-  li.append(thumb, meta, shuffleBtn);
+  li.append(thumb, meta, playBtn, shuffleBtn);
   if (!pl.account) {
     const editBtn = iconButton(PENCIL_SVG, '이름/링크 수정', () => {
       editingItem = pl;
