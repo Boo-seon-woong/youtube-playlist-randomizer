@@ -1093,7 +1093,10 @@ function applyVolume() {
   if (playerReady) {
     try {
       player.setVolume(masterVolume);
-      player.unMute();
+      // 임베드 플레이어는 볼륨 0에서 unMute()하면 최소 볼륨 5로 되살린다(실측) —
+      // 정수 반올림 시 0이 되는 구간은 명시적 음소거로 확실히 무음을 보장한다
+      if (masterVolume < 0.5) player.mute();
+      else player.unMute();
     } catch {}
   }
   if (fallbackActive) {

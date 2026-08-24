@@ -252,8 +252,10 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
 
 - 값은 `masterVolume` (0.00 ~ 100.00, 소숫점 둘째자리) 하나 — `settings.json`의 `volume`으로
   저장되어 재시작 후에도 유지. 슬라이더는 input(실시간 반영)/change(저장) 분리.
-- **임베드**: IFrame API `player.setVolume(masterVolume)` + `unMute()` — onReady·곡 로드
-  (`playCurrent`)·볼륨 변경 시 재적용. API가 정수로 반올림하므로 소숫점은 근사 적용된다.
+- **임베드**: IFrame API `player.setVolume(masterVolume)` — onReady·곡 로드(`playCurrent`)·
+  볼륨 변경 시 재적용. API가 정수로 반올림하므로 소숫점은 근사 적용된다.
+  **볼륨 0에서 `unMute()`를 호출하면 플레이어가 최소 볼륨 5로 되살린다(실측)** — 그래서
+  0.5 미만(반올림 시 0)은 `player.mute()`로 명시적 음소거, 그 이상만 `unMute()`한다.
 - **직접 재생(폴백)**: dom-ready와 볼륨 변경 시 `window.__appVolume`을 주입하고, 광고 스킵용
   100ms 인터벌이 광고 중이 아닐 때 `video.volume`을 `__appVolume/100`으로 **계속 강제**한다
   — 워치페이지 자체 볼륨 슬라이더 조작도 앱 볼륨으로 되돌아온다 (소숫점까지 정확).
