@@ -1,0 +1,108 @@
+:root {
+  color-scheme: dark;
+  --accent: #1db954;
+  --text: #fff;
+  --muted: rgba(255, 255, 255, 0.58);
+  --panel: #1b1d24;
+  --field: #11131a;
+}
+
+* { box-sizing: border-box; }
+
+html, body { min-height: 100%; margin: 0; }
+
+body {
+  min-width: 360px;
+  background: #11131a;
+  color: var(--text);
+  font-family: "Pretendard", "Segoe UI", sans-serif;
+  user-select: none;
+}
+
+button, input { font: inherit; }
+
+button {
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+#lyrics-settings-app { max-width: 760px; margin: 0 auto; padding: 22px 24px 24px; }
+
+.settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.settings-head h1 { margin: 0; font-size: 20px; line-height: 1.25; }
+.settings-head p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+
+.settings-close {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 21px;
+  line-height: 27px;
+}
+
+.settings-close:hover { background: rgba(255, 255, 255, 0.18); color: #fff; }
+
+.settings-section {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.settings-section h2 { margin: 0 0 14px; font-size: 13px; }
+
+.settings-size-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.settings-size-grid label, .range-setting { display: block; color: var(--muted); font-size: 12px; }
+.settings-size-grid label > span, .range-setting > span { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+
+.number-input { display: flex; align-items: center; gap: 7px; }
+.number-input input {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  outline: none;
+  color: #fff;
+  background: var(--field);
+}
+
+.number-input input:focus { border-color: var(--accent); }
+.number-input em { color: var(--muted); font-size: 11px; font-style: normal; }
+
+.range-setting { margin-top: 16px; }
+.range-setting output { color: #fff; }
+.range-setting input { width: 100%; accent-color: var(--accent); }
+
+.settings-toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 16px; }
+.settings-toggle-grid label { color: rgba(255, 255, 255, 0.82); font-size: 12px; }
+.settings-toggle-grid input { margin: 0 7px 0 0; accent-color: var(--accent); vertical-align: -1px; }
+
+.settings-reset {
+  width: 100%;
+  height: 36px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+}
+
+.settings-reset:hover { background: rgba(255, 255, 255, 0.18); }
+
+@media (max-width: 430px) {
+  #lyrics-settings-app { padding: 18px 16px 20px; }
+  .settings-size-grid, .settings-toggle-grid { grid-template-columns: 1fr; }
+}

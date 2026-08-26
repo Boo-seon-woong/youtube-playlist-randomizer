@@ -46,31 +46,6 @@
       <div id="lyrics-search-status"></div>
       <ol id="lyrics-search-results"></ol>
     </section>
-
-    <section id="lyrics-settings-panel" hidden>
-      <header class="lyrics-panel-header">
-        <h2>가사 창 설정</h2>
-        <button id="lyrics-settings-close" title="닫기">×</button>
-      </header>
-      <div class="lyrics-settings-grid">
-        <label><span>가로 길이</span><input id="lyrics-setting-width" type="number" min="360" max="1400" step="1" /> px</label>
-        <label><span>세로 길이</span><input id="lyrics-setting-height" type="number" min="150" max="700" step="1" /> px</label>
-        <label class="range-setting"><span>백그라운드 투명도 <output id="lyrics-setting-opacity-value"></output></span><input id="lyrics-setting-opacity" type="range" min="0" max="100" step="1" /></label>
-        <label class="range-setting"><span>글씨 크기 <output id="lyrics-setting-font-size-value"></output></span><input id="lyrics-setting-font-size" type="range" min="10" max="48" step="1" /></label>
-      </div>
-      <div class="lyrics-toggle-grid">
-        <label><input id="lyrics-setting-progress" type="checkbox" /> 재생바 표시</label>
-        <label><input id="lyrics-setting-playback" type="checkbox" /> 재생 컨트롤 표시</label>
-        <label><input id="lyrics-setting-previous" type="checkbox" /> 이전 곡 버튼</label>
-        <label><input id="lyrics-setting-pause" type="checkbox" /> 일시정지/재생 버튼</label>
-        <label><input id="lyrics-setting-next" type="checkbox" /> 다음 곡 버튼</label>
-        <label><input id="lyrics-setting-track-info" type="checkbox" /> 곡 정보 표시</label>
-        <label><input id="lyrics-setting-cover" type="checkbox" /> 앨범 이미지 표시</label>
-        <label><input id="lyrics-setting-status" type="checkbox" /> 상태 문구 표시</label>
-        <label><input id="lyrics-setting-topmost" type="checkbox" /> 항상 위에 표시</label>
-      </div>
-      <button id="lyrics-settings-reset" class="lyrics-settings-reset">기본값으로 되돌리기</button>
-    </section>
   </main>
   <script src="lyrics.js"></script>
 </body>

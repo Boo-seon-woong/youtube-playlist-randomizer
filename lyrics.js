@@ -29,28 +29,6 @@ const searchTitle = document.getElementById('lyrics-search-title');
 const searchArtist = document.getElementById('lyrics-search-artist');
 const searchStatus = document.getElementById('lyrics-search-status');
 const searchResults = document.getElementById('lyrics-search-results');
-const settingsPanel = document.getElementById('lyrics-settings-panel');
-const settingInputs = {
-  width: document.getElementById('lyrics-setting-width'),
-  height: document.getElementById('lyrics-setting-height'),
-  backgroundOpacity: document.getElementById('lyrics-setting-opacity'),
-  fontSize: document.getElementById('lyrics-setting-font-size'),
-};
-const settingOutputs = {
-  backgroundOpacity: document.getElementById('lyrics-setting-opacity-value'),
-  fontSize: document.getElementById('lyrics-setting-font-size-value'),
-};
-const settingToggles = {
-  showProgressBar: document.getElementById('lyrics-setting-progress'),
-  showPlaybackControls: document.getElementById('lyrics-setting-playback'),
-  showPreviousButton: document.getElementById('lyrics-setting-previous'),
-  showPauseButton: document.getElementById('lyrics-setting-pause'),
-  showNextButton: document.getElementById('lyrics-setting-next'),
-  showTrackInfo: document.getElementById('lyrics-setting-track-info'),
-  showAlbumArt: document.getElementById('lyrics-setting-cover'),
-  showStatus: document.getElementById('lyrics-setting-status'),
-  alwaysOnTop: document.getElementById('lyrics-setting-topmost'),
-};
 
 function applyLyricsSettings(next) {
   lyricsSettings = { ...lyricsSettings, ...(next || {}) };
@@ -65,25 +43,13 @@ function applyLyricsSettings(next) {
   playbackControls.hidden = !lyricsSettings.showPlaybackControls
     || (!lyricsSettings.showPreviousButton && !lyricsSettings.showPauseButton && !lyricsSettings.showNextButton);
   document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo;
-  if (!lyricsSettings.showTrackInfo) document.getElementById('lyrics-cover').hidden = true;
   statusEl.hidden = !lyricsSettings.showStatus;
-  for (const [key, input] of Object.entries(settingInputs)) input.value = lyricsSettings[key];
-  for (const [key, input] of Object.entries(settingToggles)) input.checked = !!lyricsSettings[key];
-  settingOutputs.backgroundOpacity.textContent = `${lyricsSettings.backgroundOpacity}%`;
-  settingOutputs.fontSize.textContent = `${lyricsSettings.fontSize}px`;
-}
-
-function saveSettingsPatch(patch) {
-  const next = { ...lyricsSettings, ...patch };
-  applyLyricsSettings(next);
-  window.lyricsOverlay.saveSettings(next).catch(() => {});
 }
 
 function openPanel(mode) {
   panelMode = mode;
   card.hidden = true;
   searchPanel.hidden = mode !== 'search';
-  settingsPanel.hidden = mode !== 'settings';
 }
 
 function currentProgress() {
@@ -163,15 +129,9 @@ function hideSearch() {
   closePanel();
 }
 
-function showSettings() {
-  openPanel('settings');
-  applyLyricsSettings(lyricsSettings);
-}
-
 function closePanel() {
   panelMode = '';
   searchPanel.hidden = true;
-  settingsPanel.hidden = true;
   card.hidden = false;
   render();
 }
@@ -224,27 +184,7 @@ document.getElementById('lyrics-search').addEventListener('click', showSearch);
 document.getElementById('lyrics-retry').addEventListener('click', () => window.lyricsOverlay.retry());
 document.getElementById('lyrics-hide').addEventListener('click', () => window.lyricsOverlay.hide());
 document.getElementById('lyrics-search-close').addEventListener('click', hideSearch);
-document.getElementById('lyrics-settings').addEventListener('click', showSettings);
-document.getElementById('lyrics-settings-close').addEventListener('click', closePanel);
-document.getElementById('lyrics-settings-reset').addEventListener('click', () => window.lyricsOverlay.saveSettings({
-  width: 760, height: 240, backgroundOpacity: 94, fontSize: 16,
-  showProgressBar: true, showPlaybackControls: true,
-  showPreviousButton: true, showPauseButton: true, showNextButton: true,
-  showTrackInfo: true, showAlbumArt: true, showStatus: true, alwaysOnTop: true,
-}).then(applyLyricsSettings).catch(() => {}));
-for (const [key, input] of Object.entries(settingInputs)) {
-  if (key !== 'width' && key !== 'height') input.addEventListener('input', () => {
-    const value = Number(input.value);
-    if (Number.isFinite(value)) saveSettingsPatch({ [key]: value });
-  });
-  input.addEventListener('change', () => {
-    const value = Number(input.value);
-    if (Number.isFinite(value)) saveSettingsPatch({ [key]: value });
-  });
-}
-for (const [key, input] of Object.entries(settingToggles)) {
-  input.addEventListener('change', () => saveSettingsPatch({ [key]: input.checked }));
-}
+document.getElementById('lyrics-settings').addEventListener('click', () => window.lyricsOverlay.openSettings());
 previousButton.addEventListener('click', () => window.lyricsOverlay.control('previous'));
 pauseButton.addEventListener('click', () => window.lyricsOverlay.control('toggle-play'));
 nextButton.addEventListener('click', () => window.lyricsOverlay.control('next'));

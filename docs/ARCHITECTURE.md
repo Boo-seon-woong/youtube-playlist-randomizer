@@ -9,6 +9,7 @@
 | `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리, 우클릭 컨텍스트 메뉴, 계정 섹션·검색 패널·가사 재생 위치 전달 |
 | `index.html`, `styles.css` | Spotify를 참고한 다크 테마 — 상단 바(로고·검색·계정) + 검은 프레임 위 패널 3개(저장 목록 / 플레이어 / 대기열) + 하단 전폭 재생 바 |
 | `lyrics.html`, `lyrics.css`, `lyrics.js` | Lyrs를 참고한 투명 플로팅 가사 창 — 현재/이전/다음 줄, 앨범 아트·곡 정보, 검색·재시도·숨기기, 드래그 위치 저장 |
+| `lyrics-settings.html`, `lyrics-settings.css`, `lyrics-settings.js` | 플로팅 가사 창과 분리된 설정 `BrowserWindow` — 창 크기·투명도·글씨 크기와 표시/재생 컨트롤 토글을 즉시 반영 |
 
 ## 사이드바 폴더 (playlists.json 구조)
 
@@ -323,6 +324,8 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   `한글 번역 없음 · 원어 가사`를 표시한다.
 - 검색 버튼으로 ALSong/LRCLIB 결과를 직접 선택할 수 있고, 현재 창의 위치는
   `%APPDATA%/YouTube Music Player/lyrics-window.json`에 저장된다.
+- 가사 창의 설정 버튼은 별도 `BrowserWindow`를 열어 설정 항목이 잘리지 않게 표시한다. 설정 창에서
+  값이나 토글을 변경하면 가사 창에 즉시 반영된다.
 - 창 설정은 `%APPDATA%/YouTube Music Player/lyrics-settings.json`에 저장한다. 가로·세로 크기는
   `BrowserWindow.setBounds()`로 즉시 반영하며, 배경 투명도·글씨 크기·곡 정보/앨범 이미지/상태 문구,
   재생바와 재생 컨트롤·이전/일시정지/다음 버튼, 항상 위 표시를 각각 토글할 수 있다. 가사 창의

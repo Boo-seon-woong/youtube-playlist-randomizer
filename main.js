@@ -442,6 +442,7 @@ async function searchAllLyrics(title, artist) {
 }
 
 let lyricsWindow = null;
+let lyricsSettingsWindow = null;
 let lyricsServerPort = null;
 let lyricsState = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '' };
 let lyricsData = null;
@@ -455,6 +456,11 @@ function sendLyricsToWindow() {
   lyricsWindow.webContents.send('lyrics:state', lyricsState);
   lyricsWindow.webContents.send('lyrics:data', lyricsData);
   lyricsWindow.webContents.send('lyrics:settings', lyricsSettings);
+}
+
+function sendLyricsSettingsToWindow() {
+  if (!lyricsSettingsWindow || lyricsSettingsWindow.isDestroyed() || lyricsSettingsWindow.webContents.isLoading()) return;
+  lyricsSettingsWindow.webContents.send('lyrics:settings', lyricsSettings);
 }
 
 function lyricStateKey(state) {
@@ -539,6 +545,7 @@ function updateLyricsSettings(value, persist = true) {
     sendLyricsToWindow();
     saveLyricsBounds();
   }
+  sendLyricsSettingsToWindow();
   return lyricsSettings;
 }
 
@@ -560,12 +567,39 @@ function showLyricsWindow() {
     });
     lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, 'floating');
     lyricsWindow.on('moved', saveLyricsBounds);
-    lyricsWindow.on('closed', () => { lyricsWindow = null; });
+    lyricsWindow.on('closed', () => {
+      lyricsWindow = null;
+      if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
+    });
     lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
     lyricsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics.html`);
   }
   lyricsWindow.showInactive();
   sendLyricsToWindow();
+}
+
+function showLyricsSettingsWindow() {
+  if (!lyricsSettingsWindow || lyricsSettingsWindow.isDestroyed()) {
+    lyricsSettingsWindow = new BrowserWindow({
+      width: 460,
+      height: 620,
+      minWidth: 400,
+      minHeight: 480,
+      title: '가사 창 설정',
+      backgroundColor: '#11131a',
+      autoHideMenuBar: true,
+      resizable: true,
+      show: false,
+      icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
+      webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    });
+    lyricsSettingsWindow.on('closed', () => { lyricsSettingsWindow = null; });
+    lyricsSettingsWindow.webContents.on('did-finish-load', sendLyricsSettingsToWindow);
+    lyricsSettingsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics-settings.html`);
+  }
+  lyricsSettingsWindow.show();
+  lyricsSettingsWindow.focus();
+  sendLyricsSettingsToWindow();
 }
 
 // 재생목록 전체 곡 목록 수집: iframe 플레이어의 getPlaylist()는 200곡까지만 노출하므로
@@ -1068,6 +1102,7 @@ function createWindow(port) {
   win.loadURL(`http://127.0.0.1:${port}/`);
   win.on('closed', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.close();
+    if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
     mainWindow = null;
   });
 }
@@ -1143,6 +1178,10 @@ app.whenReady().then(async () => {
   ipcMain.handle('recs:fetch', (_event, p) => fetchPlaylistRecs(p.listId, p.token));
   ipcMain.handle('lyrics:settings:get', () => lyricsSettings);
   ipcMain.handle('lyrics:settings:save', (_event, settings) => updateLyricsSettings(settings));
+  ipcMain.on('lyrics:settings:open', showLyricsSettingsWindow);
+  ipcMain.on('lyrics:settings:close', () => {
+    if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
+  });
   ipcMain.on('lyrics:control', (_event, action) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (['previous', 'toggle-play', 'next'].includes(action)) mainWindow.webContents.send('lyrics:control', action);
