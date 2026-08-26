@@ -323,6 +323,10 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   `한글 번역 없음 · 원어 가사`를 표시한다.
 - 검색 버튼으로 ALSong/LRCLIB 결과를 직접 선택할 수 있고, 현재 창의 위치는
   `%APPDATA%/YouTube Music Player/lyrics-window.json`에 저장된다.
+- 창 설정은 `%APPDATA%/YouTube Music Player/lyrics-settings.json`에 저장한다. 가로·세로 크기는
+  `BrowserWindow.setBounds()`로 즉시 반영하며, 배경 투명도·글씨 크기·곡 정보/앨범 이미지/상태 문구,
+  재생바와 재생 컨트롤·이전/일시정지/다음 버튼, 항상 위 표시를 각각 토글할 수 있다. 가사 창의
+  컨트롤은 IPC를 통해 메인 재생 대기열의 이전/다음/일시정지 동작을 호출한다.
 
 ## 곡 제목·아티스트
 

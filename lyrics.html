@@ -18,11 +18,22 @@
         <div id="lyrics-actions">
           <button id="lyrics-search" title="다른 가사 검색" aria-label="다른 가사 검색">⌕</button>
           <button id="lyrics-retry" title="가사 다시 검색" aria-label="가사 다시 검색">↻</button>
+          <button id="lyrics-settings" title="가사 창 설정" aria-label="가사 창 설정"><svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="m19.4 15 .1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0V19a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.8 12a1.7 1.7 0 0 0-1.2-1.7h-.2a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.8 3.4l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10.5 0h.2a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21.6 7h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.2 2.9Z" transform="translate(-1 1.5) scale(.92)"/></svg></button>
           <button id="lyrics-hide" title="가사 숨기기" aria-label="가사 숨기기">×</button>
         </div>
       </header>
       <div id="lyrics-lines"></div>
       <div id="lyrics-status"></div>
+      <div id="lyrics-progress-row">
+        <span id="lyrics-elapsed">0:00</span>
+        <div id="lyrics-progress-track"><div id="lyrics-progress-fill"></div></div>
+        <span id="lyrics-duration">0:00</span>
+      </div>
+      <div id="lyrics-playback-controls">
+        <button id="lyrics-previous" title="이전 곡" aria-label="이전 곡">◀|</button>
+        <button id="lyrics-pause" title="일시정지" aria-label="일시정지">Ⅱ</button>
+        <button id="lyrics-next" title="다음 곡" aria-label="다음 곡">|▶</button>
+      </div>
     </section>
 
     <section id="lyrics-search-panel" hidden>
@@ -34,6 +45,31 @@
       </form>
       <div id="lyrics-search-status"></div>
       <ol id="lyrics-search-results"></ol>
+    </section>
+
+    <section id="lyrics-settings-panel" hidden>
+      <header class="lyrics-panel-header">
+        <h2>가사 창 설정</h2>
+        <button id="lyrics-settings-close" title="닫기">×</button>
+      </header>
+      <div class="lyrics-settings-grid">
+        <label><span>가로 길이</span><input id="lyrics-setting-width" type="number" min="360" max="1400" step="1" /> px</label>
+        <label><span>세로 길이</span><input id="lyrics-setting-height" type="number" min="150" max="700" step="1" /> px</label>
+        <label class="range-setting"><span>백그라운드 투명도 <output id="lyrics-setting-opacity-value"></output></span><input id="lyrics-setting-opacity" type="range" min="0" max="100" step="1" /></label>
+        <label class="range-setting"><span>글씨 크기 <output id="lyrics-setting-font-size-value"></output></span><input id="lyrics-setting-font-size" type="range" min="10" max="48" step="1" /></label>
+      </div>
+      <div class="lyrics-toggle-grid">
+        <label><input id="lyrics-setting-progress" type="checkbox" /> 재생바 표시</label>
+        <label><input id="lyrics-setting-playback" type="checkbox" /> 재생 컨트롤 표시</label>
+        <label><input id="lyrics-setting-previous" type="checkbox" /> 이전 곡 버튼</label>
+        <label><input id="lyrics-setting-pause" type="checkbox" /> 일시정지/재생 버튼</label>
+        <label><input id="lyrics-setting-next" type="checkbox" /> 다음 곡 버튼</label>
+        <label><input id="lyrics-setting-track-info" type="checkbox" /> 곡 정보 표시</label>
+        <label><input id="lyrics-setting-cover" type="checkbox" /> 앨범 이미지 표시</label>
+        <label><input id="lyrics-setting-status" type="checkbox" /> 상태 문구 표시</label>
+        <label><input id="lyrics-setting-topmost" type="checkbox" /> 항상 위에 표시</label>
+      </div>
+      <button id="lyrics-settings-reset" class="lyrics-settings-reset">기본값으로 되돌리기</button>
     </section>
   </main>
   <script src="lyrics.js"></script>

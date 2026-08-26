@@ -609,6 +609,24 @@ function playCurrent() {
   }, 15000);
 }
 
+function togglePlayback() {
+  if (fallbackActive) {
+    fallbackView.executeJavaScript(`(() => {
+      const v = document.querySelector('video');
+      if (!v) return false;
+      if (v.paused) v.play();
+      else v.pause();
+      return true;
+    })()`).catch(() => {});
+    return;
+  }
+  if (!playerReady) return;
+  try {
+    if (player.getPlayerState() === YT.PlayerState.PLAYING) player.pauseVideo();
+    else player.playVideo();
+  } catch {}
+}
+
 // 재생 불가로 판명된 곡은 건너뛰고 다음/이전 재생 가능 곡으로 이동
 function stepTrack(direction) {
   if (queue.length === 0) return;
@@ -2145,6 +2163,11 @@ document.getElementById('prev-btn').addEventListener('click', prevTrack);
 document.getElementById('next-btn').addEventListener('click', nextTrack);
 document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue);
 document.getElementById('lyrics-btn').addEventListener('click', () => window.lyricsctl.toggle());
+window.lyrics.onControl((action) => {
+  if (action === 'previous') prevTrack();
+  else if (action === 'toggle-play') togglePlayback();
+  else if (action === 'next') nextTrack();
+});
 
 (async () => {
   const saved = await window.uiSettings.load();

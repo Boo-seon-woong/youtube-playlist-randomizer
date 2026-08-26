@@ -1,7 +1,13 @@
 let playback = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '' };
 let lyricData = null;
+let lyricsSettings = {
+  width: 760, height: 240, backgroundOpacity: 94, fontSize: 16,
+  showProgressBar: true, showPlaybackControls: true,
+  showPreviousButton: true, showPauseButton: true, showNextButton: true,
+  showTrackInfo: true, showAlbumArt: true, showStatus: true, alwaysOnTop: true,
+};
 let receivedAt = performance.now();
-let searchOpen = false;
+let panelMode = '';
 
 const card = document.getElementById('lyrics-card');
 const cover = document.getElementById('lyrics-cover');
@@ -9,12 +15,76 @@ const title = document.getElementById('lyrics-title');
 const artist = document.getElementById('lyrics-artist');
 const linesEl = document.getElementById('lyrics-lines');
 const statusEl = document.getElementById('lyrics-status');
+const progressRow = document.getElementById('lyrics-progress-row');
+const elapsedEl = document.getElementById('lyrics-elapsed');
+const durationEl = document.getElementById('lyrics-duration');
+const progressFill = document.getElementById('lyrics-progress-fill');
+const playbackControls = document.getElementById('lyrics-playback-controls');
+const previousButton = document.getElementById('lyrics-previous');
+const pauseButton = document.getElementById('lyrics-pause');
+const nextButton = document.getElementById('lyrics-next');
 const searchPanel = document.getElementById('lyrics-search-panel');
 const searchForm = document.getElementById('lyrics-search-form');
 const searchTitle = document.getElementById('lyrics-search-title');
 const searchArtist = document.getElementById('lyrics-search-artist');
 const searchStatus = document.getElementById('lyrics-search-status');
 const searchResults = document.getElementById('lyrics-search-results');
+const settingsPanel = document.getElementById('lyrics-settings-panel');
+const settingInputs = {
+  width: document.getElementById('lyrics-setting-width'),
+  height: document.getElementById('lyrics-setting-height'),
+  backgroundOpacity: document.getElementById('lyrics-setting-opacity'),
+  fontSize: document.getElementById('lyrics-setting-font-size'),
+};
+const settingOutputs = {
+  backgroundOpacity: document.getElementById('lyrics-setting-opacity-value'),
+  fontSize: document.getElementById('lyrics-setting-font-size-value'),
+};
+const settingToggles = {
+  showProgressBar: document.getElementById('lyrics-setting-progress'),
+  showPlaybackControls: document.getElementById('lyrics-setting-playback'),
+  showPreviousButton: document.getElementById('lyrics-setting-previous'),
+  showPauseButton: document.getElementById('lyrics-setting-pause'),
+  showNextButton: document.getElementById('lyrics-setting-next'),
+  showTrackInfo: document.getElementById('lyrics-setting-track-info'),
+  showAlbumArt: document.getElementById('lyrics-setting-cover'),
+  showStatus: document.getElementById('lyrics-setting-status'),
+  alwaysOnTop: document.getElementById('lyrics-setting-topmost'),
+};
+
+function applyLyricsSettings(next) {
+  lyricsSettings = { ...lyricsSettings, ...(next || {}) };
+  const opacity = Math.max(0, Math.min(100, Number(lyricsSettings.backgroundOpacity) || 0)) / 100;
+  document.documentElement.style.setProperty('--lyrics-bg', `rgba(27, 29, 36, ${opacity})`);
+  document.documentElement.style.setProperty('--lyrics-bg-2', `rgba(10, 11, 15, ${Math.max(0, opacity * 0.96)})`);
+  document.documentElement.style.setProperty('--lyrics-font-size', `${lyricsSettings.fontSize}px`);
+  progressRow.hidden = !lyricsSettings.showProgressBar;
+  previousButton.hidden = !lyricsSettings.showPreviousButton;
+  pauseButton.hidden = !lyricsSettings.showPauseButton;
+  nextButton.hidden = !lyricsSettings.showNextButton;
+  playbackControls.hidden = !lyricsSettings.showPlaybackControls
+    || (!lyricsSettings.showPreviousButton && !lyricsSettings.showPauseButton && !lyricsSettings.showNextButton);
+  document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo;
+  if (!lyricsSettings.showTrackInfo) document.getElementById('lyrics-cover').hidden = true;
+  statusEl.hidden = !lyricsSettings.showStatus;
+  for (const [key, input] of Object.entries(settingInputs)) input.value = lyricsSettings[key];
+  for (const [key, input] of Object.entries(settingToggles)) input.checked = !!lyricsSettings[key];
+  settingOutputs.backgroundOpacity.textContent = `${lyricsSettings.backgroundOpacity}%`;
+  settingOutputs.fontSize.textContent = `${lyricsSettings.fontSize}px`;
+}
+
+function saveSettingsPatch(patch) {
+  const next = { ...lyricsSettings, ...patch };
+  applyLyricsSettings(next);
+  window.lyricsOverlay.saveSettings(next).catch(() => {});
+}
+
+function openPanel(mode) {
+  panelMode = mode;
+  card.hidden = true;
+  searchPanel.hidden = mode !== 'search';
+  settingsPanel.hidden = mode !== 'settings';
+}
 
 function currentProgress() {
   if (playback.status !== 'playing') return playback.progress;
@@ -31,6 +101,11 @@ function currentIndex(progress) {
   return index;
 }
 
+function formatTime(ms) {
+  const total = Math.max(0, Math.floor(Number(ms) / 1000) || 0);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
 function lineElement(line, className) {
   const el = document.createElement('div');
   el.className = `lyric-line ${className}${line ? '' : ' empty'}`;
@@ -42,8 +117,14 @@ function render() {
   title.textContent = playback.title || '';
   artist.textContent = playback.artist || '';
   cover.src = playback.coverUrl || '';
-  cover.hidden = !playback.coverUrl;
+  cover.hidden = !playback.coverUrl || !lyricsSettings.showAlbumArt || !lyricsSettings.showTrackInfo;
   card.classList.toggle('paused', playback.status === 'paused');
+  const progress = currentProgress();
+  elapsedEl.textContent = formatTime(progress);
+  durationEl.textContent = formatTime(playback.duration);
+  progressFill.style.width = playback.duration > 0 ? `${Math.min(100, Math.max(0, progress / playback.duration * 100))}%` : '0%';
+  pauseButton.textContent = playback.status === 'playing' ? 'Ⅱ' : '▶';
+  pauseButton.title = playback.status === 'playing' ? '일시정지' : '재생';
 
   linesEl.replaceChildren();
   const index = currentIndex(currentProgress());
@@ -65,14 +146,12 @@ function render() {
 }
 
 function animate() {
-  if (!searchOpen) render();
+  if (!panelMode) render();
   requestAnimationFrame(animate);
 }
 
 function showSearch() {
-  searchOpen = true;
-  searchPanel.hidden = false;
-  card.hidden = true;
+  openPanel('search');
   searchTitle.value = playback.title || '';
   searchArtist.value = playback.artist || '';
   searchStatus.textContent = '';
@@ -81,9 +160,20 @@ function showSearch() {
 }
 
 function hideSearch() {
-  searchOpen = false;
+  closePanel();
+}
+
+function showSettings() {
+  openPanel('settings');
+  applyLyricsSettings(lyricsSettings);
+}
+
+function closePanel() {
+  panelMode = '';
   searchPanel.hidden = true;
+  settingsPanel.hidden = true;
   card.hidden = false;
+  render();
 }
 
 async function searchLyrics(event) {
@@ -134,7 +224,34 @@ document.getElementById('lyrics-search').addEventListener('click', showSearch);
 document.getElementById('lyrics-retry').addEventListener('click', () => window.lyricsOverlay.retry());
 document.getElementById('lyrics-hide').addEventListener('click', () => window.lyricsOverlay.hide());
 document.getElementById('lyrics-search-close').addEventListener('click', hideSearch);
+document.getElementById('lyrics-settings').addEventListener('click', showSettings);
+document.getElementById('lyrics-settings-close').addEventListener('click', closePanel);
+document.getElementById('lyrics-settings-reset').addEventListener('click', () => window.lyricsOverlay.saveSettings({
+  width: 760, height: 240, backgroundOpacity: 94, fontSize: 16,
+  showProgressBar: true, showPlaybackControls: true,
+  showPreviousButton: true, showPauseButton: true, showNextButton: true,
+  showTrackInfo: true, showAlbumArt: true, showStatus: true, alwaysOnTop: true,
+}).then(applyLyricsSettings).catch(() => {}));
+for (const [key, input] of Object.entries(settingInputs)) {
+  if (key !== 'width' && key !== 'height') input.addEventListener('input', () => {
+    const value = Number(input.value);
+    if (Number.isFinite(value)) saveSettingsPatch({ [key]: value });
+  });
+  input.addEventListener('change', () => {
+    const value = Number(input.value);
+    if (Number.isFinite(value)) saveSettingsPatch({ [key]: value });
+  });
+}
+for (const [key, input] of Object.entries(settingToggles)) {
+  input.addEventListener('change', () => saveSettingsPatch({ [key]: input.checked }));
+}
+previousButton.addEventListener('click', () => window.lyricsOverlay.control('previous'));
+pauseButton.addEventListener('click', () => window.lyricsOverlay.control('toggle-play'));
+nextButton.addEventListener('click', () => window.lyricsOverlay.control('next'));
 searchForm.addEventListener('submit', searchLyrics);
+
+window.lyricsOverlay.onSettings(applyLyricsSettings);
+window.lyricsOverlay.getSettings().then(applyLyricsSettings).catch(() => applyLyricsSettings(lyricsSettings));
 
 render();
 requestAnimationFrame(animate);

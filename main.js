@@ -17,6 +17,7 @@ const STORE_FILE = () => path.join(app.getPath('userData'), 'playlists.json');
 const TITLE_CACHE_FILE = () => path.join(app.getPath('userData'), 'titles.json');
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json'); // 디자인 설정 (테마 색)
 const LYRICS_BOUNDS_FILE = () => path.join(app.getPath('userData'), 'lyrics-window.json');
+const LYRICS_SETTINGS_FILE = () => path.join(app.getPath('userData'), 'lyrics-settings.json');
 
 // Block known ad/tracking domains so the embedded player stays ad-free.
 const AD_URL_PATTERNS = [
@@ -108,6 +109,61 @@ async function fetchTitles(ids) {
 // YouTube IFrame API는 Spotify/YouTube Music처럼 가사 데이터를 제공하지 않으므로
 // 현재 곡의 제목·아티스트로 외부 가사 DB를 조회하고, 재생 시간은 renderer가 전달한다.
 const ALSong_ENC_DATA = '8456ec35caba5c981e705b0c5d76e4593e020ae5e3d469c75d1c6714b6b1244c0732f1f19cc32ee5123ef7de574fc8bc6d3b6bd38dd3c097f5a4a1aa1b438fea0e413baf8136d2d7d02bfcdcb2da4990df2f28675a3bd621f8234afa84fb4ee9caa8f853a5b06f884ea086fd3ed3b4c6e14f1efac5a4edbf6f6cb475445390b0';
+
+const DEFAULT_LYRICS_SETTINGS = {
+  width: 760,
+  height: 240,
+  backgroundOpacity: 94,
+  fontSize: 16,
+  showProgressBar: true,
+  showPlaybackControls: true,
+  showPreviousButton: true,
+  showPauseButton: true,
+  showNextButton: true,
+  showTrackInfo: true,
+  showAlbumArt: true,
+  showStatus: true,
+  alwaysOnTop: true,
+};
+
+let lyricsSettings = { ...DEFAULT_LYRICS_SETTINGS };
+
+function normalizeLyricsSettings(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  const number = (key, min, max) => {
+    const parsed = Number(source[key]);
+    return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : DEFAULT_LYRICS_SETTINGS[key];
+  };
+  const boolean = (key) => source[key] == null ? DEFAULT_LYRICS_SETTINGS[key] : !!source[key];
+  return {
+    width: number('width', 360, 1400),
+    height: number('height', 150, 700),
+    backgroundOpacity: number('backgroundOpacity', 0, 100),
+    fontSize: number('fontSize', 10, 48),
+    showProgressBar: boolean('showProgressBar'),
+    showPlaybackControls: boolean('showPlaybackControls'),
+    showPreviousButton: boolean('showPreviousButton'),
+    showPauseButton: boolean('showPauseButton'),
+    showNextButton: boolean('showNextButton'),
+    showTrackInfo: boolean('showTrackInfo'),
+    showAlbumArt: boolean('showAlbumArt'),
+    showStatus: boolean('showStatus'),
+    alwaysOnTop: boolean('alwaysOnTop'),
+  };
+}
+
+function loadLyricsSettings() {
+  try {
+    return normalizeLyricsSettings(JSON.parse(fs.readFileSync(LYRICS_SETTINGS_FILE(), 'utf8')));
+  } catch {
+    return { ...DEFAULT_LYRICS_SETTINGS };
+  }
+}
+
+function saveLyricsSettings() {
+  fs.mkdirSync(path.dirname(LYRICS_SETTINGS_FILE()), { recursive: true });
+  fs.writeFileSync(LYRICS_SETTINGS_FILE(), JSON.stringify(lyricsSettings, null, 2));
+}
 
 function xmlEscape(value) {
   return String(value)
@@ -398,6 +454,7 @@ function sendLyricsToWindow() {
   if (!lyricsWindow || lyricsWindow.isDestroyed() || lyricsWindow.webContents.isLoading()) return;
   lyricsWindow.webContents.send('lyrics:state', lyricsState);
   lyricsWindow.webContents.send('lyrics:data', lyricsData);
+  lyricsWindow.webContents.send('lyrics:settings', lyricsSettings);
 }
 
 function lyricStateKey(state) {
@@ -453,16 +510,36 @@ function updateLyricsState(data) {
 function loadLyricsBounds() {
   try {
     const bounds = JSON.parse(fs.readFileSync(LYRICS_BOUNDS_FILE(), 'utf8'));
-    if ([bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return bounds;
+    if ([bounds.x, bounds.y].every(Number.isFinite)) {
+      return { x: Math.round(bounds.x), y: Math.round(bounds.y), width: lyricsSettings.width, height: lyricsSettings.height };
+    }
   } catch {}
   const area = screen.getPrimaryDisplay().workArea;
-  return { x: Math.round(area.x + (area.width - 760) / 2), y: Math.round(area.y + area.height - 230), width: 760, height: 190 };
+  return {
+    x: Math.round(area.x + (area.width - lyricsSettings.width) / 2),
+    y: Math.round(area.y + area.height - lyricsSettings.height - 30),
+    width: lyricsSettings.width,
+    height: lyricsSettings.height,
+  };
 }
 
 function saveLyricsBounds() {
   if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
   fs.mkdirSync(path.dirname(LYRICS_BOUNDS_FILE()), { recursive: true });
   fs.writeFileSync(LYRICS_BOUNDS_FILE(), JSON.stringify(lyricsWindow.getBounds()));
+}
+
+function updateLyricsSettings(value, persist = true) {
+  lyricsSettings = normalizeLyricsSettings({ ...lyricsSettings, ...(value || {}) });
+  if (persist) saveLyricsSettings();
+  if (lyricsWindow && !lyricsWindow.isDestroyed()) {
+    const bounds = lyricsWindow.getBounds();
+    lyricsWindow.setBounds({ ...bounds, width: lyricsSettings.width, height: lyricsSettings.height });
+    lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, 'floating');
+    sendLyricsToWindow();
+    saveLyricsBounds();
+  }
+  return lyricsSettings;
 }
 
 function showLyricsWindow() {
@@ -477,11 +554,11 @@ function showLyricsWindow() {
       hasShadow: false,
       resizable: false,
       skipTaskbar: true,
-      alwaysOnTop: true,
+      alwaysOnTop: lyricsSettings.alwaysOnTop,
       show: false,
       webPreferences: { preload: path.join(__dirname, 'preload.js') },
     });
-    lyricsWindow.setAlwaysOnTop(true, 'floating');
+    lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, 'floating');
     lyricsWindow.on('moved', saveLyricsBounds);
     lyricsWindow.on('closed', () => { lyricsWindow = null; });
     lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
@@ -973,8 +1050,10 @@ async function fetchPlaylistMeta(listId) {
   return { firstVideoId: out.items.length > 0 ? out.items[0].id : null, count };
 }
 
+let mainWindow = null;
+
 function createWindow(port) {
-  const win = new BrowserWindow({
+  const win = mainWindow = new BrowserWindow({
     width: 1420,
     height: 800,
     title: 'YouTube Music',
@@ -989,6 +1068,7 @@ function createWindow(port) {
   win.loadURL(`http://127.0.0.1:${port}/`);
   win.on('closed', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.close();
+    mainWindow = null;
   });
 }
 
@@ -997,6 +1077,7 @@ let webviewWC = null; // 폴백 웹뷰의 webContents (창에 하나뿐)
 app.whenReady().then(async () => {
   const port = await startServer();
   lyricsServerPort = port;
+  lyricsSettings = loadLyricsSettings();
   // 광고/추적 도메인 차단 — 단, 폴백(워치페이지) 웹뷰의 요청은 예외.
   // 웹뷰에서까지 광고 요청을 차단하면 유튜브가 광고 차단으로 감지해
   // "광고 차단 프로그램은 YouTube에서 허용되지 않습니다" 팝업으로 재생을 막는다.
@@ -1060,6 +1141,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('account:addToPlaylist', (_event, p) => addToPlaylist(p.playlistId, p.videoId));
   ipcMain.handle('search:videos', (_event, query) => searchVideos(query));
   ipcMain.handle('recs:fetch', (_event, p) => fetchPlaylistRecs(p.listId, p.token));
+  ipcMain.handle('lyrics:settings:get', () => lyricsSettings);
+  ipcMain.handle('lyrics:settings:save', (_event, settings) => updateLyricsSettings(settings));
+  ipcMain.on('lyrics:control', (_event, action) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (['previous', 'toggle-play', 'next'].includes(action)) mainWindow.webContents.send('lyrics:control', action);
+  });
   ipcMain.on('lyrics:update', (_event, data) => updateLyricsState(data));
   ipcMain.on('lyrics:toggle', () => {
     if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsWindow.isVisible()) showLyricsWindow();
