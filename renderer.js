@@ -289,7 +289,7 @@ async function pollFallback(id) {
   let st = null;
   try {
     st = await fallbackView.executeJavaScript(
-      "(() => { const v = document.querySelector('video'); const m = location.href.match(/[?&]v=([\\w-]{11})/); return { vid: m ? m[1] : null, ended: v ? v.ended : false, t: v ? v.currentTime : 0, d: v ? v.duration || 0 : 0, ad: !!document.querySelector('.ad-showing') }; })()"
+      "(() => { const v = document.querySelector('video'); const m = location.href.match(/[?&]v=([\\w-]{11})/); return { vid: m ? m[1] : null, ended: v ? v.ended : false, paused: v ? v.paused : true, t: v ? v.currentTime : 0, d: v ? v.duration || 0 : 0, ad: !!document.querySelector('.ad-showing') }; })()"
     );
   } catch {}
   if (!st || (st.t === 0 && !st.d && !st.ad)) {
@@ -307,7 +307,7 @@ async function pollFallback(id) {
     id,
     title: (info && info.title) || id,
     artist: (info && info.author) || '',
-    status: 'playing',
+    status: st.paused ? 'paused' : 'playing',
     progress: Number(st.t) * 1000,
     duration: Number(st.d) * 1000,
     coverUrl: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
