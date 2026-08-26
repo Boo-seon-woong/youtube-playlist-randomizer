@@ -19,6 +19,7 @@ const unplayableIds = new Set(); // 직접 재생조차 불가(삭제/비공개 
 let watchdogTimer = null;
 let stallTimer = null; // 임베드가 버퍼링(state 3)에서 진행 없이 멈춘 경우의 2차 워치독
 let fallbackActive = false;
+let precisePlaybackActive = false; // 소수점 볼륨 선택 후 HTML5 video.volume 정밀 재생 사용
 let fallbackPollTimer = null;
 let skipPollTimer = null;
 let fallbackStall = 0;
@@ -514,7 +515,7 @@ function playCurrent() {
     nextTrack();
     return;
   }
-  if (fallbackIds.has(id)) {
+  if (fallbackIds.has(id) || precisePlaybackActive) {
     startFallback(id);
     return;
   }
@@ -1120,8 +1121,15 @@ function applyVolume() {
 
 function setMasterVolume(v, save) {
   masterVolume = clampVolume(v);
+  // IFrame API는 정수 볼륨만 지원하므로, 소수점 값을 선택하면 현재 곡부터
+  // HTML5 video.volume을 직접 제어하는 워치페이지 경로로 전환한다.
+  if (!Number.isInteger(masterVolume)) precisePlaybackActive = true;
   paintVolumeUI();
-  applyVolume();
+  if (precisePlaybackActive && !fallbackActive && queueIndex >= 0 && queue[queueIndex]) {
+    startFallback(queue[queueIndex]);
+  } else {
+    applyVolume();
+  }
   if (save) saveSettings();
 }
 
@@ -2081,6 +2089,7 @@ document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue)
   if (saved && saved.accent && saved.base && saved.panel) applyTheme(saved);
   else syncSettingsUI();
   if (saved && saved.volume != null) masterVolume = clampVolume(saved.volume);
+  precisePlaybackActive = !Number.isInteger(masterVolume);
   paintVolumeUI(); // 저장값이 없어도 슬라이더 채움 표시는 초기화 필요
   if (saved && saved.layout) layout = { ...DEFAULT_LAYOUT, ...saved.layout };
   applyLayout(); // 저장값이 없어도 핸들 버튼 아이콘은 그려야 한다
