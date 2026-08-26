@@ -243,19 +243,28 @@ function durationMatchScore(value, target) {
 
 // ── 가사 검색어 정제 ──
 // 렌더러가 넘기는 title/artist는 유튜브 영상 제목("[MV] IU(아이유) _ Good Day(좋은 날)",
-// "BTS (방탄소년단) 'Dynamite' Official MV")과 채널명("1theK (원더케이)", "IU - Topic")이다.
-// ALSong 검색은 제목·아티스트 모두 부분 문자열 매칭이라 이 원문을 그대로 넣으면 0건이 된다(실측).
-// 태그를 걷어낸 뒤 제목/아티스트 후보를 여러 개 뽑아 구체적인 조합부터 순서대로 검색한다.
-const NOISE_BRACKET_RE = /\b(?:official|mv|m\/v|video|audio|lyrics?|live|ver|version|visualizer|performance|teaser|remaster(?:ed)?|hd|hq|4k|color coded|ost|clip|stage|practice|sub|feat\.?|ft\.?|prod\.?)\b|가사|뮤비|뮤직비디오|공식|자막|라이브|안무|버전|음원|풀버전/i;
-const BRACKET_RE = /[\(\[\{（［]([^()\[\]{}（）［］]*)[\)\]\}）］]/g;
+// "BTS (방탄소년단) 'Dynamite' Official MV", "ぐぬぬ / 重音テト", "설명🔥: 요루시카 - 봄도둑(春泥棒) [가사/해석]")과
+// 채널명("1theK (원더케이)", "IU - Topic")이다. ALSong 검색은 제목·아티스트 모두 부분 문자열 매칭이라
+// 이 원문을 그대로 넣으면 0건이 된다(실측). 태그를 걷어낸 뒤 제목/아티스트 후보를 여러 개 뽑아
+// 구체적인 조합부터 순서대로 검색한다.
+const NOISE_BRACKET_RE = /\b(?:official|mv|m\/v|pv|video|audio|lyrics?|live|ver|version|visualizer|performance|teaser|remaster(?:ed)?|hd|hq|4k|color coded|ost|clip|stage|practice|sub|cover|from|youtube|feat\.?|ft\.?|prod\.?)\b|가사|뮤비|뮤직비디오|공식|자막|라이브|안무|버전|음원|풀버전|해석|발음|번역|불러\s*보았다|オリジナル|歌ってみた|カバー|公式|ミュージックビデオ|フル|ボカロ|自作曲/i;
+const BRACKET_RE = /[\(\[\{（［【]([^()\[\]{}（）［］【】]*)[\)\]\}）］】]/g;
+// 구분자: " - ", " _ ", " | " 는 "아티스트 - 제목", " / " 는 일본 관례대로 "제목 / 아티스트", ": " 는 앞이 설명문인 경우가 많다
+const SEPARATOR_RE = /\s+[-–—_|]\s+|\s*[:：]\s+|\s+[\/／]\s+/g;
+// 이모지(+ 변형 선택자 U+FE0F)와 괄호 마스킹용 제어문자
+const EMOJI_RE = new RegExp('[\\p{Extended_Pictographic}' + String.fromCharCode(0xfe0f) + ']', 'gu');
+const MASK_CHAR = String.fromCharCode(1);
 
 function stripTitleNoise(text) {
   return String(text || '')
+    .replace(/　/g, ' ')
+    .replace(EMOJI_RE, ' ')
     .replace(BRACKET_RE, (match, inner) => (NOISE_BRACKET_RE.test(inner) ? ' ' : match))
-    .replace(/\b(?:official\s+)?(?:music\s+video|lyric\s+video|m\/v|mv|visualizer)\b/gi, ' ')
+    .replace(/\b(?:official\s+)?(?:music\s+video|lyric\s+video|m\/v|mv|pv|visualizer)\b/gi, ' ')
     .replace(/\bofficial\s+(?:video|audio)\b/gi, ' ')
     .replace(/\blyrics?\b/gi, ' ')
-    .replace(/가사|뮤비|뮤직비디오|공식\s*영상/g, ' ')
+    .replace(/\s+ver\.?\s*$/i, ' ')
+    .replace(/가사|뮤비|뮤직비디오|공식\s*영상|불러\s*보았다\.?|歌ってみた|歌いました/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '')
     .trim();
@@ -268,14 +277,29 @@ function cleanChannelName(author) {
     .replace(/vevo$/i, '')
     .replace(/\s+official\b.*$/i, '')
     .replace(/\s*공식\s*채널.*$/, '')
+    .replace(/\s*외\s*\d+명$/, '')
     .trim();
+}
+
+// "FOMO feat. Teto" → "FOMO", 아티스트 "ZERA & via" → "ZERA" (부분 문자열 검색이라 짧은 쪽이 안전하다)
+function stripFeat(text) {
+  return String(text || '').replace(/\s*\b(?:feat|ft)\b\.?.*$/i, '').trim();
+}
+
+function primaryArtist(text) {
+  return stripFeat(text).replace(/\s*[×&,、，\/／]\s*.*$|\s+(?:x|및|and|with)\s+.*$/i, '').trim();
 }
 
 // "Good Day(좋은 날)" → ["좋은 날", "Good Day"] (한글 표기 우선), 괄호가 없으면 원문 그대로
 function nameVariants(text) {
   const out = [];
   const push = (value) => {
-    const v = String(value || '').replace(/\s+/g, ' ').replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '').trim();
+    const v = String(value || '')
+      .replace(/[\(\[（［【][^)\]）］】]*$/, '')
+      .replace(/[\)\]）］】]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '')
+      .trim();
     if (v && !out.includes(v)) out.push(v);
   };
   const source = String(text || '');
@@ -285,49 +309,93 @@ function nameVariants(text) {
   return out;
 }
 
-// 영상 제목에서 아티스트/제목 분리. 따옴표 제목 → 앞부분이 아티스트, 구분자(- _ | :) → 앞=아티스트 뒤=제목,
-// 단 "Title - Artist" 순서도 있으므로 뒤집은 조합을 reversed로 함께 돌려준다.
-function splitArtistTitle(text) {
+// 괄호 안의 구분자는 무시하고 나눈다: "ぐぬぬ / 重音テト (GUNUNU / Kasane Teto)" → ["ぐぬぬ", "重音テト (GUNUNU / Kasane Teto)"]
+function splitOutsideBrackets(text) {
+  const masked = text.replace(BRACKET_RE, (m) => MASK_CHAR.repeat(m.length));
+  const parts = [];
+  const seps = [];
+  let last = 0;
+  // 공백 있는 구분자가 하나도 없으면 "flos/R Sound Design" 같은 공백 없는 슬래시로 나눈다
+  const matches = [...masked.matchAll(SEPARATOR_RE)];
+  for (const m of matches.length > 0 ? matches : masked.matchAll(/\s*[\/／]\s*/g)) {
+    parts.push(text.slice(last, m.index).trim());
+    seps.push(m[0].trim());
+    last = m.index + m[0].length;
+  }
+  parts.push(text.slice(last).trim());
+  return { parts, seps };
+}
+
+// 영상 제목에서 아티스트/제목 후보 조합을 가능성 순으로 돌려준다.
+// 따옴표 제목('Dynamite', 「アイドル」) → 앞부분이 아티스트. 구분자가 있으면 첫 구분자 기준 조합,
+// 3조각 이상이면 마지막 구분자 기준 조합("설명: 아티스트 - 제목")도, 마지막으로 뒤집은 조합("Title - Artist" 대비).
+// titleOnly=false 인 조합의 제목은 제목 단독 검색에 쓰지 않는다(아티스트명으로 검색하면 엉뚱한 곡만 걸린다).
+// 선두의 【Ado】·[레오루] 같은 라벨과 말미의 【Eve】는 제목이 아니라 아티스트 후보다
+// (말미의 ()/[]는 "봄도둑(春泥棒)"처럼 병기 제목이므로 남긴다).
+function splitArtistTitle(input) {
+  const labels = [];
+  let text = input
+    .replace(/^\s*[\[［【]([^\]］】]*)[\]］】]\s*(?=\S)/, (m, inner) => { labels.push(inner.trim()); return ''; })
+    .replace(/(?<=\S)\s*【([^】]*)】\s*$/, (m, inner) => { labels.push(inner.trim()); return ''; })
+    .trim();
+  const withLabel = (split) => ({ ...split, artist: split.artist || labels[0] || '', labels });
   const quoted = text.match(/^(.*?)(?:^|\s)['‘“"]([^'’”"]+)['’”"](?=\s|$)/)
     || text.match(/^(.*?)[「『《]([^」』》]+)[」』》]/);
   if (quoted && quoted[2].trim()) {
-    return { title: quoted[2].trim(), artist: quoted[1].trim(), reversed: null };
+    return [withLabel({ title: quoted[2].trim(), artist: quoted[1].trim(), titleOnly: true })];
   }
-  const parts = text.split(/\s+[-–—_|:]\s+/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    return { title: parts[1], artist: parts[0], reversed: { title: parts[0], artist: parts[1] } };
+  let { parts, seps } = splitOutsideBrackets(text);
+  // "설명문: 아티스트 - 제목" (번역 채널 관례) — 콜론 앞은 설명이므로 버린다
+  if (parts.length >= 3 && /^[:：]$/.test(seps[0])) {
+    parts = parts.slice(1);
+    seps = seps.slice(1);
   }
-  return { title: text, artist: '', reversed: null };
+  const pair = (index) => {
+    const titleFirst = /^[\/／]$/.test(seps[index]);
+    const [a, b] = [parts[index], parts[index + 1]];
+    return titleFirst ? { title: a, artist: b } : { title: b, artist: a };
+  };
+  if (parts.length < 2 || !parts[0] || !parts[1]) return [withLabel({ title: text, artist: '', titleOnly: true })];
+  const first = pair(0);
+  const splits = [withLabel({ ...first, titleOnly: true })];
+  if (parts.length >= 3 && parts[parts.length - 1]) {
+    splits.push(withLabel({ ...pair(parts.length - 2), titleOnly: true }));
+  }
+  splits.push(withLabel({ title: first.artist, artist: first.title, titleOnly: false }));
+  return splits;
 }
 
-// 검색 순서: 제목×아티스트(≤4) → 뒤집은 조합(≤1) → 제목 단독(≤2). 첫 결과가 나오는 조합에서 멈추고,
+// 검색 순서: 1순위 조합 제목×아티스트(≤4) → 나머지 조합(각 ≤1) → 제목 단독(≤3). 첫 결과가 나오는 조합에서 멈추고,
 // 제목 단독 검색은 여러 아티스트가 섞여 오므로 이후 rankLyricCandidates가 아티스트 일치로 골라낸다.
-// 아티스트 이름 단독 제목 검색은 엉뚱한 곡을 물어올 뿐이라 하지 않는다.
 function buildLyricQueries(rawTitle, rawAuthor) {
-  const split = splitArtistTitle(stripTitleNoise(rawTitle));
-  const titles = nameVariants(split.title);
-  const artists = [...nameVariants(split.artist), ...nameVariants(cleanChannelName(rawAuthor))];
-  const reversed = split.reversed
-    ? { titles: nameVariants(split.reversed.title), artists: nameVariants(split.reversed.artist) }
-    : { titles: [], artists: [] };
-
+  const splits = splitArtistTitle(stripTitleNoise(rawTitle));
+  const channel = nameVariants(primaryArtist(cleanChannelName(rawAuthor)));
   const pairs = [];
   const seen = new Set();
   const add = (title, artist) => {
-    const key = `${title}\u0000${artist}`.toLowerCase();
+    const key = (title + ' ' + artist).toLowerCase();
     if (!title || seen.has(key)) return;
     seen.add(key);
     pairs.push({ title, artist });
   };
-  for (const title of titles.slice(0, 2)) for (const artist of artists.slice(0, 2)) add(title, artist);
-  if (reversed.titles[0] && reversed.artists[0]) add(reversed.titles[0], reversed.artists[0]);
-  for (const title of titles.slice(0, 2)) add(title, '');
+  const allTitles = [];
+  const allArtists = [];
+  const titleOnly = [];
+  splits.forEach((split, index) => {
+    const titles = nameVariants(stripFeat(split.title)).slice(0, 2);
+    const artists = [
+      ...nameVariants(primaryArtist(split.artist)),
+      ...(index === 0 ? [...channel, ...split.labels.flatMap((label) => nameVariants(primaryArtist(label)))] : []),
+    ].slice(0, 2);
+    allTitles.push(...titles);
+    allArtists.push(...artists);
+    if (index === 0) for (const title of titles) for (const artist of artists) add(title, artist);
+    else if (titles[0] && artists[0]) add(titles[0], artists[0]);
+    if (split.titleOnly) titleOnly.push(...titles);
+  });
+  for (const title of titleOnly.slice(0, 3)) add(title, '');
   if (pairs.length === 0 && String(rawTitle || '').trim()) add(String(rawTitle).trim(), '');
-  return {
-    pairs,
-    titles: [...titles, ...reversed.titles],
-    artists: [...artists, ...reversed.artists],
-  };
+  return { pairs, titles: allTitles, artists: [...allArtists, ...channel] };
 }
 
 function bestMatchScore(value, queries) {
