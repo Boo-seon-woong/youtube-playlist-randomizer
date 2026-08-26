@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YouTube Music Lyrics</title>
+  <link rel="stylesheet" href="lyrics.css" />
+</head>
+<body>
+  <main id="lyrics-shell">
+    <section id="lyrics-card" aria-live="polite">
+      <header id="lyrics-header">
+        <img id="lyrics-cover" alt="" />
+        <div id="lyrics-track">
+          <div id="lyrics-title"></div>
+          <div id="lyrics-artist"></div>
+        </div>
+        <div id="lyrics-actions">
+          <button id="lyrics-search" title="다른 가사 검색" aria-label="다른 가사 검색">⌕</button>
+          <button id="lyrics-retry" title="가사 다시 검색" aria-label="가사 다시 검색">↻</button>
+          <button id="lyrics-hide" title="가사 숨기기" aria-label="가사 숨기기">×</button>
+        </div>
+      </header>
+      <div id="lyrics-lines"></div>
+      <div id="lyrics-status"></div>
+    </section>
+
+    <section id="lyrics-search-panel" hidden>
+      <form id="lyrics-search-form">
+        <input id="lyrics-search-title" type="text" placeholder="곡 제목" />
+        <input id="lyrics-search-artist" type="text" placeholder="아티스트" />
+        <button type="submit">검색</button>
+        <button id="lyrics-search-close" type="button" title="닫기">×</button>
+      </form>
+      <div id="lyrics-search-status"></div>
+      <ol id="lyrics-search-results"></ol>
+    </section>
+  </main>
+  <script src="lyrics.js"></script>
+</body>
+</html>

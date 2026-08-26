@@ -37,6 +37,15 @@ const npTitle = document.getElementById('np-title');
 const npArtist = document.getElementById('np-artist');
 const npBadge = document.getElementById('np-badge');
 
+let lyricsPublishedState = {
+  id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '',
+};
+
+function publishLyricsState(patch = {}) {
+  lyricsPublishedState = { ...lyricsPublishedState, ...patch };
+  try { window.lyrics.update(lyricsPublishedState); } catch {}
+}
+
 // 하단 재생 바의 현재 곡 표시. id가 없으면 썸네일 없이 메시지만 보여준다.
 function setNowPlaying(id, title, author, badge) {
   if (id) {
@@ -49,6 +58,15 @@ function setNowPlaying(id, title, author, badge) {
   npTitle.title = title || '';
   npArtist.textContent = author || '';
   npBadge.hidden = !badge;
+  publishLyricsState({
+    id: id || '',
+    title: title || '',
+    artist: author || '',
+    status: id ? 'playing' : 'idle',
+    progress: 0,
+    duration: 0,
+    coverUrl: id ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : '',
+  });
 }
 
 const TRASH_SVG = '<svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M10 11v6M14 11v6"/></svg>';
@@ -284,6 +302,16 @@ async function pollFallback(id) {
     }
     return;
   }
+  const info = titleCache.get(id);
+  publishLyricsState({
+    id,
+    title: (info && info.title) || id,
+    artist: (info && info.author) || '',
+    status: 'playing',
+    progress: Number(st.t) * 1000,
+    duration: Number(st.d) * 1000,
+    coverUrl: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
+  });
   fallbackStall = 0;
   // 광고 재생 중에는 종료 판정을 보류 (광고 종료를 곡 종료로 오인 방지)
   if (st.ad) return;
@@ -394,7 +422,40 @@ function onPlayerStateChange(event) {
   if (fallbackActive) return;
   const data = player.getVideoData();
   if (data && data.title) setNowPlaying(data.video_id || queue[queueIndex], data.title, data.author || '');
+  const state = event.data === YT.PlayerState.PLAYING ? 'playing'
+    : event.data === YT.PlayerState.PAUSED ? 'paused' : lyricsPublishedState.status;
+  let progress = 0;
+  let duration = 0;
+  try {
+    progress = player.getCurrentTime() * 1000;
+    duration = player.getDuration() * 1000;
+  } catch {}
+  publishLyricsState({ status: state, progress, duration });
 }
+
+// 임베드 플레이어의 진행 시각을 가사 창으로 보낸다. 가사 창은 이 값을 보간해
+// Lyrs처럼 현재 줄을 부드럽게 따라간다.
+setInterval(() => {
+  if (!playerReady || fallbackActive || !queue[queueIndex]) return;
+  let state;
+  try { state = player.getPlayerState(); } catch { return; }
+  if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.PAUSED) return;
+  const data = player.getVideoData();
+  let progress = 0;
+  let duration = 0;
+  try {
+    progress = player.getCurrentTime() * 1000;
+    duration = player.getDuration() * 1000;
+  } catch {}
+  publishLyricsState({
+    id: (data && data.video_id) || queue[queueIndex],
+    title: (data && data.title) || lyricsPublishedState.title,
+    artist: (data && data.author) || lyricsPublishedState.artist,
+    status: state === YT.PlayerState.PLAYING ? 'playing' : 'paused',
+    progress,
+    duration,
+  });
+}, 250);
 
 // preset: 곡 구성 화면에서 넘어온 경우 — items(이미 받아둔 전곡, 있으면 재수집 생략), startId(이 곡부터)
 async function playPlaylist(listId, shuffle, preset = {}) {
@@ -2083,6 +2144,7 @@ document.getElementById('play-now-btn').addEventListener('click', () => {
 document.getElementById('prev-btn').addEventListener('click', prevTrack);
 document.getElementById('next-btn').addEventListener('click', nextTrack);
 document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue);
+document.getElementById('lyrics-btn').addEventListener('click', () => window.lyricsctl.toggle());
 
 (async () => {
   const saved = await window.uiSettings.load();

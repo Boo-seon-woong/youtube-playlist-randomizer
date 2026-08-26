@@ -4,10 +4,11 @@
 
 | 파일 | 역할 |
 |---|---|
-| `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 재생목록 메타(첫 곡·곡 수) 조회, 곡 제목 조회(oEmbed), 플레이리스트·디자인 설정 저장 IPC, 광고 도메인 차단(웹뷰 제외), 구글 계정 연동(로그인 창·계정 재생목록·곡 추가)·유튜브 검색 |
-| `preload.js` | contextBridge — 렌더러에 `store` / `titles` / `playlist` / `uiSettings` / `winctl` / `account` / `ytsearch` API 노출 |
-| `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리, 우클릭 컨텍스트 메뉴, 계정 섹션·검색 패널 |
+| `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 재생목록 메타(첫 곡·곡 수) 조회, 곡 제목 조회(oEmbed), 플레이리스트·디자인 설정 저장 IPC, 광고 도메인 차단(웹뷰 제외), 구글 계정 연동(로그인 창·계정 재생목록·곡 추가)·유튜브 검색·가사 DB 조회·가사 창 |
+| `preload.js` | contextBridge — 렌더러에 `store` / `titles` / `playlist` / `uiSettings` / `winctl` / `account` / `ytsearch` / `lyrics` API 노출 |
+| `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리, 우클릭 컨텍스트 메뉴, 계정 섹션·검색 패널·가사 재생 위치 전달 |
 | `index.html`, `styles.css` | Spotify를 참고한 다크 테마 — 상단 바(로고·검색·계정) + 검은 프레임 위 패널 3개(저장 목록 / 플레이어 / 대기열) + 하단 전폭 재생 바 |
+| `lyrics.html`, `lyrics.css`, `lyrics.js` | Lyrs를 참고한 투명 플로팅 가사 창 — 현재/이전/다음 줄, 앨범 아트·곡 정보, 검색·재시도·숨기기, 드래그 위치 저장 |
 
 ## 사이드바 폴더 (playlists.json 구조)
 
@@ -307,6 +308,21 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   — 정밀 조절용 `step 0.01` 슬라이더와 소숫점 둘째자리 실수 직접 입력 필드 제공.
   하단 바 슬라이더는 `step 1`(빠른 조절용). f 키 전체화면 토글은 INPUT 포커스를 무시하지만
   볼륨 슬라이더(`type=range`)는 예외로 허용.
+
+## 플로팅 가사
+
+하단 재생 바의 책 버튼은 별도 `BrowserWindow`를 열어 Lyrs와 비슷한 항상 위 가사 창을 표시한다.
+현재 곡의 제목·아티스트·재생 위치·재생시간은 `renderer.js`가 250ms 주기로 전달하고, 가사 창은
+다음 기준시각까지 진행 위치를 보간해 현재 줄을 갱신한다.
+
+- `main.js`가 제목·아티스트로 **ALSong SOAP API를 먼저 검색**하고, 검색 결과의 상세 가사를
+  병렬로 받아 한글 포함 여부를 확인한다.
+- ALSong 후보는 한글 포함 여부를 최우선으로 하고, 제목·가수 일치도와 가사 마지막 시각(재생시간
+  근사치)을 차례로 비교해 선택한다. 따라서 ALSong 검색 결과의 첫 항목을 무조건 사용하지 않는다.
+- ALSong에 한글 가사가 없을 때만 LRCLIB의 syncedLyrics를 원어 fallback으로 조회하며, 창 하단에
+  `한글 번역 없음 · 원어 가사`를 표시한다.
+- 검색 버튼으로 ALSong/LRCLIB 결과를 직접 선택할 수 있고, 현재 창의 위치는
+  `%APPDATA%/YouTube Music Player/lyrics-window.json`에 저장된다.
 
 ## 곡 제목·아티스트
 

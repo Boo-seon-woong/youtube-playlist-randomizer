@@ -26,6 +26,31 @@ contextBridge.exposeInMainWorld('winctl', {
   onFsKey: (callback) => ipcRenderer.on('window:fs-key', () => callback()),
 });
 
+contextBridge.exposeInMainWorld('lyrics', {
+  update: (state) => ipcRenderer.send('lyrics:update', state),
+});
+
+contextBridge.exposeInMainWorld('lyricsctl', {
+  toggle: () => ipcRenderer.send('lyrics:toggle'),
+});
+
+contextBridge.exposeInMainWorld('lyricsOverlay', {
+  hide: () => ipcRenderer.send('lyrics:hide'),
+  retry: () => ipcRenderer.send('lyrics:retry'),
+  search: (params) => ipcRenderer.invoke('lyrics:search', params),
+  select: (candidate) => ipcRenderer.invoke('lyrics:select', candidate),
+  onState: (callback) => {
+    const handler = (_event, state) => callback(state);
+    ipcRenderer.on('lyrics:state', handler);
+    return () => ipcRenderer.off('lyrics:state', handler);
+  },
+  onData: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('lyrics:data', handler);
+    return () => ipcRenderer.off('lyrics:data', handler);
+  },
+});
+
 contextBridge.exposeInMainWorld('fallbackctl', {
   click: (x, y) => ipcRenderer.send('fallback:click', { x, y }),
 });

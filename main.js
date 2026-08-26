@@ -16,6 +16,7 @@ app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 const STORE_FILE = () => path.join(app.getPath('userData'), 'playlists.json');
 const TITLE_CACHE_FILE = () => path.join(app.getPath('userData'), 'titles.json');
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json'); // 디자인 설정 (테마 색)
+const LYRICS_BOUNDS_FILE = () => path.join(app.getPath('userData'), 'lyrics-window.json');
 
 // Block known ad/tracking domains so the embedded player stays ad-free.
 const AD_URL_PATTERNS = [
@@ -101,6 +102,393 @@ async function fetchTitles(ids) {
     fs.writeFileSync(TITLE_CACHE_FILE(), JSON.stringify(titleCache));
   }
   return result;
+}
+
+// ── 가사: ALSong 우선, LRCLIB 보조 ──
+// YouTube IFrame API는 Spotify/YouTube Music처럼 가사 데이터를 제공하지 않으므로
+// 현재 곡의 제목·아티스트로 외부 가사 DB를 조회하고, 재생 시간은 renderer가 전달한다.
+const ALSong_ENC_DATA = '8456ec35caba5c981e705b0c5d76e4593e020ae5e3d469c75d1c6714b6b1244c0732f1f19cc32ee5123ef7de574fc8bc6d3b6bd38dd3c097f5a4a1aa1b438fea0e413baf8136d2d7d02bfcdcb2da4990df2f28675a3bd621f8234afa84fb4ee9caa8f853a5b06f884ea086fd3ed3b4c6e14f1efac5a4edbf6f6cb475445390b0';
+
+function xmlEscape(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function xmlDecode(value) {
+  return String(value)
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function xmlBlocks(xml, tag) {
+  const result = [];
+  const re = new RegExp(`<(?:(?:[\\w-]+):)?${tag}\\b[^>]*>([\\s\\S]*?)</(?:(?:[\\w-]+):)?${tag}>`, 'gi');
+  for (const match of String(xml).matchAll(re)) result.push(match[1]);
+  return result;
+}
+
+function xmlText(xml, tag) {
+  const block = xmlBlocks(xml, tag)[0];
+  return block == null ? '' : xmlDecode(block.replace(/<[^>]+>/g, '').trim());
+}
+
+function parseLrc(text) {
+  const lines = [];
+  const timeRe = /\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]/g;
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const matches = [...raw.matchAll(timeRe)];
+    const lyricText = raw.replace(/\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]/g, '').trim();
+    if (!lyricText) continue;
+    for (const match of matches) {
+      lines.push({
+        time: (Number(match[1]) * 60 + Number(match[2])) * 1000,
+        text: lyricText,
+      });
+    }
+  }
+  lines.sort((a, b) => a.time - b.time);
+  return lines;
+}
+
+function hasHangul(text) {
+  return /[가-힣]/.test(String(text || ''));
+}
+
+function hangulCount(lines) {
+  return (lines || []).reduce((count, line) => count + (String(line.text || '').match(/[가-힣]/g) || []).length, 0);
+}
+
+function normalizeMatch(text) {
+  return String(text || '').toLowerCase().replace(/[\(\[\{].*?[\)\]\}]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function textMatchScore(value, query) {
+  const actual = normalizeMatch(value);
+  const wanted = normalizeMatch(query);
+  if (!actual || !wanted) return 0;
+  if (actual === wanted) return 1;
+  if (actual.includes(wanted) || wanted.includes(actual)) return 0.75;
+  return 0;
+}
+
+function durationMatchScore(value, target) {
+  if (!value || !target) return 0;
+  return Math.max(0, 1 - Math.abs(value - target) / Math.max(target, 1000));
+}
+
+function markLyricLanguage(candidate, fallbackNotice = false) {
+  const lines = candidate.lines || [];
+  const korean = candidate.hasKorean === true || lines.some((line) => hasHangul(line.text));
+  return {
+    ...candidate,
+    hasKorean: korean,
+    language: korean ? 'ko' : 'original',
+    fallbackNotice: !korean && fallbackNotice ? '한글 번역 없음 · 원어 가사' : (candidate.fallbackNotice || ''),
+  };
+}
+
+function rankLyricCandidates(candidates, title, artist, targetDuration) {
+  return [...candidates]
+    .map((candidate) => markLyricLanguage(candidate))
+    .sort((a, b) => {
+      if (a.hasKorean !== b.hasKorean) return b.hasKorean ? 1 : -1;
+      const titleScore = textMatchScore(b.title, title) - textMatchScore(a.title, title);
+      if (titleScore) return titleScore;
+      const artistScore = textMatchScore(b.artist, artist) - textMatchScore(a.artist, artist);
+      if (artistScore) return artistScore;
+      const durationScore = durationMatchScore(b.duration, targetDuration) - durationMatchScore(a.duration, targetDuration);
+      if (durationScore) return durationScore;
+      return hangulCount(b.lines) - hangulCount(a.lines);
+    });
+}
+
+function alsongSqlQuote(value) {
+  return `'${String(value)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\\0/g, '\\\\0')
+    .replace(/\\n/g, '\\\\n')
+    .replace(/\\r/g, '\\\\r')}'`;
+}
+
+function alsongRequest(action, fields) {
+  const fieldXml = Object.entries(fields)
+    .map(([key, value]) => `<ns1:${key}>${xmlEscape(value)}</ns1:${key}>`)
+    .join('');
+  const body = `<?xml version="1.0" encoding="UTF-8"?>
+  <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:ns1="ALSongWebServer">
+    <SOAP-ENV:Body><ns1:${action}>${fieldXml}</ns1:${action}></SOAP-ENV:Body>
+  </SOAP-ENV:Envelope>`;
+
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: 'lyrics.alsong.co.kr',
+      port: 80,
+      path: '/alsongwebservice/service1.asmx',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml;charset=utf-8',
+        'Content-Length': Buffer.byteLength(body),
+        'User-Agent': 'gSOAP/2.7',
+        SOAPAction: `ALSongWebServer/${action}`,
+      },
+    }, (res) => {
+      const chunks = [];
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        if (res.statusCode !== 200) return reject(new Error(`ALSong HTTP ${res.statusCode}`));
+        resolve(chunks.join(''));
+      });
+    });
+    req.setTimeout(10000, () => req.destroy(new Error('ALSong request timeout')));
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+function lyricCandidate(source, data) {
+  const lines = data.lines || [];
+  return {
+    source,
+    id: String(data.id || ''),
+    title: data.title || '',
+    artist: data.artist || '',
+    album: data.album || '',
+    duration: Number(data.duration) || 0,
+    lines,
+    hasKorean: data.hasKorean === true || lines.some((line) => hasHangul(line.text)),
+  };
+}
+
+async function fetchLrclibCandidates(title, artist) {
+  if (!title) return [];
+  const queries = [];
+  const addQuery = (withArtist) => {
+    const query = new URLSearchParams({ track_name: title });
+    if (withArtist && artist) query.set('artist_name', artist);
+    queries.push(`https://lrclib.net/api/search?${query}`);
+  };
+  addQuery(true);
+  addQuery(false);
+  const result = [];
+  const seen = new Set();
+  for (const url of queries) {
+    try {
+      const response = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+      if (!response.ok) continue;
+      const json = await response.json();
+      for (const item of Array.isArray(json) ? json : []) {
+        if (!item.syncedLyrics) continue;
+        const key = String(item.id || `${item.trackName}:${item.artistName}:${item.albumName}`);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const lines = parseLrc(item.syncedLyrics);
+        if (lines.length > 0) result.push(lyricCandidate('lrclib', {
+          id: item.id,
+          title: item.trackName,
+          artist: item.artistName,
+          album: item.albumName,
+          duration: Number(item.duration) * 1000,
+          lines,
+        }));
+      }
+      if (result.length > 0) break;
+    } catch {}
+  }
+  return result;
+}
+
+async function fetchAlsongCandidates(title, artist) {
+  if (!title) return [];
+  const searches = [
+    { title: alsongSqlQuote(title), artist: artist ? alsongSqlQuote(artist) : undefined },
+    { title: alsongSqlQuote(title), artist: undefined },
+  ];
+  for (const search of searches) {
+    try {
+      const fields = { encData: ALSong_ENC_DATA, pageNo: 1 };
+      if (search.title) fields.title = search.title;
+      if (search.artist) fields.artist = search.artist;
+      const xml = await alsongRequest('GetResembleLyricList2', fields);
+      const result = xmlBlocks(xml, 'ST_SEARCHLYRIC_LIST').map((block) => lyricCandidate('alsong', {
+        id: xmlText(block, 'lyricID'),
+        title: xmlText(block, 'title'),
+        artist: xmlText(block, 'artist'),
+        album: xmlText(block, 'album'),
+      })).filter((item) => item.id);
+      if (result.length > 0) return result.slice(0, 16);
+    } catch {}
+  }
+  return [];
+}
+
+async function resolveLyricCandidate(candidate) {
+  if (!candidate) return null;
+  if (candidate.lines && candidate.lines.length > 0) return markLyricLanguage(candidate);
+  if (candidate.source !== 'alsong' || !candidate.id) return null;
+  try {
+    const xml = await alsongRequest('GetLyricByID2', { encData: ALSong_ENC_DATA, lyricID: Number(candidate.id) });
+    const lyric = xmlText(xml, 'lyric');
+    const lines = parseLrc(lyric);
+    if (lines.length === 0) return null;
+    const duration = Math.max(candidate.duration || 0, lines[lines.length - 1].time);
+    return markLyricLanguage({ ...candidate, duration, lines });
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAlsongCandidates(title, artist, targetDuration) {
+  const metadata = await fetchAlsongCandidates(title, artist);
+  const resolved = (await Promise.all(metadata.map((candidate) => resolveLyricCandidate(candidate)))).filter(Boolean);
+  return rankLyricCandidates(resolved, title, artist, targetDuration);
+}
+
+async function findLyricsForTrack(title, artist, targetDuration) {
+  const alsong = await resolveAlsongCandidates(title, artist, targetDuration);
+  const korean = alsong.find((candidate) => candidate.hasKorean);
+  if (korean) return korean;
+
+  // ALSong에 한글 가사가 없을 때만 LRCLIB 원어 가사로 내려간다.
+  const lrclib = rankLyricCandidates(
+    await fetchLrclibCandidates(title, artist),
+    title,
+    artist,
+    targetDuration,
+  );
+  if (lrclib.length > 0) return markLyricLanguage(lrclib[0], true);
+  return alsong.length > 0 ? markLyricLanguage(alsong[0], true) : null;
+}
+
+async function searchAllLyrics(title, artist) {
+  const alsong = await resolveAlsongCandidates(title, artist, 0);
+  const lrclib = rankLyricCandidates(
+    await fetchLrclibCandidates(title, artist),
+    title,
+    artist,
+    0,
+  );
+  const hasKoreanAlsong = alsong.some((candidate) => candidate.hasKorean);
+  return [
+    ...alsong.map((candidate) => markLyricLanguage(candidate, !hasKoreanAlsong)),
+    ...lrclib.map((candidate) => markLyricLanguage(candidate, !hasKoreanAlsong)),
+  ].slice(0, 16);
+}
+
+let lyricsWindow = null;
+let lyricsServerPort = null;
+let lyricsState = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '' };
+let lyricsData = null;
+let lyricsKey = '';
+let lyricsRequestId = 0;
+let lyricsLoadingKey = '';
+const lyricsCache = new Map();
+
+function sendLyricsToWindow() {
+  if (!lyricsWindow || lyricsWindow.isDestroyed() || lyricsWindow.webContents.isLoading()) return;
+  lyricsWindow.webContents.send('lyrics:state', lyricsState);
+  lyricsWindow.webContents.send('lyrics:data', lyricsData);
+}
+
+function lyricStateKey(state) {
+  return [state.id, state.title, state.artist].join('\\u0000').toLowerCase();
+}
+
+async function loadLyricsForState(state, key) {
+  if (lyricsLoadingKey === key) return;
+  if (lyricsCache.has(key)) {
+    lyricsData = lyricsCache.get(key);
+    sendLyricsToWindow();
+    return;
+  }
+  lyricsLoadingKey = key;
+  const requestId = ++lyricsRequestId;
+  try {
+    const data = await findLyricsForTrack(state.title, state.artist, state.duration);
+    const displayData = data || { unavailable: true, lines: [] };
+    lyricsCache.set(key, displayData);
+    if (requestId !== lyricsRequestId || key !== lyricsKey) return;
+    lyricsData = displayData;
+    sendLyricsToWindow();
+  } finally {
+    if (lyricsLoadingKey === key) lyricsLoadingKey = '';
+  }
+}
+
+function updateLyricsState(data) {
+  if (!data || typeof data !== 'object') return;
+  const next = {
+    id: String(data.id || ''),
+    title: String(data.title || ''),
+    artist: String(data.artist || ''),
+    status: ['playing', 'paused', 'idle'].includes(data.status) ? data.status : 'idle',
+    progress: Math.max(0, Number(data.progress) || 0),
+    duration: Math.max(0, Number(data.duration) || 0),
+    coverUrl: String(data.coverUrl || ''),
+  };
+  const key = lyricStateKey(next);
+  const keyChanged = key !== lyricsKey;
+  lyricsState = next;
+  if (keyChanged) {
+    lyricsKey = key;
+    lyricsData = lyricsCache.has(key) ? lyricsCache.get(key) : null;
+    sendLyricsToWindow();
+  }
+  sendLyricsToWindow();
+  if (next.status !== 'idle' && next.title && next.duration > 0 && !lyricsCache.has(key)) {
+    loadLyricsForState(next, key).catch(() => {});
+  }
+}
+
+function loadLyricsBounds() {
+  try {
+    const bounds = JSON.parse(fs.readFileSync(LYRICS_BOUNDS_FILE(), 'utf8'));
+    if ([bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)) return bounds;
+  } catch {}
+  const area = screen.getPrimaryDisplay().workArea;
+  return { x: Math.round(area.x + (area.width - 760) / 2), y: Math.round(area.y + area.height - 230), width: 760, height: 190 };
+}
+
+function saveLyricsBounds() {
+  if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
+  fs.mkdirSync(path.dirname(LYRICS_BOUNDS_FILE()), { recursive: true });
+  fs.writeFileSync(LYRICS_BOUNDS_FILE(), JSON.stringify(lyricsWindow.getBounds()));
+}
+
+function showLyricsWindow() {
+  if (!lyricsWindow || lyricsWindow.isDestroyed()) {
+    const bounds = loadLyricsBounds();
+    lyricsWindow = new BrowserWindow({
+      ...bounds,
+      title: 'Lyrics',
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      hasShadow: false,
+      resizable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      show: false,
+      webPreferences: { preload: path.join(__dirname, 'preload.js') },
+    });
+    lyricsWindow.setAlwaysOnTop(true, 'floating');
+    lyricsWindow.on('moved', saveLyricsBounds);
+    lyricsWindow.on('closed', () => { lyricsWindow = null; });
+    lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
+    lyricsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics.html`);
+  }
+  lyricsWindow.showInactive();
+  sendLyricsToWindow();
 }
 
 // 재생목록 전체 곡 목록 수집: iframe 플레이어의 getPlaylist()는 200곡까지만 노출하므로
@@ -599,12 +987,16 @@ function createWindow(port) {
     },
   });
   win.loadURL(`http://127.0.0.1:${port}/`);
+  win.on('closed', () => {
+    if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.close();
+  });
 }
 
 let webviewWC = null; // 폴백 웹뷰의 webContents (창에 하나뿐)
 
 app.whenReady().then(async () => {
   const port = await startServer();
+  lyricsServerPort = port;
   // 광고/추적 도메인 차단 — 단, 폴백(워치페이지) 웹뷰의 요청은 예외.
   // 웹뷰에서까지 광고 요청을 차단하면 유튜브가 광고 차단으로 감지해
   // "광고 차단 프로그램은 YouTube에서 허용되지 않습니다" 팝업으로 재생을 막는다.
@@ -668,6 +1060,36 @@ app.whenReady().then(async () => {
   ipcMain.handle('account:addToPlaylist', (_event, p) => addToPlaylist(p.playlistId, p.videoId));
   ipcMain.handle('search:videos', (_event, query) => searchVideos(query));
   ipcMain.handle('recs:fetch', (_event, p) => fetchPlaylistRecs(p.listId, p.token));
+  ipcMain.on('lyrics:update', (_event, data) => updateLyricsState(data));
+  ipcMain.on('lyrics:toggle', () => {
+    if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsWindow.isVisible()) showLyricsWindow();
+    else lyricsWindow.hide();
+  });
+  ipcMain.on('lyrics:hide', () => {
+    if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.hide();
+  });
+  ipcMain.on('lyrics:retry', () => {
+    if (!lyricsKey) return;
+    lyricsCache.delete(lyricsKey);
+    lyricsData = null;
+    sendLyricsToWindow();
+    if (lyricsState.status !== 'idle' && lyricsState.title) {
+      loadLyricsForState(lyricsState, lyricsKey).catch(() => {});
+    }
+  });
+  ipcMain.handle('lyrics:search', (_event, params) => searchAllLyrics(
+    String(params && params.title || '').trim(),
+    String(params && params.artist || '').trim(),
+  ));
+  ipcMain.handle('lyrics:select', async (_event, candidate) => {
+    const data = await resolveLyricCandidate(candidate);
+    if (data) {
+      lyricsData = data;
+      if (lyricsKey) lyricsCache.set(lyricsKey, data);
+      sendLyricsToWindow();
+    }
+    return data;
+  });
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.setFullScreen(!!flag);
