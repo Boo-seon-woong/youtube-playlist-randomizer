@@ -1107,8 +1107,9 @@ function applyVolume() {
     try {
       player.setVolume(masterVolume);
       // 임베드 플레이어는 볼륨 0에서 unMute()하면 최소 볼륨 5로 되살린다(실측) —
-      // 정수 반올림 시 0이 되는 구간은 명시적 음소거로 확실히 무음을 보장한다
-      if (masterVolume < 0.5) player.mute();
+      // 0에서만 명시적으로 음소거한다. 0.5 미만까지 mute하면 입력값이
+      // 0.00~0.49 구간에서 모두 무음이 되어 갑작스러운 임계값이 생긴다.
+      if (masterVolume === 0) player.mute();
       else player.unMute();
     } catch {}
   }

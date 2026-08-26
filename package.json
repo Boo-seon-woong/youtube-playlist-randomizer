@@ -1,6 +1,6 @@
 {
   "name": "youtube-music-player",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "유튜브 재생목록 링크로 음악·영상을 재생하는 데스크톱 플레이어 (Electron)",
   "main": "main.js",
   "scripts": {
