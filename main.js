@@ -241,6 +241,99 @@ function durationMatchScore(value, target) {
   return Math.max(0, 1 - Math.abs(value - target) / Math.max(target, 1000));
 }
 
+// ── 가사 검색어 정제 ──
+// 렌더러가 넘기는 title/artist는 유튜브 영상 제목("[MV] IU(아이유) _ Good Day(좋은 날)",
+// "BTS (방탄소년단) 'Dynamite' Official MV")과 채널명("1theK (원더케이)", "IU - Topic")이다.
+// ALSong 검색은 제목·아티스트 모두 부분 문자열 매칭이라 이 원문을 그대로 넣으면 0건이 된다(실측).
+// 태그를 걷어낸 뒤 제목/아티스트 후보를 여러 개 뽑아 구체적인 조합부터 순서대로 검색한다.
+const NOISE_BRACKET_RE = /\b(?:official|mv|m\/v|video|audio|lyrics?|live|ver|version|visualizer|performance|teaser|remaster(?:ed)?|hd|hq|4k|color coded|ost|clip|stage|practice|sub|feat\.?|ft\.?|prod\.?)\b|가사|뮤비|뮤직비디오|공식|자막|라이브|안무|버전|음원|풀버전/i;
+const BRACKET_RE = /[\(\[\{（［]([^()\[\]{}（）［］]*)[\)\]\}）］]/g;
+
+function stripTitleNoise(text) {
+  return String(text || '')
+    .replace(BRACKET_RE, (match, inner) => (NOISE_BRACKET_RE.test(inner) ? ' ' : match))
+    .replace(/\b(?:official\s+)?(?:music\s+video|lyric\s+video|m\/v|mv|visualizer)\b/gi, ' ')
+    .replace(/\bofficial\s+(?:video|audio)\b/gi, ' ')
+    .replace(/\blyrics?\b/gi, ' ')
+    .replace(/가사|뮤비|뮤직비디오|공식\s*영상/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '')
+    .trim();
+}
+
+function cleanChannelName(author) {
+  return String(author || '')
+    .replace(BRACKET_RE, (match, inner) => (NOISE_BRACKET_RE.test(inner) ? ' ' : match))
+    .replace(/\s*-\s*topic$/i, '')
+    .replace(/vevo$/i, '')
+    .replace(/\s+official\b.*$/i, '')
+    .replace(/\s*공식\s*채널.*$/, '')
+    .trim();
+}
+
+// "Good Day(좋은 날)" → ["좋은 날", "Good Day"] (한글 표기 우선), 괄호가 없으면 원문 그대로
+function nameVariants(text) {
+  const out = [];
+  const push = (value) => {
+    const v = String(value || '').replace(/\s+/g, ' ').replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '').trim();
+    if (v && !out.includes(v)) out.push(v);
+  };
+  const source = String(text || '');
+  const all = [source.replace(BRACKET_RE, ' '), ...[...source.matchAll(BRACKET_RE)].map((m) => m[1])];
+  all.filter(hasHangul).forEach(push);
+  all.forEach(push);
+  return out;
+}
+
+// 영상 제목에서 아티스트/제목 분리. 따옴표 제목 → 앞부분이 아티스트, 구분자(- _ | :) → 앞=아티스트 뒤=제목,
+// 단 "Title - Artist" 순서도 있으므로 뒤집은 조합을 reversed로 함께 돌려준다.
+function splitArtistTitle(text) {
+  const quoted = text.match(/^(.*?)(?:^|\s)['‘“"]([^'’”"]+)['’”"](?=\s|$)/)
+    || text.match(/^(.*?)[「『《]([^」』》]+)[」』》]/);
+  if (quoted && quoted[2].trim()) {
+    return { title: quoted[2].trim(), artist: quoted[1].trim(), reversed: null };
+  }
+  const parts = text.split(/\s+[-–—_|:]\s+/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    return { title: parts[1], artist: parts[0], reversed: { title: parts[0], artist: parts[1] } };
+  }
+  return { title: text, artist: '', reversed: null };
+}
+
+// 검색 순서: 제목×아티스트(≤4) → 뒤집은 조합(≤1) → 제목 단독(≤2). 첫 결과가 나오는 조합에서 멈추고,
+// 제목 단독 검색은 여러 아티스트가 섞여 오므로 이후 rankLyricCandidates가 아티스트 일치로 골라낸다.
+// 아티스트 이름 단독 제목 검색은 엉뚱한 곡을 물어올 뿐이라 하지 않는다.
+function buildLyricQueries(rawTitle, rawAuthor) {
+  const split = splitArtistTitle(stripTitleNoise(rawTitle));
+  const titles = nameVariants(split.title);
+  const artists = [...nameVariants(split.artist), ...nameVariants(cleanChannelName(rawAuthor))];
+  const reversed = split.reversed
+    ? { titles: nameVariants(split.reversed.title), artists: nameVariants(split.reversed.artist) }
+    : { titles: [], artists: [] };
+
+  const pairs = [];
+  const seen = new Set();
+  const add = (title, artist) => {
+    const key = `${title}\u0000${artist}`.toLowerCase();
+    if (!title || seen.has(key)) return;
+    seen.add(key);
+    pairs.push({ title, artist });
+  };
+  for (const title of titles.slice(0, 2)) for (const artist of artists.slice(0, 2)) add(title, artist);
+  if (reversed.titles[0] && reversed.artists[0]) add(reversed.titles[0], reversed.artists[0]);
+  for (const title of titles.slice(0, 2)) add(title, '');
+  if (pairs.length === 0 && String(rawTitle || '').trim()) add(String(rawTitle).trim(), '');
+  return {
+    pairs,
+    titles: [...titles, ...reversed.titles],
+    artists: [...artists, ...reversed.artists],
+  };
+}
+
+function bestMatchScore(value, queries) {
+  return (queries || []).reduce((best, query) => Math.max(best, textMatchScore(value, query)), 0);
+}
+
 function markLyricLanguage(candidate, fallbackNotice = false) {
   const lines = candidate.lines || [];
   const korean = candidate.hasKorean === true || lines.some((line) => hasHangul(line.text));
@@ -252,28 +345,19 @@ function markLyricLanguage(candidate, fallbackNotice = false) {
   };
 }
 
-function rankLyricCandidates(candidates, title, artist, targetDuration) {
+function rankLyricCandidates(candidates, queries, targetDuration) {
   return [...candidates]
     .map((candidate) => markLyricLanguage(candidate))
     .sort((a, b) => {
       if (a.hasKorean !== b.hasKorean) return b.hasKorean ? 1 : -1;
-      const titleScore = textMatchScore(b.title, title) - textMatchScore(a.title, title);
+      const titleScore = bestMatchScore(b.title, queries.titles) - bestMatchScore(a.title, queries.titles);
       if (titleScore) return titleScore;
-      const artistScore = textMatchScore(b.artist, artist) - textMatchScore(a.artist, artist);
+      const artistScore = bestMatchScore(b.artist, queries.artists) - bestMatchScore(a.artist, queries.artists);
       if (artistScore) return artistScore;
       const durationScore = durationMatchScore(b.duration, targetDuration) - durationMatchScore(a.duration, targetDuration);
       if (durationScore) return durationScore;
       return hangulCount(b.lines) - hangulCount(a.lines);
     });
-}
-
-function alsongSqlQuote(value) {
-  return `'${String(value)
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'")
-    .replace(/\\0/g, '\\\\0')
-    .replace(/\\n/g, '\\\\n')
-    .replace(/\\r/g, '\\\\r')}'`;
 }
 
 function alsongRequest(action, fields) {
@@ -326,19 +410,15 @@ function lyricCandidate(source, data) {
   };
 }
 
-async function fetchLrclibCandidates(title, artist) {
-  if (!title) return [];
-  const queries = [];
-  const addQuery = (withArtist) => {
-    const query = new URLSearchParams({ track_name: title });
-    if (withArtist && artist) query.set('artist_name', artist);
-    queries.push(`https://lrclib.net/api/search?${query}`);
-  };
-  addQuery(true);
-  addQuery(false);
+async function fetchLrclibCandidates(queries) {
+  const urls = queries.pairs.map((pair) => {
+    const query = new URLSearchParams({ track_name: pair.title });
+    if (pair.artist) query.set('artist_name', pair.artist);
+    return `https://lrclib.net/api/search?${query}`;
+  });
   const result = [];
   const seen = new Set();
-  for (const url of queries) {
+  for (const url of urls) {
     try {
       const response = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
       if (!response.ok) continue;
@@ -364,16 +444,10 @@ async function fetchLrclibCandidates(title, artist) {
   return result;
 }
 
-async function fetchAlsongCandidates(title, artist) {
-  if (!title) return [];
-  const searches = [
-    { title: alsongSqlQuote(title), artist: artist ? alsongSqlQuote(artist) : undefined },
-    { title: alsongSqlQuote(title), artist: undefined },
-  ];
-  for (const search of searches) {
+async function fetchAlsongCandidates(queries) {
+  for (const search of queries.pairs) {
     try {
-      const fields = { encData: ALSong_ENC_DATA, pageNo: 1 };
-      if (search.title) fields.title = search.title;
+      const fields = { encData: ALSong_ENC_DATA, pageNo: 1, title: search.title };
       if (search.artist) fields.artist = search.artist;
       const xml = await alsongRequest('GetResembleLyricList2', fields);
       const result = xmlBlocks(xml, 'ST_SEARCHLYRIC_LIST').map((block) => lyricCandidate('alsong', {
@@ -382,7 +456,7 @@ async function fetchAlsongCandidates(title, artist) {
         artist: xmlText(block, 'artist'),
         album: xmlText(block, 'album'),
       })).filter((item) => item.id);
-      if (result.length > 0) return result.slice(0, 16);
+      if (result.length > 0) return result;
     } catch {}
   }
   return [];
@@ -404,36 +478,29 @@ async function resolveLyricCandidate(candidate) {
   }
 }
 
-async function resolveAlsongCandidates(title, artist, targetDuration) {
-  const metadata = await fetchAlsongCandidates(title, artist);
+async function resolveAlsongCandidates(queries, targetDuration) {
+  // 최대 100건이 오므로 가사 본문을 받기 전에 메타(제목/아티스트 일치)로 먼저 추려 16건만 조회한다
+  const metadata = rankLyricCandidates(await fetchAlsongCandidates(queries), queries, 0).slice(0, 16);
   const resolved = (await Promise.all(metadata.map((candidate) => resolveLyricCandidate(candidate)))).filter(Boolean);
-  return rankLyricCandidates(resolved, title, artist, targetDuration);
+  return rankLyricCandidates(resolved, queries, targetDuration);
 }
 
 async function findLyricsForTrack(title, artist, targetDuration) {
-  const alsong = await resolveAlsongCandidates(title, artist, targetDuration);
+  const queries = buildLyricQueries(title, artist);
+  const alsong = await resolveAlsongCandidates(queries, targetDuration);
   const korean = alsong.find((candidate) => candidate.hasKorean);
   if (korean) return korean;
 
   // ALSong에 한글 가사가 없을 때만 LRCLIB 원어 가사로 내려간다.
-  const lrclib = rankLyricCandidates(
-    await fetchLrclibCandidates(title, artist),
-    title,
-    artist,
-    targetDuration,
-  );
+  const lrclib = rankLyricCandidates(await fetchLrclibCandidates(queries), queries, targetDuration);
   if (lrclib.length > 0) return markLyricLanguage(lrclib[0], true);
   return alsong.length > 0 ? markLyricLanguage(alsong[0], true) : null;
 }
 
 async function searchAllLyrics(title, artist) {
-  const alsong = await resolveAlsongCandidates(title, artist, 0);
-  const lrclib = rankLyricCandidates(
-    await fetchLrclibCandidates(title, artist),
-    title,
-    artist,
-    0,
-  );
+  const queries = buildLyricQueries(title, artist);
+  const alsong = await resolveAlsongCandidates(queries, 0);
+  const lrclib = rankLyricCandidates(await fetchLrclibCandidates(queries), queries, 0);
   const hasKoreanAlsong = alsong.some((candidate) => candidate.hasKorean);
   return [
     ...alsong.map((candidate) => markLyricLanguage(candidate, !hasKoreanAlsong)),
