@@ -828,24 +828,61 @@ function findToken(node) {
   return null;
 }
 
+// 재생목록 응답에는 곡 목록 말고도 "맞춤 동영상" 같은 섹션이 함께 실려 있고, 섹션마다 자기
+// continuation 토큰을 갖는다. 트리 전체를 훑으면 두 가지가 어긋난다(실측):
+//   1) 섹션의 추천 영상이 재생목록 곡으로 딸려 들어온다 → 실제보다 곡이 많아짐
+//   2) 100곡 이하 재생목록은 곡 목록 토큰이 아예 없어서, 처음 발견된 섹션 토큰을 다음 페이지로
+//      오인해 따라간다(50곡·25곡짜리 목록에서 확인) → 추천 곡이 뒤에 붙고, 반대로 토큰 순서가
+//      바뀌면 남은 곡을 못 받아 실제보다 곡이 적어짐
+// 그래서 "영상 항목이 들어 있는 첫 배열"만 재생목록 본문으로 보고, 그 배열 안의 continuation만
+// 다음 페이지로 삼는다. 배열 단위 규칙이라 lockupViewModel/playlistVideoRenderer 어느 쪽이든,
+// 노드 경로가 바뀌어도 동작한다.
+function playlistItemFrom(child) {
+  if (!child || typeof child !== 'object') return null;
+  if (child.lockupViewModel) return lockupToItem(child.lockupViewModel);
+  if (child.playlistVideoRenderer) return rendererToItem(child.playlistVideoRenderer);
+  return null;
+}
+
+function isVideoNode(child) {
+  return !!(child && typeof child === 'object' && (child.lockupViewModel || child.playlistVideoRenderer));
+}
+
+function isContinuationNode(child) {
+  return !!(child && typeof child === 'object' && (child.continuationItemViewModel || child.continuationItemRenderer));
+}
+
 function collectPlaylistNodes(node, out) {
-  if (!node || typeof node !== 'object') return;
-  if (node.lockupViewModel) {
-    const item = lockupToItem(node.lockupViewModel);
-    if (item) out.items.push(item);
+  if (!node || typeof node !== 'object' || out.done) return;
+  if (Array.isArray(node)) {
+    const items = [];
+    let token = null;
+    let videoArray = false;
+    for (const child of node) {
+      if (isVideoNode(child)) {
+        videoArray = true;
+        const item = playlistItemFrom(child);
+        if (item) items.push(item); // 비공개·삭제된 곡(재생 불가)은 여기서 걸러진다
+        continue;
+      }
+      if (isContinuationNode(child)) {
+        if (!token) token = findToken(child.continuationItemViewModel || child.continuationItemRenderer);
+        continue;
+      }
+      collectPlaylistNodes(child, out);
+      if (out.done) return;
+    }
+    if (videoArray) {
+      out.items.push(...items);
+      out.continuation = token;
+      out.done = true; // 첫 영상 배열이 재생목록 본문 — 뒤따르는 추천 섹션은 보지 않는다
+    }
     return;
   }
-  if (node.playlistVideoRenderer) {
-    const item = rendererToItem(node.playlistVideoRenderer);
-    if (item) out.items.push(item);
-    return;
+  for (const value of Object.values(node)) {
+    collectPlaylistNodes(value, out);
+    if (out.done) return;
   }
-  if (node.continuationItemViewModel || node.continuationItemRenderer) {
-    const token = findToken(node.continuationItemViewModel || node.continuationItemRenderer);
-    if (token && !out.continuation) out.continuation = token;
-    return;
-  }
-  for (const value of Object.values(node)) collectPlaylistNodes(value, out);
 }
 
 // ── 구글 계정 연동: 로그인 창에서 만들어진 세션 쿠키로 유튜브 웹과 동일하게 인증한다 ──
@@ -1056,24 +1093,29 @@ async function searchVideos(query) {
 }
 
 // 재생목록의 "맞춤 동영상" 추천 — 재생목록 페이지의 그 섹션과 동일한 데이터.
-// 재생목록 browse 응답에는 continuation 토큰이 둘 있다: 하나는 영상 목록(다음 100곡),
-// 다른 하나는 섹션 continuation으로 이 쪽이 "맞춤 동영상" 섹션을 싣는다. 영상 목록 토큰은
-// playlistVideoListRenderer 서브트리 안에 있으므로, 그 밖에 있는 토큰이 섹션 토큰이다.
-function findRecsToken(node, insideVideoList) {
+// 재생목록 browse 응답에는 continuation 토큰이 둘 있다: 곡 목록(다음 100곡) 토큰과 섹션 토큰이며,
+// 이 쪽이 "맞춤 동영상"을 싣는다. 예전에는 playlistVideoListRenderer 서브트리 안/밖으로 갈랐지만
+// 새 UI에는 그 노드가 아예 없어(실측) 곡 목록 토큰을 집어오게 됐다. 이제 collectPlaylistNodes와
+// 같은 기준을 쓴다 — 영상 항목과 같은 배열에 있는 토큰은 곡 목록, 그렇지 않은 토큰이 섹션 토큰.
+function findRecsToken(node) {
   if (!node || typeof node !== 'object') return null;
   if (Array.isArray(node)) {
-    for (const v of node) {
-      const t = findRecsToken(v, insideVideoList);
-      if (t) return t;
+    const videoArray = node.some(isVideoNode);
+    for (const child of node) {
+      if (isContinuationNode(child)) {
+        if (videoArray) continue; // 곡 목록의 다음 페이지 토큰
+        const token = findToken(child.continuationItemViewModel || child.continuationItemRenderer);
+        if (token) return token;
+        continue;
+      }
+      const token = findRecsToken(child);
+      if (token) return token;
     }
     return null;
   }
-  if (!insideVideoList && node.continuationCommand && typeof node.continuationCommand.token === 'string') {
-    return node.continuationCommand.token;
-  }
-  for (const [k, v] of Object.entries(node)) {
-    const t = findRecsToken(v, insideVideoList || k === 'playlistVideoListRenderer');
-    if (t) return t;
+  for (const value of Object.values(node)) {
+    const token = findRecsToken(value);
+    if (token) return token;
   }
   return null;
 }
@@ -1105,7 +1147,7 @@ async function fetchPlaylistRecs(listId, token) {
   let contToken = token;
   if (!contToken) {
     const data = await innertube('browse', { browseId: 'VL' + String(listId).replace(/^VL/, '') });
-    contToken = findRecsToken(data, false);
+    contToken = findRecsToken(data);
     if (!contToken) return { items: [], next: null };
   }
   // 같은 섹션 토큰을 다시 부르면 유튜브가 매번 다른 추천 묶음을 준다 — 새로고침이 이걸로 동작.
@@ -1206,7 +1248,7 @@ async function fetchPlaylistFirst(listId) {
   const dataMatch = html.match(/ytInitialData\s*=\s*(\{.+?\})\s*;\s*<\/script>/s);
   if (!keyMatch || !dataMatch) throw new Error('playlist page parse failed');
 
-  const out = { items: [], continuation: null };
+  const out = { items: [], continuation: null, done: false };
   collectPlaylistNodes(JSON.parse(dataMatch[1]), out);
   return {
     items: out.items,
@@ -1227,7 +1269,7 @@ async function fetchPlaylistMore(cont) {
     }),
   });
   if (!res.ok) throw new Error('continuation HTTP ' + res.status);
-  const out = { items: [], continuation: null };
+  const out = { items: [], continuation: null, done: false };
   collectPlaylistNodes(await res.json(), out);
   return {
     items: out.items,
