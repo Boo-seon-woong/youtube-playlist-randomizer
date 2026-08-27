@@ -272,14 +272,19 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   (임베드 `seekTo` / 직접 재생 `video.currentTime`). 드래그 중에는 미리보기(`seekPreview`)가 우선이라
   손을 놓기 전까지 바가 튀지 않는다.
 - 임베드는 `controls: 0` — 유튜브 컨트롤 바·상단 제목줄을 아예 띄우지 않는다.
-- **임베드 자체 UI 제거(프레임 CSS 주입)**: `controls: 0`으로도 임베드는 **`seekTo()` 순간 제목줄·
-  '동영상 더보기' 오버레이·공유/나중에 볼 동영상 버튼·일시정지 베젤을 수백 ms 띄운다**(사용자가 놓는
-  순간 캡처한 스크린샷이 증거. 환경에 따라 다르며 개발 머신에서는 재현되지 않았다 — 유튜브 플레이어
-  실험 플래그 차이). 렌더러는 교차 출처라 손댈 수 없지만 **메인 프로세스는 `webFrameMain`으로 그 프레임
-  안에서 스크립트를 실행할 수 있다** → `.ytp-chrome-top`·`.ytp-pause-overlay`·`.ytp-bezel`·
-  `.ytp-watermark` 등을 `display: none`으로 죽이는 스타일을 심는다(`hideEmbedChrome`).
-  `did-frame-finish-load` 때와, 곡이 바뀔 때마다 렌더러가 보내는 `embed:refresh-chrome` IPC로 다시 심는다.
-  (앨범 아트로 플레이어를 덮는 방식도 시도했으나 영상이 가려져 사용자가 거부 — 되돌렸다.)
+- **임베드 자체 UI 제거(프레임 안 주입)**: `controls: 0`으로도 임베드는 **`seekTo()` 순간 제목줄·
+  '동영상 더보기' 오버레이·공유/나중에 볼 동영상 버튼·일시정지 베젤을 수백 ms 띄운다**(사용자 스크린샷.
+  개발 머신에서는 재현되지 않는다 — 유튜브 플레이어 실험 플래그가 세션마다 다르다). 렌더러는 교차
+  출처라 손댈 수 없지만 **메인 프로세스는 `webFrameMain`으로 그 프레임 안에서 스크립트를 실행할 수 있다**.
+  주입 내용은 두 겹이다(`hideEmbedChrome`):
+  1. 알려진 `.ytp-*` 클래스(제목줄·pause overlay·bezel·워터마크 등)를 `display:none`으로 죽이는 스타일
+  2. **클래스 이름에 의존하지 않는 처리** — `#movie_player`의 직계 자식 중 `<video>`를 품지 않은 요소를
+     전부 `display:none`으로 만들고(자막·스피너·오류 표시는 제외), `MutationObserver`로 유튜브가 다시
+     만들어 붙이거나 style을 되돌려도 즉시 다시 숨긴다. 클래스명이 바뀌어도 통한다.
+  주입 시점: 프레임 로드(`did-frame-finish-load`) + 곡이 바뀔 때마다(`embed:refresh-chrome` IPC).
+  검증: 플레이어 자식 상태가 `html5-video-container=block`(재생 중)·`ytp-unmute=none`·
+  `ytp-player-content=none`·`ytp-caption-window-container=block`, 시킹 중 표시된 오버레이 0건.
+  (앨범 아트로 플레이어를 덮는 방식은 사용자가 거부 — 되돌렸다.)
 - **직접 재생 시킹 반응성**: 워치페이지 폴링이 1초 주기라 이동 결과가 돌아올 때까지 바가 옛 위치로
   되돌아가 둔했다 → 앱이 아는 재생시간으로 **즉시 낙관적 반영**하고 다음 폴링이 정정한다
   (실측: 놓은 직후 1:57 유지 → 1.5초 뒤 1:58).

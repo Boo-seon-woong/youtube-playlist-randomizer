@@ -1421,6 +1421,10 @@ const EMBED_CHROME_CSS = `
     visibility: hidden !important;
     pointer-events: none !important;
   }
+  /* 클래스 이름이 바뀌어도 통하도록: 플레이어 안에서 영상·자막·스피너를 뺀 모든 오버레이를 없앤다 */
+  #movie_player > *:not(.html5-video-container):not(.ytp-caption-window-container):not(.ytp-spinner):not(.ytp-error) {
+    display: none !important;
+  }
 `;
 
 function refreshEmbedChrome(wc) {
@@ -1430,9 +1434,10 @@ function refreshEmbedChrome(wc) {
   } catch {}
 }
 
-function hideEmbedChrome(frame) {
+function hideEmbedChrome(frame, attempt = 0) {
   if (!frame || typeof frame.url !== 'string' || !frame.url.includes('youtube.com/embed')) return;
   frame.executeJavaScript(`(() => {
+    // ① 알려진 클래스는 CSS로 차단
     let s = document.getElementById('__ymp_no_chrome');
     if (!s) {
       s = document.createElement('style');
@@ -1440,8 +1445,31 @@ function hideEmbedChrome(frame) {
       (document.head || document.documentElement).appendChild(s);
     }
     s.textContent = ${JSON.stringify(EMBED_CHROME_CSS)};
-    return true;
-  })()`).catch(() => {});
+
+    // ② 클래스 이름이 바뀌어도 통하도록: 플레이어의 직계 자식 중 '영상을 담고 있지 않은' 것은 전부 숨긴다.
+    //    자막·로딩·오류 표시는 남긴다. 유튜브가 나중에 다시 만들어 붙여도 옵저버가 곧바로 숨긴다.
+    const hideOverlays = () => {
+      const p = document.querySelector('#movie_player');
+      if (!p) return;
+      for (const el of Array.from(p.children)) {
+        if (el.tagName === 'VIDEO' || el.querySelector('video')) continue;
+        const cls = String(el.className || '');
+        if (/caption|spinner|error|loading/i.test(cls)) continue;
+        if (el.style.display !== 'none') el.style.setProperty('display', 'none', 'important');
+      }
+    };
+    hideOverlays();
+    if (!window.__ympChromeGuard) {
+      window.__ympChromeGuard = new MutationObserver(() => {
+        if (!document.getElementById('__ymp_no_chrome')) (document.head || document.documentElement).appendChild(s);
+        hideOverlays();
+      });
+      window.__ympChromeGuard.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style'] });
+    }
+    return document.querySelectorAll('#movie_player').length;
+  })()`).catch(() => {
+    if (attempt < 4) setTimeout(() => hideEmbedChrome(frame, attempt + 1), 600); // 프레임 준비 전이면 재시도
+  });
 }
 
 let mainWindow = null;
