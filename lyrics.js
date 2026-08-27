@@ -264,7 +264,10 @@ volumeSlider.addEventListener('input', () => {
   playback = { ...playback, volume: Number(volumeSlider.value) };
   window.lyricsOverlay.control('volume', Number(volumeSlider.value));
 });
-volumeSlider.addEventListener('change', () => { volumeDragging = false; });
+volumeSlider.addEventListener('change', () => {
+  volumeDragging = false;
+  window.lyricsOverlay.control('volume-save', Number(volumeSlider.value)); // 조작을 마쳤을 때만 저장
+});
 volumeSlider.addEventListener('pointerup', () => { volumeDragging = false; });
 
 function showSearch() {

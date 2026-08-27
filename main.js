@@ -1359,7 +1359,7 @@ app.whenReady().then(async () => {
   // 플로팅 창의 재생 컨트롤 → 메인 창. seek는 0~1 비율, volume은 0~100 값을 함께 넘긴다.
   ipcMain.on('lyrics:control', (_event, action, value) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (['previous', 'toggle-play', 'next', 'seek', 'volume'].includes(action)) {
+    if (['previous', 'toggle-play', 'next', 'seek', 'volume', 'volume-save'].includes(action)) {
       mainWindow.webContents.send('lyrics:control', action, Number(value));
     }
   });

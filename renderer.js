@@ -346,7 +346,8 @@ fallbackView.addEventListener('dom-ready', () => {
     html, body { overflow: hidden !important; }
   `).catch(() => {});
   // 앱 마스터 볼륨을 페이지에 전달 (주입 인터벌이 100ms 주기로 video.volume에 강제한다)
-  fallbackView.executeJavaScript(`window.__appVolume = ${masterVolume}; 0`).catch(() => {});
+  // __appWantsPlay: 앱이 "지금 재생 중이어야 한다"고 보는 상태 — 주입 인터벌이 이걸 보고 재생을 밀어준다
+  fallbackView.executeJavaScript(`window.__appVolume = ${masterVolume}; window.__appWantsPlay = true; 0`).catch(() => {});
   // 영상 광고: 감지 즉시 무음 + 16배속 + 끝으로 점프, 스킵 버튼 자동 클릭,
   // 프리미엄 팝업/일시정지 확인창 자동 처리. 100ms 주기로 돌아 광고 노출 시간을 최소화한다.
   fallbackView.executeJavaScript(`
@@ -374,6 +375,13 @@ fallbackView.addEventListener('dom-ready', () => {
         if (video && !adShowing && typeof window.__appVolume === 'number') {
           const target = Math.min(1, Math.max(0, window.__appVolume / 100));
           if (Math.abs(video.volume - target) > 0.0005) video.volume = target;
+        }
+        // 창이 최소화되었거나 다른 창에 가려져 있으면 워치페이지가 자동재생을 시작하지 않는다
+        // (실측: video.play()는 성공하지만 페이지 스스로는 시작하지 않아 다음 곡에서 재생이 멈춤).
+        // 앱이 재생 중이어야 한다고 보는 동안, 아직 시작되지 않은(앞부분에서 멈춘) 영상만 직접 밀어준다
+        // — 사용자가 곡 도중에 멈춘 것을 되살리지 않도록 1.5초 미만일 때만 개입한다.
+        if (video && window.__appWantsPlay && video.paused && !adShowing && video.currentTime < 1.5) {
+          video.play().catch(() => {});
         }
         // 스킵 버튼: 클래스는 자주 바뀌므로 텍스트/aria-label('건너뛰기'/'Skip')로도 찾는다.
         // 전면 스폰서 카드(인터스티셜)는 영상이 없어 배속/점프가 안 통하므로 버튼 클릭이 유일한 길.
@@ -617,8 +625,8 @@ function togglePlayback() {
     fallbackView.executeJavaScript(`(() => {
       const v = document.querySelector('video');
       if (!v) return false;
-      if (v.paused) v.play();
-      else v.pause();
+      if (v.paused) { window.__appWantsPlay = true; v.play(); }
+      else { window.__appWantsPlay = false; v.pause(); } // 사용자가 멈춘 곡을 주입 인터벌이 되살리지 않도록
       return true;
     })()`).catch(() => {});
     return;
@@ -2241,7 +2249,8 @@ window.lyrics.onControl((action, value) => {
   else if (action === 'toggle-play') togglePlayback();
   else if (action === 'next') nextTrack();
   else if (action === 'seek') seekToFraction(value);
-  else if (action === 'volume') setMasterVolume(value, true);
+  else if (action === 'volume') setMasterVolume(value, false); // 드래그 중 실시간 반영
+  else if (action === 'volume-save') setMasterVolume(value, true); // 조작을 마쳤을 때 저장
 });
 
 // 플로팅 창 재생바 클릭 → 곡의 해당 지점(0~1 비율)으로 이동. 임베드는 seekTo, 직접 재생은 video.currentTime.
