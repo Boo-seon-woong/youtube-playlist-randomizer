@@ -10,6 +10,8 @@ let receivedAt = performance.now();
 let panelMode = '';
 
 const card = document.getElementById('lyrics-card');
+const sideEl = document.getElementById('lyrics-side');
+const coverBox = document.getElementById('lyrics-cover-box');
 const cover = document.getElementById('lyrics-cover');
 const title = document.getElementById('lyrics-title');
 const artist = document.getElementById('lyrics-artist');
@@ -33,8 +35,8 @@ const searchResults = document.getElementById('lyrics-search-results');
 function applyLyricsSettings(next) {
   lyricsSettings = { ...lyricsSettings, ...(next || {}) };
   const opacity = Math.max(0, Math.min(100, Number(lyricsSettings.backgroundOpacity) || 0)) / 100;
-  document.documentElement.style.setProperty('--lyrics-bg', `rgba(27, 29, 36, ${opacity})`);
-  document.documentElement.style.setProperty('--lyrics-bg-2', `rgba(10, 11, 15, ${Math.max(0, opacity * 0.96)})`);
+  document.documentElement.style.setProperty('--lyrics-bg', `rgba(24, 25, 31, ${opacity})`);
+  document.documentElement.style.setProperty('--lyrics-bg-2', `rgba(24, 25, 31, ${Math.max(0, opacity * 0.85)})`);
   document.documentElement.style.setProperty('--lyrics-font-size', `${lyricsSettings.fontSize}px`);
   progressRow.hidden = !lyricsSettings.showProgressBar;
   previousButton.hidden = !lyricsSettings.showPreviousButton;
@@ -44,6 +46,13 @@ function applyLyricsSettings(next) {
     || (!lyricsSettings.showPreviousButton && !lyricsSettings.showPauseButton && !lyricsSettings.showNextButton);
   document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo;
   statusEl.hidden = !lyricsSettings.showStatus;
+  // 왼쪽 열: 앨범 아트 정사각형은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)
+  const coverSize = Math.max(80, Math.min(220,
+    lyricsSettings.height - 16 - (progressRow.hidden ? 0 : 22) - (playbackControls.hidden ? 0 : 34)));
+  document.documentElement.style.setProperty('--cover-size', `${coverSize}px`);
+  coverBox.hidden = !lyricsSettings.showAlbumArt && !lyricsSettings.showTrackInfo;
+  coverBox.classList.toggle('no-art', !lyricsSettings.showAlbumArt);
+  sideEl.hidden = coverBox.hidden && progressRow.hidden && playbackControls.hidden;
 }
 
 function openPanel(mode) {
@@ -72,18 +81,27 @@ function formatTime(ms) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+// 한 블록 = 같은 시각의 줄 묶음(원문·발음·번역). 줄마다 칩 배경을 두른다.
 function lineElement(line, className) {
   const el = document.createElement('div');
-  el.className = `lyric-line ${className}${line ? '' : ' empty'}`;
-  el.textContent = line ? line.text : '♪';
+  el.className = `lyric-block ${className}${line ? '' : ' empty'}`;
+  for (const text of (line ? String(line.text).split('\n') : ['♪'])) {
+    const chip = document.createElement('span');
+    chip.className = 'lyric-chip';
+    chip.textContent = text;
+    el.append(chip);
+  }
   return el;
 }
 
 function render() {
   title.textContent = playback.title || '';
   artist.textContent = playback.artist || '';
-  cover.src = playback.coverUrl || '';
-  cover.hidden = !playback.coverUrl || !lyricsSettings.showAlbumArt || !lyricsSettings.showTrackInfo;
+  if (cover.dataset.src !== (playback.coverUrl || '')) {
+    cover.dataset.src = playback.coverUrl || '';
+    cover.src = playback.coverUrl || '';
+  }
+  cover.hidden = !playback.coverUrl || !lyricsSettings.showAlbumArt;
   card.classList.toggle('paused', playback.status === 'paused');
   const progress = currentProgress();
   elapsedEl.textContent = formatTime(progress);

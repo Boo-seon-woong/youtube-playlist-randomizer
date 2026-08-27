@@ -1,12 +1,13 @@
+/* 플로팅 가사 창 — 카드 없이 투명 배경 위에 앨범 아트(왼쪽)와 줄마다 칩 배경을 두른 가사(오른쪽)를 띄운다 */
 :root {
   color-scheme: dark;
   --accent: #1db954;
-  --panel: rgba(17, 18, 23, 0.94);
   --text: #fff;
   --muted: rgba(255, 255, 255, 0.56);
-  --lyrics-bg: rgba(27, 29, 36, 0.94);
-  --lyrics-bg-2: rgba(10, 11, 15, 0.90);
+  --lyrics-bg: rgba(24, 25, 31, 0.94);
+  --lyrics-bg-2: rgba(24, 25, 31, 0.80);
   --lyrics-font-size: 16px;
+  --cover-size: 166px;
 }
 
 * { box-sizing: border-box; }
@@ -31,111 +32,78 @@ button {
 #lyrics-shell {
   width: 100%;
   height: 100%;
-  padding: 10px;
-}
-
-#lyrics-card, #lyrics-search-panel {
-  width: 100%;
-  height: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 14px;
-  background: linear-gradient(135deg, var(--lyrics-bg), var(--lyrics-bg-2));
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42), inset 0 1px rgba(255, 255, 255, 0.06);
+  padding: 8px;
   -webkit-app-region: drag;
 }
 
-#lyrics-card { display: flex; flex-direction: column; }
+#lyrics-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+}
+
 #lyrics-card.paused { opacity: 0.62; }
 
-#lyrics-header {
-  height: 52px;
+/* ── 왼쪽: 앨범 아트 + 곡 정보 오버레이 + (옵션) 재생바/재생 컨트롤 ── */
+
+#lyrics-side {
+  flex: 0 0 auto;
+  width: var(--cover-size);
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
 }
+
+#lyrics-cover-box {
+  position: relative;
+  width: var(--cover-size);
+  height: var(--cover-size);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--lyrics-bg);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+
+#lyrics-cover-box.no-art { height: auto; }
 
 #lyrics-cover {
-  width: 38px;
-  height: 38px;
-  border-radius: 9px;
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  background: rgba(255, 255, 255, 0.1);
-  flex: 0 0 auto;
 }
 
-#lyrics-track { min-width: 0; flex: 1; line-height: 1.25; }
+#lyrics-cover[hidden] { display: none; }
+
+#lyrics-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 26px 10px 8px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+  line-height: 1.25;
+}
+
+#lyrics-cover-box.no-art #lyrics-track { position: static; padding: 9px 10px; background: none; }
+
 #lyrics-title, #lyrics-artist { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #lyrics-title { font-size: 13px; font-weight: 700; }
 #lyrics-artist { color: var(--muted); font-size: 11px; margin-top: 3px; }
 
-#lyrics-actions {
-  display: flex;
-  gap: 3px;
-  opacity: 0;
-  transition: opacity 0.18s ease;
-  -webkit-app-region: no-drag;
-}
-
-#lyrics-card:hover #lyrics-actions, #lyrics-search-panel:hover #lyrics-actions { opacity: 1; }
-
-#lyrics-actions button, #lyrics-search-close {
-  width: 25px;
-  height: 25px;
-  padding: 0;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 18px;
-  line-height: 23px;
-}
-
-#lyrics-actions svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
-
-#lyrics-actions button:hover, #lyrics-search-close:hover { background: rgba(255, 255, 255, 0.18); color: #fff; }
-
-#lyrics-lines {
-  flex: 1 1 auto;
-  min-height: 66px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0;
-  padding: 0 28px;
-  overflow: hidden;
-  text-align: center;
-}
-
-.lyric-line {
-  min-height: calc(var(--lyrics-font-size) * 1.8);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--lyrics-font-size);
-  font-weight: 650;
-  line-height: 1.8;
-  transition: opacity 0.22s ease, transform 0.3s ease, color 0.22s ease;
-}
-
-.lyric-line.previous, .lyric-line.next { color: rgba(255, 255, 255, 0.52); transform: scale(0.84); }
-.lyric-line.current { color: #fff; text-shadow: 0 0 18px rgba(29, 185, 84, 0.38); }
-.lyric-line.empty { color: rgba(255, 255, 255, 0.22); }
-
-#lyrics-status {
-  flex: 0 0 20px;
-  color: var(--muted);
-  font-size: 11px;
-  text-align: center;
-}
-
 #lyrics-progress-row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   height: 16px;
-  padding: 0 18px;
-  color: var(--muted);
+  padding: 0 2px;
+  color: rgba(255, 255, 255, 0.78);
   font-size: 10px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 #lyrics-progress-track {
@@ -143,7 +111,7 @@ button {
   flex: 1;
   overflow: hidden;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.28);
 }
 
 #lyrics-progress-fill {
@@ -158,44 +126,136 @@ button {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding-bottom: 5px;
+  gap: 6px;
+  height: 28px;
   -webkit-app-region: no-drag;
 }
 
 #lyrics-playback-controls button {
-  width: 28px;
-  height: 25px;
+  width: 30px;
+  height: 26px;
   padding: 0;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.82);
+  background: var(--lyrics-bg);
+  color: rgba(255, 255, 255, 0.85);
   font-size: 11px;
-  line-height: 25px;
-  -webkit-app-region: no-drag;
+  line-height: 26px;
 }
 
 #lyrics-playback-controls button:hover { background: var(--accent); color: #07140b; }
 #lyrics-pause { font-size: 14px !important; font-weight: 700; }
 
-#lyrics-search-panel {
-  padding: 12px;
-  -webkit-app-region: no-drag;
-}
+/* ── 오른쪽: 이전/현재/다음 블록 — 줄마다 칩 배경, 현재 줄은 크고 진하게 ── */
 
-.lyrics-panel-header {
+#lyrics-body {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 27px;
-  margin-bottom: 10px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  overflow: hidden;
+  /* 창 높이를 넘치는 이전/다음 블록은 위아래로 서서히 사라지게 */
+  -webkit-mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent);
+  mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent);
+}
+
+#lyrics-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.lyric-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  max-width: 100%;
+  transition: opacity 0.22s ease;
+}
+
+.lyric-chip {
+  display: block;
+  max-width: 100%;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--lyrics-bg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #fff;
+  font-size: var(--lyrics-font-size);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.lyric-block.previous .lyric-chip, .lyric-block.next .lyric-chip {
+  padding: 2px 8px;
+  background: var(--lyrics-bg-2);
+  color: rgba(255, 255, 255, 0.64);
+  font-size: calc(var(--lyrics-font-size) * 0.72);
+  font-weight: 600;
+}
+
+.lyric-block.empty .lyric-chip { color: rgba(255, 255, 255, 0.34); }
+
+#lyrics-status {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 1px 8px;
+  border-radius: 5px;
+  background: var(--lyrics-bg-2);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+#lyrics-status:empty { display: none; }
+
+/* ── 마우스를 올렸을 때만 보이는 동작 버튼 ── */
+
+#lyrics-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
   -webkit-app-region: no-drag;
 }
 
-.lyrics-panel-header h2 { margin: 0; font-size: 14px; }
-.lyrics-panel-header button { width: 25px; height: 25px; padding: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.72); font-size: 18px; line-height: 23px; }
-.lyrics-panel-header button:hover { background: rgba(255, 255, 255, 0.18); color: #fff; }
+#lyrics-card:hover #lyrics-actions { opacity: 1; }
+
+#lyrics-actions button, #lyrics-search-close {
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--lyrics-bg);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 18px;
+  line-height: 23px;
+}
+
+#lyrics-actions svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
+
+#lyrics-actions button:hover, #lyrics-search-close:hover { background: rgba(255, 255, 255, 0.22); color: #fff; }
+
+/* ── 가사 검색 패널: 입력이 있어 카드 배경을 유지 ── */
+
+#lyrics-search-panel {
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 14px;
+  background: var(--lyrics-bg);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+  -webkit-app-region: no-drag;
+}
 
 #lyrics-search-form { display: flex; gap: 6px; }
 #lyrics-search-form input {
@@ -224,7 +284,7 @@ button {
 #lyrics-search-form #lyrics-search-close { padding: 0; background: rgba(255, 255, 255, 0.08); color: #fff; }
 
 #lyrics-search-status { height: 22px; padding-top: 8px; color: var(--muted); font-size: 11px; }
-#lyrics-search-results { height: 128px; margin: 5px 0 0; padding: 0 4px; overflow: auto; list-style: none; }
+#lyrics-search-results { height: calc(100% - 72px); margin: 5px 0 0; padding: 0 4px; overflow: auto; list-style: none; }
 .lyrics-result {
   display: flex;
   align-items: center;

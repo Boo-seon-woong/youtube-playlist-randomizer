@@ -41,8 +41,11 @@ let lyricsPublishedState = {
   id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '',
 };
 
+let lyricsStateAt = performance.now(); // 마지막 상태 갱신 시각 — 가사 보기 오버레이의 진행 위치 보간용
+
 function publishLyricsState(patch = {}) {
   lyricsPublishedState = { ...lyricsPublishedState, ...patch };
+  lyricsStateAt = performance.now();
   try { window.lyrics.update(lyricsPublishedState); } catch {}
 }
 
@@ -1149,6 +1152,68 @@ settingsBackdrop.addEventListener('click', (e) => {
   if (e.target === settingsBackdrop) closeSettings();
 });
 
+// ── 플로팅 가사 창 설정: 디자인 설정 패널을 아래로 스크롤하면 나오는 섹션 ──
+// 값은 main이 lyrics-settings.json에 저장하고 플로팅 창에 즉시 반영한다.
+let lyricsSettings = {};
+const lsNumberInputs = {
+  width: document.getElementById('ls-width'),
+  height: document.getElementById('ls-height'),
+};
+const lsRangeInputs = {
+  backgroundOpacity: document.getElementById('ls-opacity'),
+  fontSize: document.getElementById('ls-font-size'),
+};
+const lsToggleInputs = {
+  showProgressBar: document.getElementById('ls-progress'),
+  showPlaybackControls: document.getElementById('ls-playback'),
+  showPreviousButton: document.getElementById('ls-previous'),
+  showPauseButton: document.getElementById('ls-pause'),
+  showNextButton: document.getElementById('ls-next'),
+  showTrackInfo: document.getElementById('ls-track-info'),
+  showAlbumArt: document.getElementById('ls-cover'),
+  showStatus: document.getElementById('ls-status'),
+  alwaysOnTop: document.getElementById('ls-topmost'),
+};
+
+function paintLyricsSettings(next) {
+  lyricsSettings = { ...lyricsSettings, ...(next || {}) };
+  for (const [key, input] of Object.entries(lsNumberInputs)) input.value = lyricsSettings[key] ?? '';
+  for (const [key, input] of Object.entries(lsRangeInputs)) input.value = lyricsSettings[key] ?? 0;
+  document.getElementById('ls-opacity-value').textContent = `${lyricsSettings.backgroundOpacity ?? ''}%`;
+  document.getElementById('ls-font-size-value').textContent = `${lyricsSettings.fontSize ?? ''}px`;
+  for (const [key, input] of Object.entries(lsToggleInputs)) input.checked = !!lyricsSettings[key];
+}
+
+function saveLyricsSettings(patch) {
+  paintLyricsSettings(patch);
+  window.lyricsOverlay.saveSettings(lyricsSettings).then(paintLyricsSettings).catch(() => {});
+}
+
+for (const [key, input] of Object.entries(lsNumberInputs)) {
+  input.addEventListener('change', () => {
+    const value = Number(input.value);
+    if (Number.isFinite(value)) saveLyricsSettings({ [key]: value });
+    else paintLyricsSettings();
+  });
+}
+for (const [key, input] of Object.entries(lsRangeInputs)) {
+  input.addEventListener('input', () => saveLyricsSettings({ [key]: Number(input.value) }));
+}
+for (const [key, input] of Object.entries(lsToggleInputs)) {
+  input.addEventListener('change', () => saveLyricsSettings({ [key]: input.checked }));
+}
+document.getElementById('lyrics-settings-reset').addEventListener('click', () => {
+  window.lyricsOverlay.resetSettings().then(paintLyricsSettings).catch(() => {});
+});
+window.lyricsOverlay.onSettings(paintLyricsSettings);
+window.lyricsOverlay.getSettings().then(paintLyricsSettings).catch(() => {});
+// 플로팅 창의 톱니 버튼 → 디자인 설정을 열고 가사 창 섹션까지 스크롤
+window.lyrics.onOpenSettings(() => {
+  openSettings();
+  const panel = document.getElementById('settings-panel');
+  requestAnimationFrame(() => panel.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' }));
+});
+
 // ── 사운드 세팅: 앱 마스터 볼륨 (일반 재생·직접 재생 공통) ──
 // 유튜브 볼륨은 임베드/워치페이지가 따로 기억해 모드 전환 때마다 따로 논다. 그래서 앱이
 // 볼륨의 단일 기준이 된다 — 임베드는 IFrame API setVolume, 직접 재생은 주입 인터벌이
@@ -2168,6 +2233,117 @@ window.lyrics.onControl((action) => {
   else if (action === 'toggle-play') togglePlayback();
   else if (action === 'next') nextTrack();
 });
+
+// ── 가사 보기: 영상 위 오버레이 ──
+// main이 찾은 현재 곡 가사(lyrics:data)를 오른쪽에 전부 나열하고, 진행 위치를 보간해
+// 현재 블록을 세로 중앙에 맞춰 부드럽게 이동시킨다. 멀어질수록 흐리고 옅게.
+// 오버레이는 pointer-events: none이라 영상 조작을 가리지 않는다 (몰입 모드의 곡 정보 컨트롤만 예외).
+const lyricsViewEl = document.getElementById('lyrics-overlay');
+const lyricsViewport = document.getElementById('lyrics-overlay-viewport');
+const lyricsViewList = document.getElementById('lyrics-overlay-list');
+const lyricsViewMsg = document.getElementById('lyrics-overlay-msg');
+const lyricsViewBtn = document.getElementById('lyrics-view-btn');
+const loThumb = document.getElementById('lo-thumb');
+const loTitle = document.getElementById('lo-title');
+const loArtist = document.getElementById('lo-artist');
+const loPause = document.getElementById('lo-pause');
+const loTime = document.getElementById('lo-time');
+let lyricsViewOn = false;
+let lyricsViewData = null; // { lines: [{time, text}], source, language, unavailable }
+let lyricsViewIndex = -2;
+let lyricsViewTimer = null;
+
+function lyricsProgressNow() {
+  const s = lyricsPublishedState;
+  if (s.status !== 'playing') return s.progress;
+  return Math.min(s.duration || Infinity, s.progress + performance.now() - lyricsStateAt);
+}
+
+function formatClock(ms) {
+  const total = Math.max(0, Math.floor(Number(ms) / 1000) || 0);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+function renderLyricsView() {
+  lyricsViewList.replaceChildren();
+  lyricsViewList.style.transform = '';
+  lyricsViewIndex = -2;
+  const lines = (lyricsViewData && lyricsViewData.lines) || [];
+  for (const line of lines) {
+    const li = document.createElement('li');
+    li.className = 'lo-block far';
+    String(line.text).split('\n').forEach((part, i) => {
+      const el = document.createElement('div');
+      el.className = i === 0 ? 'lo-main' : 'lo-sub';
+      el.textContent = part;
+      li.append(el);
+    });
+    lyricsViewList.append(li);
+  }
+  let msg = '';
+  if (!lyricsPublishedState.id) msg = '재생 중인 곡이 없습니다';
+  else if (!lyricsViewData) msg = '가사를 찾는 중…';
+  else if (lyricsViewData.unavailable || lines.length === 0) msg = '가사를 찾지 못했습니다';
+  lyricsViewMsg.textContent = msg;
+  lyricsViewMsg.hidden = !msg;
+  tickLyricsView(true);
+}
+
+function tickLyricsView(force) {
+  const s = lyricsPublishedState;
+  loTitle.textContent = s.title || '';
+  loArtist.textContent = s.artist || '';
+  if (loThumb.dataset.src !== (s.coverUrl || '')) {
+    loThumb.dataset.src = s.coverUrl || '';
+    loThumb.src = s.coverUrl || '';
+  }
+  loTime.textContent = `${formatClock(lyricsProgressNow())} / ${formatClock(s.duration)}`;
+  loPause.classList.toggle('paused', s.status !== 'playing');
+
+  const blocks = lyricsViewList.children;
+  if (blocks.length === 0) return;
+  const progress = lyricsProgressNow();
+  const lines = lyricsViewData.lines;
+  let index = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].time <= progress + 225) index = i;
+    else break;
+  }
+  if (index === lyricsViewIndex && !force) return;
+  lyricsViewIndex = index;
+  const center = Math.max(index, 0);
+  for (let i = 0; i < blocks.length; i++) {
+    const d = Math.abs(i - center);
+    blocks[i].className = `lo-block ${i === index ? 'current' : d <= 1 ? 'd1' : d === 2 ? 'd2' : d === 3 ? 'd3' : 'far'}`;
+  }
+  const target = blocks[center];
+  const y = lyricsViewport.clientHeight / 2 - target.offsetTop - target.offsetHeight / 2;
+  lyricsViewList.style.transform = `translateY(${Math.round(y)}px)`;
+}
+
+function setLyricsView(flag) {
+  lyricsViewOn = flag;
+  lyricsViewEl.hidden = !flag;
+  lyricsViewBtn.classList.toggle('active', flag);
+  clearInterval(lyricsViewTimer);
+  if (!flag) return;
+  renderLyricsView();
+  lyricsViewTimer = setInterval(() => tickLyricsView(false), 100);
+}
+
+lyricsViewBtn.addEventListener('click', () => setLyricsView(!lyricsViewOn));
+new ResizeObserver(() => { if (lyricsViewOn) tickLyricsView(true); }).observe(lyricsViewport);
+window.lyricsOverlay.onData((data) => {
+  lyricsViewData = data;
+  if (lyricsViewOn) renderLyricsView();
+});
+window.lyrics.getData().then((data) => {
+  lyricsViewData = data;
+  if (lyricsViewOn) renderLyricsView();
+}).catch(() => {});
+document.getElementById('lo-prev').addEventListener('click', prevTrack);
+document.getElementById('lo-next').addEventListener('click', nextTrack);
+loPause.addEventListener('click', togglePlayback);
 
 (async () => {
   const saved = await window.uiSettings.load();

@@ -197,21 +197,29 @@ function xmlText(xml, tag) {
   return block == null ? '' : xmlDecode(block.replace(/<[^>]+>/g, '').trim());
 }
 
+// 같은 시각에 붙은 여러 줄(ALSong의 원문·발음·번역)은 한 블록으로 묶어 text를 줄바꿈으로 잇는다 —
+// 창에서는 첫 줄을 원문(크게), 나머지를 발음/번역(작게)으로 그린다.
 function parseLrc(text) {
-  const lines = [];
+  const entries = [];
   const timeRe = /\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]/g;
   for (const raw of String(text || '').split(/\r?\n/)) {
     const matches = [...raw.matchAll(timeRe)];
     const lyricText = raw.replace(/\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]/g, '').trim();
     if (!lyricText) continue;
     for (const match of matches) {
-      lines.push({
+      entries.push({
         time: (Number(match[1]) * 60 + Number(match[2])) * 1000,
         text: lyricText,
       });
     }
   }
-  lines.sort((a, b) => a.time - b.time);
+  entries.sort((a, b) => a.time - b.time);
+  const lines = [];
+  for (const entry of entries) {
+    const last = lines[lines.length - 1];
+    if (last && last.time === entry.time) last.text += `\n${entry.text}`;
+    else lines.push({ ...entry });
+  }
   return lines;
 }
 
@@ -577,7 +585,6 @@ async function searchAllLyrics(title, artist) {
 }
 
 let lyricsWindow = null;
-let lyricsSettingsWindow = null;
 let lyricsServerPort = null;
 let lyricsState = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '' };
 let lyricsData = null;
@@ -585,17 +592,27 @@ let lyricsKey = '';
 let lyricsRequestId = 0;
 let lyricsLoadingKey = '';
 const lyricsCache = new Map();
+let lyricsDataSentToMain; // 메인 창(가사 보기 오버레이)에 마지막으로 보낸 가사 객체 — 바뀔 때만 전송
+
+function sendLyricsToMain() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
+  if (lyricsDataSentToMain === lyricsData) return;
+  lyricsDataSentToMain = lyricsData;
+  mainWindow.webContents.send('lyrics:data', lyricsData);
+}
 
 function sendLyricsToWindow() {
+  sendLyricsToMain();
   if (!lyricsWindow || lyricsWindow.isDestroyed() || lyricsWindow.webContents.isLoading()) return;
   lyricsWindow.webContents.send('lyrics:state', lyricsState);
   lyricsWindow.webContents.send('lyrics:data', lyricsData);
   lyricsWindow.webContents.send('lyrics:settings', lyricsSettings);
 }
 
-function sendLyricsSettingsToWindow() {
-  if (!lyricsSettingsWindow || lyricsSettingsWindow.isDestroyed() || lyricsSettingsWindow.webContents.isLoading()) return;
-  lyricsSettingsWindow.webContents.send('lyrics:settings', lyricsSettings);
+// 플로팅 창 설정 UI는 메인 창의 디자인 설정 패널 안에 있다
+function sendLyricsSettingsToMain() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
+  mainWindow.webContents.send('lyrics:settings', lyricsSettings);
 }
 
 function lyricStateKey(state) {
@@ -680,7 +697,7 @@ function updateLyricsSettings(value, persist = true) {
     sendLyricsToWindow();
     saveLyricsBounds();
   }
-  sendLyricsSettingsToWindow();
+  sendLyricsSettingsToMain();
   return lyricsSettings;
 }
 
@@ -702,39 +719,12 @@ function showLyricsWindow() {
     });
     lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, 'floating');
     lyricsWindow.on('moved', saveLyricsBounds);
-    lyricsWindow.on('closed', () => {
-      lyricsWindow = null;
-      if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
-    });
+    lyricsWindow.on('closed', () => { lyricsWindow = null; });
     lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
     lyricsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics.html`);
   }
   lyricsWindow.showInactive();
   sendLyricsToWindow();
-}
-
-function showLyricsSettingsWindow() {
-  if (!lyricsSettingsWindow || lyricsSettingsWindow.isDestroyed()) {
-    lyricsSettingsWindow = new BrowserWindow({
-      width: 460,
-      height: 620,
-      minWidth: 400,
-      minHeight: 480,
-      title: '가사 창 설정',
-      backgroundColor: '#11131a',
-      autoHideMenuBar: true,
-      resizable: true,
-      show: false,
-      icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
-      webPreferences: { preload: path.join(__dirname, 'preload.js') },
-    });
-    lyricsSettingsWindow.on('closed', () => { lyricsSettingsWindow = null; });
-    lyricsSettingsWindow.webContents.on('did-finish-load', sendLyricsSettingsToWindow);
-    lyricsSettingsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics-settings.html`);
-  }
-  lyricsSettingsWindow.show();
-  lyricsSettingsWindow.focus();
-  sendLyricsSettingsToWindow();
 }
 
 // 재생목록 전체 곡 목록 수집: iframe 플레이어의 getPlaylist()는 200곡까지만 노출하므로
@@ -1237,7 +1227,6 @@ function createWindow(port) {
   win.loadURL(`http://127.0.0.1:${port}/`);
   win.on('closed', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.close();
-    if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
     mainWindow = null;
   });
 }
@@ -1313,9 +1302,14 @@ app.whenReady().then(async () => {
   ipcMain.handle('recs:fetch', (_event, p) => fetchPlaylistRecs(p.listId, p.token));
   ipcMain.handle('lyrics:settings:get', () => lyricsSettings);
   ipcMain.handle('lyrics:settings:save', (_event, settings) => updateLyricsSettings(settings));
-  ipcMain.on('lyrics:settings:open', showLyricsSettingsWindow);
-  ipcMain.on('lyrics:settings:close', () => {
-    if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
+  ipcMain.handle('lyrics:settings:reset', () => updateLyricsSettings(DEFAULT_LYRICS_SETTINGS));
+  ipcMain.handle('lyrics:data:get', () => lyricsData);
+  // 플로팅 창의 설정 버튼 → 메인 창을 앞으로 가져와 디자인 설정의 가사 창 섹션을 연다
+  ipcMain.on('lyrics:settings:open', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    mainWindow.webContents.send('lyrics:open-settings');
   });
   ipcMain.on('lyrics:control', (_event, action) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;

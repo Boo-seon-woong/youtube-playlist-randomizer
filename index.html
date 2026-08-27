@@ -59,6 +59,26 @@
         <webview id="fallback-view" src="about:blank"></webview>
         <div id="player-placeholder">재생목록 링크를 붙여넣거나 저장된 플레이리스트를 선택하세요</div>
         <button id="fs-exit-btn" title="전체화면 해제 (Esc)">전체화면 해제</button>
+        <div id="lyrics-overlay" hidden>
+          <div id="lyrics-overlay-viewport"><ol id="lyrics-overlay-list"></ol></div>
+          <p id="lyrics-overlay-msg" hidden></p>
+          <div id="lyrics-overlay-info">
+            <img id="lo-thumb" alt="" />
+            <div id="lo-meta">
+              <div id="lo-title"></div>
+              <div id="lo-artist"></div>
+              <div id="lo-controls">
+                <button id="lo-prev" title="이전 곡"><svg viewBox="0 0 24 24"><path d="M19 20L9 12l10-8v16z"/><path d="M5 19V5"/></svg></button>
+                <button id="lo-pause" title="일시정지/재생">
+                  <svg class="lo-icon-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
+                  <svg class="lo-icon-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></svg>
+                </button>
+                <button id="lo-next" title="다음 곡"><svg viewBox="0 0 24 24"><path d="M5 4l10 8-10 8V4z"/><path d="M19 5v14"/></svg></button>
+                <span id="lo-time">0:00 / 0:00</span>
+              </div>
+            </div>
+          </div>
+        </div>
         <div id="browse-panel" hidden>
           <div id="browse-head">
             <img id="browse-thumb" alt="" hidden />
@@ -137,6 +157,9 @@
       <button id="lyrics-btn" class="ctl-btn" title="가사 플로팅 창 표시/숨기기">
         <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14.5a2.5 2.5 0 0 0-2.5-2.5h-13A2.5 2.5 0 0 0 2 17.5v-12A2.5 2.5 0 0 1 4.5 3H6"/><path d="M6 7h10M6 10.5h8"/><path d="M4.5 15H18a2 2 0 0 1 2 2v4H6a2 2 0 0 1-2-2v-2.5A1.5 1.5 0 0 1 5.5 15Z"/></svg>
       </button>
+      <button id="lyrics-view-btn" class="ctl-btn" title="가사 보기 — 영상 위에 전체 가사를 표시 (현재 줄 자동 이동)">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M12 9h5M10 12.5h7M13 16h4"/></svg>
+      </button>
       <div id="vol-group">
         <button id="sound-btn" class="ctl-btn" title="사운드 세팅 — 마스터 볼륨 상세설정">
           <svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
@@ -170,6 +193,30 @@
         <label>패널 색<input type="color" id="color-panel" /></label>
       </div>
       <button id="settings-reset">기본 테마로 되돌리기</button>
+
+      <hr class="settings-divider" />
+      <p class="settings-label">플로팅 가사 창</p>
+      <p class="settings-hint">하단 재생 바의 가사 버튼으로 여는 플로팅 창의 크기·투명도·표시 항목. 변경 즉시 반영됩니다.</p>
+      <div id="lyrics-settings">
+        <div class="ls-grid">
+          <label>가로 길이<span class="ls-num"><input type="number" id="ls-width" min="360" max="1400" step="1" /><em>px</em></span></label>
+          <label>세로 길이<span class="ls-num"><input type="number" id="ls-height" min="150" max="700" step="1" /><em>px</em></span></label>
+        </div>
+        <label class="ls-range"><span>배경 불투명도<output id="ls-opacity-value"></output></span><input type="range" id="ls-opacity" min="0" max="100" step="1" /></label>
+        <label class="ls-range"><span>글씨 크기<output id="ls-font-size-value"></output></span><input type="range" id="ls-font-size" min="10" max="48" step="1" /></label>
+        <div class="ls-toggles">
+          <label><input type="checkbox" id="ls-progress" /> 재생바 표시</label>
+          <label><input type="checkbox" id="ls-playback" /> 재생 컨트롤 표시</label>
+          <label><input type="checkbox" id="ls-previous" /> 이전 곡 버튼</label>
+          <label><input type="checkbox" id="ls-pause" /> 일시정지/재생 버튼</label>
+          <label><input type="checkbox" id="ls-next" /> 다음 곡 버튼</label>
+          <label><input type="checkbox" id="ls-track-info" /> 곡 정보 표시</label>
+          <label><input type="checkbox" id="ls-cover" /> 앨범 이미지 표시</label>
+          <label><input type="checkbox" id="ls-status" /> 상태 문구 표시</label>
+          <label><input type="checkbox" id="ls-topmost" /> 항상 위에 표시</label>
+        </div>
+        <button id="lyrics-settings-reset">가사 창 기본값으로 되돌리기</button>
+      </div>
     </div>
   </div>
 

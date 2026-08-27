@@ -2,3 +2,4 @@ node_modules/
 dist/
 *.log
 CLAUDE.md
+*_example.png
