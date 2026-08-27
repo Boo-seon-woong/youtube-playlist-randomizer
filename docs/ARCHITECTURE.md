@@ -402,6 +402,12 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   근사치)을 차례로 비교해 선택한다. 따라서 ALSong 검색 결과의 첫 항목을 무조건 사용하지 않는다.
 - ALSong에 한글 가사가 없을 때만 LRCLIB의 syncedLyrics를 원어 fallback으로 조회하며, 창 하단에
   `한글 번역 없음 · 원어 가사`를 표시한다.
+- **다른 topmost 창에 가려질 때**: 작업 표시줄·알림 플라이아웃도 topmost라 같은 밴드 안에서 z-order가
+  밀리면 가사 창을 덮는다(사용자 실측 스크린샷). 폴링으로 계속 감시하지 않고 **창을 보이게 할 때와
+  단축키(Alt+1/Alt+2)를 누른 직후에만** `keepLyricsOnTop()`으로 다시 올린다
+  (`isAlwaysOnTop()`이 false면 `setAlwaysOnTop` 재설정 + `moveTop()`; 둘 다 `SWP_NOACTIVATE`라
+  포커스를 건드리지 않는다). 검증: 가사 창 위를 덮는 TopMost 창을 띄운 뒤 `WindowFromPoint`가 그 창을
+  가리키는 상태에서, 앱의 이 경로를 실행하자 다시 가사 창을 가리켰다(덮은 창은 계속 살아 있는 상태).
 - **항상 위 표시(Windows)**: `setAlwaysOnTop(true)`의 기본 level `'floating'`은 Windows에서 창을 작업 표시줄
   뒤에 두려고 z-order를 재배치하며, 이때 TOPMOST가 풀려 `isAlwaysOnTop()`이 false가 되고 창이 메인 창 뒤로
   숨는다(Electron 41 실측 — "플로팅 창이 아예 안 뜨는" 증상). 그래서 win32에서는 `'screen-saver'` level로

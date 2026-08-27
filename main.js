@@ -743,12 +743,24 @@ function updateLyricsSettings(value, persist = true) {
     const bounds = lyricsWindow.getBounds();
     lyricsWindow.setBounds({ ...bounds, width: lyricsSettings.width, height: lyricsSettings.height });
     lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, LYRICS_TOP_LEVEL);
+    if (lyricsSettings.alwaysOnTop) keepLyricsOnTop();
     applyLyricsClickThrough();
     sendLyricsToWindow();
     saveLyricsBounds();
   }
   sendLyricsSettingsToMain();
   return lyricsSettings;
+}
+
+// Windows 작업 표시줄·알림 플라이아웃도 topmost라, 같은 밴드 안에서 z-order가 밀리면 가사 창을
+// 덮어버린다(실측: 작업 표시줄이 가사 창 위로 올라옴). 폴링으로 계속 감시하지 않고 **창을 보이게
+// 하거나 단축키를 눌렀을 때만** 최상위를 다시 못박는다 — 가려졌을 때 Alt+1/Alt+2를 누르면 곧바로
+// 올라온다. SetWindowPos는 SWP_NOACTIVATE라 포커스를 건드리지 않으므로 게임 중에도 안전하다.
+function keepLyricsOnTop() {
+  if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsWindow.isVisible()) return;
+  if (!lyricsSettings.alwaysOnTop) return;
+  if (!lyricsWindow.isAlwaysOnTop()) lyricsWindow.setAlwaysOnTop(true, LYRICS_TOP_LEVEL);
+  lyricsWindow.moveTop();
 }
 
 // 잠금 모드: 창 전체를 마우스 히트 테스트에서 제외해 클릭·이동이 아래 창으로 그대로 전달된다.
@@ -777,10 +789,12 @@ function toggleLyricsClickThrough() {
   if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
   if (next) {
     lyricsWindow.blur();
+    keepLyricsOnTop(); // 게임으로 돌아가되 가사 창은 다시 맨 위로
     return;
   }
   if (!lyricsWindow.isVisible()) lyricsWindow.show();
   lyricsWindow.focus();
+  keepLyricsOnTop();
 }
 
 const LYRICS_SHORTCUTS = [
@@ -840,6 +854,7 @@ function showLyricsWindow() {
   }
   applyLyricsClickThrough();
   lyricsWindow.showInactive();
+  keepLyricsOnTop(); // 작업 표시줄 등 다른 topmost 창에 밀려 있었다면 다시 위로
   sendLyricsToWindow();
 }
 
