@@ -393,7 +393,17 @@ disable-backgrounding-occluded-windows / disable-features=IntensiveWakeUpThrottl
 
 네 가지를 끄고, 메인 창·가사 창은 `webPreferences.backgroundThrottling: false`, 폴백 웹뷰는 생성 시
 `wc.setBackgroundThrottling(false)`를 호출한다. `CalculateNativeWinOcclusion`까지 끄는 이유는 Windows에서
-**다른 창에 가리기만 해도** 같은 경로로 렌더러가 백그라운드 처리되기 때문이다.
+**다른 창에 가리기만 해도** 같은 경로로 렌더러가 백그라운드 처리되기 때문이다. 적용 후 실측: 창을 숨긴 채
+250ms 인터벌이 30초마다 정확히 120회(=4/s), 재생 상태 `playing` 유지, 웹뷰 타이머도 동일.
+
+**타이머를 살려도 남는 문제 — 숨김 상태에서는 워치페이지가 자동재생을 시작하지 않는다.** 곡이 끝나
+다음 곡의 워치페이지를 새로 띄우면 `video`는 `readyState 4`로 준비되지만 `paused` 상태로 남는다
+(실측: 그 상태에서 `video.play()`를 직접 부르면 에러 없이 즉시 재생된다 — 즉 크로미움이 막는 게 아니라
+유튜브 페이지가 스스로 시작하지 않는 것). 그래서 주입 인터벌이 `window.__appWantsPlay`(앱이 보는 "재생 중이어야
+하는 상태")를 보고 **아직 시작되지 않은 영상(재생 위치 1.5초 미만)만** `play()`로 밀어준다. 사용자가 곡 도중에
+멈춘 것을 되살리지 않기 위한 위치 조건이며, 앱의 일시정지 버튼(`togglePlayback`)은 `__appWantsPlay=false`로
+의도를 남긴다. 참고로 **볼륨 0(무음)으로 숨겨두면** 크로미움이 들리지 않는 영상을 백그라운드에서
+일시정지시키므로(실측) 무음 감상은 이 보정으로도 이어지지 않는다 — 실제 사용(소리 있는 재생)에는 해당 없음.
 
 ## 가사 보기 (영상 위 오버레이)
 
