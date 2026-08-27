@@ -1,23 +1,26 @@
-let playback = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '' };
+let playback = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '', volume: 100 };
 let lyricData = null;
 let lyricsSettings = {
-  width: 760, height: 240, backgroundOpacity: 94, fontSize: 16,
+  width: 760, height: 240, backgroundOpacity: 94, uiOpacity: 100, fontSize: 16,
   showProgressBar: true, showPlaybackControls: true,
-  showPreviousButton: true, showPauseButton: true, showNextButton: true,
-  showTrackInfo: true, showAlbumArt: true, showStatus: true, alwaysOnTop: true,
+  showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true,
+  showTrackInfo: true, coverMode: 'art', showStatus: true, alwaysOnTop: true,
 };
 let receivedAt = performance.now();
 let panelMode = '';
+let volumeDragging = false; // 슬라이더를 잡고 있는 동안은 메인에서 오는 볼륨 값으로 덮어쓰지 않는다
 
 const card = document.getElementById('lyrics-card');
 const sideEl = document.getElementById('lyrics-side');
 const coverBox = document.getElementById('lyrics-cover-box');
 const cover = document.getElementById('lyrics-cover');
+const videoWrap = document.getElementById('lyrics-video-wrap');
 const title = document.getElementById('lyrics-title');
 const artist = document.getElementById('lyrics-artist');
 const linesEl = document.getElementById('lyrics-lines');
 const statusEl = document.getElementById('lyrics-status');
 const progressRow = document.getElementById('lyrics-progress-row');
+const progressTrack = document.getElementById('lyrics-progress-track');
 const elapsedEl = document.getElementById('lyrics-elapsed');
 const durationEl = document.getElementById('lyrics-duration');
 const progressFill = document.getElementById('lyrics-progress-fill');
@@ -25,6 +28,10 @@ const playbackControls = document.getElementById('lyrics-playback-controls');
 const previousButton = document.getElementById('lyrics-previous');
 const pauseButton = document.getElementById('lyrics-pause');
 const nextButton = document.getElementById('lyrics-next');
+const volumeButton = document.getElementById('lyrics-volume');
+const volumePop = document.getElementById('lyrics-volume-pop');
+const volumeSlider = document.getElementById('lyrics-volume-slider');
+const volumeValue = document.getElementById('lyrics-volume-value');
 const searchPanel = document.getElementById('lyrics-search-panel');
 const searchForm = document.getElementById('lyrics-search-form');
 const searchTitle = document.getElementById('lyrics-search-title');
@@ -37,22 +44,28 @@ function applyLyricsSettings(next) {
   const opacity = Math.max(0, Math.min(100, Number(lyricsSettings.backgroundOpacity) || 0)) / 100;
   document.documentElement.style.setProperty('--lyrics-bg', `rgba(24, 25, 31, ${opacity})`);
   document.documentElement.style.setProperty('--lyrics-bg-2', `rgba(24, 25, 31, ${Math.max(0, opacity * 0.85)})`);
+  document.documentElement.style.setProperty('--ui-opacity', String(Math.max(0, Math.min(100, Number(lyricsSettings.uiOpacity) || 0)) / 100));
   document.documentElement.style.setProperty('--lyrics-font-size', `${lyricsSettings.fontSize}px`);
   progressRow.hidden = !lyricsSettings.showProgressBar;
   previousButton.hidden = !lyricsSettings.showPreviousButton;
   pauseButton.hidden = !lyricsSettings.showPauseButton;
   nextButton.hidden = !lyricsSettings.showNextButton;
+  volumeButton.hidden = !lyricsSettings.showVolumeButton;
   playbackControls.hidden = !lyricsSettings.showPlaybackControls
-    || (!lyricsSettings.showPreviousButton && !lyricsSettings.showPauseButton && !lyricsSettings.showNextButton);
+    || (previousButton.hidden && pauseButton.hidden && nextButton.hidden && volumeButton.hidden);
+  if (volumeButton.hidden || playbackControls.hidden) closeVolumePop();
   document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo;
   statusEl.hidden = !lyricsSettings.showStatus;
-  // 왼쪽 열: 앨범 아트 정사각형은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)
+  // 왼쪽 열: 사각형(앨범/영상)은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)
   const coverSize = Math.max(80, Math.min(220,
     lyricsSettings.height - 16 - (progressRow.hidden ? 0 : 22) - (playbackControls.hidden ? 0 : 34)));
   document.documentElement.style.setProperty('--cover-size', `${coverSize}px`);
-  coverBox.hidden = !lyricsSettings.showAlbumArt && !lyricsSettings.showTrackInfo;
-  coverBox.classList.toggle('no-art', !lyricsSettings.showAlbumArt);
+  const showSquare = lyricsSettings.coverMode !== 'none';
+  coverBox.hidden = !showSquare && !lyricsSettings.showTrackInfo;
+  coverBox.classList.toggle('no-art', !showSquare);
   sideEl.hidden = coverBox.hidden && progressRow.hidden && playbackControls.hidden;
+  ensureMiniVideo();
+  render();
 }
 
 function openPanel(mode) {
@@ -94,6 +107,87 @@ function lineElement(line, className) {
   return el;
 }
 
+// ── 영상 작게 표시: 메인 창과 같은 곡을 음소거로 따라가는 미러 임베드 ──
+// 메인 창의 영상은 교차 출처 iframe/webview 안에 있어 프레임을 가져올 수 없으므로 두 번째 임베드를 쓴다.
+// 임베드가 차단된 곡(에러 150 등)은 앨범 이미지로 되돌린다.
+let mini = null;
+let miniReady = false;
+let miniId = '';
+let miniApiLoading = false;
+let miniLastError = null;
+const miniBlocked = new Set();
+
+function ensureMiniVideo() {
+  if (lyricsSettings.coverMode !== 'video') {
+    if (mini) {
+      try { mini.destroy(); } catch {}
+      mini = null;
+      miniReady = false;
+      miniId = '';
+      const holder = document.createElement('div');
+      holder.id = 'lyrics-video';
+      videoWrap.prepend(holder);
+    }
+    return;
+  }
+  if (mini || miniApiLoading) return;
+  if (!window.YT || !window.YT.Player) {
+    miniApiLoading = true;
+    window.onYouTubeIframeAPIReady = () => { miniApiLoading = false; ensureMiniVideo(); };
+    const script = document.createElement('script');
+    script.src = 'https://www.youtube.com/iframe_api';
+    document.head.append(script);
+    return;
+  }
+  mini = new YT.Player('lyrics-video', {
+    width: '100%',
+    height: '100%',
+    playerVars: { controls: 0, disablekb: 1, fs: 0, rel: 0, mute: 1, playsinline: 1, iv_load_policy: 3, origin: location.origin },
+    events: {
+      onReady: () => {
+        miniReady = true;
+        try { mini.mute(); mini.setVolume(0); } catch {}
+      },
+      onError: (event) => {
+        miniLastError = event && event.data;
+        if (miniId) miniBlocked.add(miniId);
+        miniId = '';
+        try { mini.stopVideo(); } catch {}
+      },
+    },
+  });
+}
+
+function miniLive() {
+  return !!(mini && miniReady && playback.id && miniId === playback.id && !miniBlocked.has(playback.id));
+}
+
+function syncMiniVideo() {
+  if (!mini || !miniReady) return;
+  const id = playback.id;
+  if (!id || miniBlocked.has(id) || playback.status === 'idle') {
+    if (miniId) { miniId = ''; try { mini.stopVideo(); } catch {} }
+    return;
+  }
+  const target = currentProgress() / 1000;
+  if (miniId !== id) {
+    miniId = id;
+    try { mini.loadVideoById({ videoId: id, startSeconds: target }); mini.mute(); } catch {}
+    return;
+  }
+  let state = -1;
+  let time = 0;
+  try { state = mini.getPlayerState(); time = mini.getCurrentTime(); } catch {}
+  const drifted = Math.abs(time - target) > 1.2;
+  if (playback.status === 'playing') {
+    if (drifted) try { mini.seekTo(target, true); } catch {}
+    if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.BUFFERING) try { mini.playVideo(); } catch {}
+  } else {
+    if (state === YT.PlayerState.PLAYING) try { mini.pauseVideo(); } catch {}
+    if (drifted) try { mini.seekTo(target, true); } catch {}
+  }
+}
+
 function render() {
   title.textContent = playback.title || '';
   artist.textContent = playback.artist || '';
@@ -101,7 +195,9 @@ function render() {
     cover.dataset.src = playback.coverUrl || '';
     cover.src = playback.coverUrl || '';
   }
-  cover.hidden = !playback.coverUrl || !lyricsSettings.showAlbumArt;
+  const live = miniLive();
+  videoWrap.hidden = !live;
+  cover.hidden = !playback.coverUrl || lyricsSettings.coverMode === 'none' || live;
   card.classList.toggle('paused', playback.status === 'paused');
   const progress = currentProgress();
   elapsedEl.textContent = formatTime(progress);
@@ -109,9 +205,13 @@ function render() {
   progressFill.style.width = playback.duration > 0 ? `${Math.min(100, Math.max(0, progress / playback.duration * 100))}%` : '0%';
   pauseButton.textContent = playback.status === 'playing' ? 'Ⅱ' : '▶';
   pauseButton.title = playback.status === 'playing' ? '일시정지' : '재생';
+  if (!volumeDragging) {
+    volumeSlider.value = Math.round(playback.volume);
+    volumeValue.textContent = String(Math.round(playback.volume));
+  }
 
   linesEl.replaceChildren();
-  const index = currentIndex(currentProgress());
+  const index = currentIndex(progress);
   if (index < 0) {
     linesEl.append(lineElement(null, 'current'));
     statusEl.textContent = lyricData && lyricData.unavailable
@@ -133,6 +233,39 @@ function animate() {
   if (!panelMode) render();
   requestAnimationFrame(animate);
 }
+
+// 미러 동기화는 rAF가 아니라 인터벌로 — 창이 가려져 rAF가 멈춰도 곡 전환·시킹을 따라간다
+setInterval(() => { if (!panelMode) syncMiniVideo(); }, 500);
+
+// ── 재생바 클릭 → 곡의 해당 지점으로 이동 (메인 창이 seek 수행) ──
+progressTrack.addEventListener('click', (event) => {
+  if (!playback.duration) return;
+  const rect = progressTrack.getBoundingClientRect();
+  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  playback = { ...playback, progress: fraction * playback.duration };
+  receivedAt = performance.now();
+  window.lyricsOverlay.control('seek', fraction);
+});
+
+// ── 볼륨: 버튼으로 슬라이더 팝오버를 열고, 값은 앱 마스터 볼륨으로 전달 ──
+
+function closeVolumePop() {
+  volumePop.hidden = true;
+  volumeButton.classList.remove('open');
+}
+
+volumeButton.addEventListener('click', () => {
+  volumePop.hidden = !volumePop.hidden;
+  volumeButton.classList.toggle('open', !volumePop.hidden);
+});
+volumeSlider.addEventListener('pointerdown', () => { volumeDragging = true; });
+volumeSlider.addEventListener('input', () => {
+  volumeValue.textContent = volumeSlider.value;
+  playback = { ...playback, volume: Number(volumeSlider.value) };
+  window.lyricsOverlay.control('volume', Number(volumeSlider.value));
+});
+volumeSlider.addEventListener('change', () => { volumeDragging = false; });
+volumeSlider.addEventListener('pointerup', () => { volumeDragging = false; });
 
 function showSearch() {
   openPanel('search');

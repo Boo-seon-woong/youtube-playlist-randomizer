@@ -8,9 +8,13 @@
   --lyrics-bg-2: rgba(24, 25, 31, 0.80);
   --lyrics-font-size: 16px;
   --cover-size: 166px;
+  --ui-opacity: 1;
 }
 
 * { box-sizing: border-box; }
+
+/* display:flex 같은 명시 규칙이 hidden 속성을 이기지 않도록 — 표시 항목 토글은 전부 hidden에 의존한다 */
+[hidden] { display: none !important; }
 
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 
@@ -50,12 +54,14 @@ button {
 /* ── 왼쪽: 앨범 아트 + 곡 정보 오버레이 + (옵션) 재생바/재생 컨트롤 ── */
 
 #lyrics-side {
+  position: relative;
   flex: 0 0 auto;
   width: var(--cover-size);
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 6px;
+  opacity: var(--ui-opacity);
 }
 
 #lyrics-cover-box {
@@ -77,10 +83,14 @@ button {
   object-fit: cover;
 }
 
-#lyrics-cover[hidden] { display: none; }
+/* 영상 작게 표시: 음소거 미러 임베드. 위의 투명 막이 클릭을 먹어 창 드래그만 되게 한다 */
+#lyrics-video-wrap { position: absolute; inset: 0; background: #000; }
+#lyrics-video-wrap iframe, #lyrics-video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+#lyrics-video-shield { position: absolute; inset: 0; z-index: 1; -webkit-app-region: drag; }
 
 #lyrics-track {
   position: absolute;
+  z-index: 2;
   left: 0;
   right: 0;
   bottom: 0;
@@ -106,18 +116,22 @@ button {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
+/* 클릭 → 해당 지점으로 이동. 얇은 선 위아래로 여백을 둬 클릭 영역을 넓힌다 */
 #lyrics-progress-track {
-  height: 3px;
   flex: 1;
-  overflow: hidden;
+  height: 12px;
+  padding: 4.5px 0;
+  background-clip: content-box;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.28);
+  background-color: rgba(255, 255, 255, 0.28);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
 }
 
 #lyrics-progress-fill {
   width: 0;
   height: 100%;
-  border-radius: inherit;
+  border-radius: 3px;
   background: var(--accent);
   transition: width 0.2s linear;
 }
@@ -142,8 +156,28 @@ button {
   line-height: 26px;
 }
 
-#lyrics-playback-controls button:hover { background: var(--accent); color: #07140b; }
+#lyrics-playback-controls button:hover, #lyrics-volume.open { background: var(--accent); color: #07140b; }
 #lyrics-pause { font-size: 14px !important; font-weight: 700; }
+#lyrics-volume svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
+
+/* 볼륨 팝오버: 컨트롤 줄 아래(창 바닥에 닿으면 위로) 작은 슬라이더 */
+#lyrics-volume-pop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 34px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: var(--lyrics-bg);
+  -webkit-app-region: no-drag;
+}
+
+#lyrics-volume-slider { flex: 1; min-width: 0; accent-color: var(--accent); }
+#lyrics-volume-value { width: 26px; text-align: right; font-size: 10px; color: rgba(255, 255, 255, 0.85); }
 
 /* ── 오른쪽: 이전/현재/다음 블록 — 줄마다 칩 배경, 현재 줄은 크고 진하게 ── */
 
@@ -205,6 +239,7 @@ button {
 #lyrics-status {
   display: inline-block;
   align-self: flex-start;
+  opacity: var(--ui-opacity);
   padding: 1px 8px;
   border-radius: 5px;
   background: var(--lyrics-bg-2);

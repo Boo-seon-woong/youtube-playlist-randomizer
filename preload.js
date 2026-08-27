@@ -30,7 +30,7 @@ contextBridge.exposeInMainWorld('lyrics', {
   update: (state) => ipcRenderer.send('lyrics:update', state),
   getData: () => ipcRenderer.invoke('lyrics:data:get'),
   onControl: (callback) => {
-    const handler = (_event, action) => callback(action);
+    const handler = (_event, action, value) => callback(action, value);
     ipcRenderer.on('lyrics:control', handler);
     return () => ipcRenderer.off('lyrics:control', handler);
   },
@@ -44,7 +44,7 @@ contextBridge.exposeInMainWorld('lyricsctl', {
 contextBridge.exposeInMainWorld('lyricsOverlay', {
   hide: () => ipcRenderer.send('lyrics:hide'),
   retry: () => ipcRenderer.send('lyrics:retry'),
-  control: (action) => ipcRenderer.send('lyrics:control', action),
+  control: (action, value) => ipcRenderer.send('lyrics:control', action, value),
   search: (params) => ipcRenderer.invoke('lyrics:search', params),
   select: (candidate) => ipcRenderer.invoke('lyrics:select', candidate),
   openSettings: () => ipcRenderer.send('lyrics:settings:open'),

@@ -12,6 +12,7 @@
       <div id="lyrics-side">
         <div id="lyrics-cover-box">
           <img id="lyrics-cover" alt="" />
+          <div id="lyrics-video-wrap" hidden><div id="lyrics-video"></div><div id="lyrics-video-shield"></div></div>
           <div id="lyrics-track">
             <div id="lyrics-title"></div>
             <div id="lyrics-artist"></div>
@@ -19,13 +20,18 @@
         </div>
         <div id="lyrics-progress-row">
           <span id="lyrics-elapsed">0:00</span>
-          <div id="lyrics-progress-track"><div id="lyrics-progress-fill"></div></div>
+          <div id="lyrics-progress-track" title="클릭한 지점으로 이동"><div id="lyrics-progress-fill"></div></div>
           <span id="lyrics-duration">0:00</span>
         </div>
         <div id="lyrics-playback-controls">
           <button id="lyrics-previous" title="이전 곡" aria-label="이전 곡">◀|</button>
           <button id="lyrics-pause" title="일시정지" aria-label="일시정지">Ⅱ</button>
           <button id="lyrics-next" title="다음 곡" aria-label="다음 곡">|▶</button>
+          <button id="lyrics-volume" title="볼륨" aria-label="볼륨"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg></button>
+        </div>
+        <div id="lyrics-volume-pop" hidden>
+          <input id="lyrics-volume-slider" type="range" min="0" max="100" step="1" title="마스터 볼륨" />
+          <span id="lyrics-volume-value">100</span>
         </div>
       </div>
       <div id="lyrics-body">

@@ -13,6 +13,16 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // 구글 로그인 차단 완화: 자동화 도구 흔적(navigator.webdriver 등)을 노출하지 않도록
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled');
 
+// 창을 최소화하거나 다른 프로그램에 가려도 재생이 계속되도록 크로미움의 백그라운드 절전 동작을 끈다.
+// 숨겨진 페이지는 타이머가 1초 → (5분 뒤) 1분 간격까지 늦춰지는데(Intensive Wake Up Throttling),
+// 앱의 곡 종료 감지(1초 폴링)와 워치페이지 광고 스킵(100ms 인터벌)이 여기에 걸리면 곡이 끝나도
+// 다음 곡으로 넘어가지 않고 광고도 넘기지 못해 "재생이 멈춘" 것처럼 보인다. 음소거 영상(가사 창의
+// 미러 영상)은 아예 일시정지된다. Windows의 가림(occlusion) 판정도 같은 경로라 함께 끈다.
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-features', 'IntensiveWakeUpThrottling,CalculateNativeWinOcclusion');
+
 const STORE_FILE = () => path.join(app.getPath('userData'), 'playlists.json');
 const TITLE_CACHE_FILE = () => path.join(app.getPath('userData'), 'titles.json');
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json'); // 디자인 설정 (테마 색)
@@ -114,17 +124,20 @@ const DEFAULT_LYRICS_SETTINGS = {
   width: 760,
   height: 240,
   backgroundOpacity: 94,
+  uiOpacity: 100, // 가사 칩을 제외한 인터페이스(앨범/영상·곡 정보·재생바·컨트롤·상태 문구) 불투명도
   fontSize: 16,
   showProgressBar: true,
   showPlaybackControls: true,
   showPreviousButton: true,
   showPauseButton: true,
   showNextButton: true,
+  showVolumeButton: true,
   showTrackInfo: true,
-  showAlbumArt: true,
+  coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   showStatus: true,
   alwaysOnTop: true,
 };
+const COVER_MODES = ['none', 'art', 'video'];
 
 let lyricsSettings = { ...DEFAULT_LYRICS_SETTINGS };
 
@@ -135,18 +148,23 @@ function normalizeLyricsSettings(value) {
     return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.round(parsed))) : DEFAULT_LYRICS_SETTINGS[key];
   };
   const boolean = (key) => source[key] == null ? DEFAULT_LYRICS_SETTINGS[key] : !!source[key];
+  // 구버전 설정의 showAlbumArt(true/false) → coverMode('art'/'none')
+  const coverMode = COVER_MODES.includes(source.coverMode) ? source.coverMode
+    : source.showAlbumArt === false ? 'none' : DEFAULT_LYRICS_SETTINGS.coverMode;
   return {
     width: number('width', 360, 1400),
     height: number('height', 150, 700),
     backgroundOpacity: number('backgroundOpacity', 0, 100),
+    uiOpacity: number('uiOpacity', 0, 100),
     fontSize: number('fontSize', 10, 48),
     showProgressBar: boolean('showProgressBar'),
     showPlaybackControls: boolean('showPlaybackControls'),
     showPreviousButton: boolean('showPreviousButton'),
     showPauseButton: boolean('showPauseButton'),
     showNextButton: boolean('showNextButton'),
+    showVolumeButton: boolean('showVolumeButton'),
     showTrackInfo: boolean('showTrackInfo'),
-    showAlbumArt: boolean('showAlbumArt'),
+    coverMode,
     showStatus: boolean('showStatus'),
     alwaysOnTop: boolean('alwaysOnTop'),
   };
@@ -160,9 +178,19 @@ function loadLyricsSettings() {
   }
 }
 
-function saveLyricsSettings() {
+// 크기 슬라이더를 드래그하면 값이 초당 수십 번 바뀌므로 디스크 쓰기는 묶어서 한 번만 한다
+let lyricsSettingsWriteTimer = null;
+
+function writeLyricsSettings() {
+  clearTimeout(lyricsSettingsWriteTimer);
+  lyricsSettingsWriteTimer = null;
   fs.mkdirSync(path.dirname(LYRICS_SETTINGS_FILE()), { recursive: true });
   fs.writeFileSync(LYRICS_SETTINGS_FILE(), JSON.stringify(lyricsSettings, null, 2));
+}
+
+function saveLyricsSettings() {
+  clearTimeout(lyricsSettingsWriteTimer);
+  lyricsSettingsWriteTimer = setTimeout(writeLyricsSettings, 250);
 }
 
 function xmlEscape(value) {
@@ -590,7 +618,7 @@ let lyricsServerPort = null;
 // 끼워 넣는데, 이때 TOPMOST가 풀려 플로팅 창이 메인 창 뒤로 숨는다(Electron 41 실측 — isAlwaysOnTop()=false).
 // 'screen-saver' level은 그 경로를 타지 않아 최상위가 유지된다. macOS/Linux에서는 level이 z-order에 영향 없음.
 const LYRICS_TOP_LEVEL = process.platform === 'win32' ? 'screen-saver' : 'floating';
-let lyricsState = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '' };
+let lyricsState = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '', volume: 100 };
 let lyricsData = null;
 let lyricsKey = '';
 let lyricsRequestId = 0;
@@ -654,6 +682,7 @@ function updateLyricsState(data) {
     progress: Math.max(0, Number(data.progress) || 0),
     duration: Math.max(0, Number(data.duration) || 0),
     coverUrl: String(data.coverUrl || ''),
+    volume: Math.max(0, Math.min(100, Number.isFinite(Number(data.volume)) ? Number(data.volume) : 100)),
   };
   const key = lyricStateKey(next);
   const keyChanged = key !== lyricsKey;
@@ -685,10 +714,20 @@ function loadLyricsBounds() {
   };
 }
 
-function saveLyricsBounds() {
+// 창 이동('moved')과 크기 슬라이더는 연속으로 발생하므로 마찬가지로 묶어서 쓴다
+let lyricsBoundsWriteTimer = null;
+
+function writeLyricsBounds() {
+  clearTimeout(lyricsBoundsWriteTimer);
+  lyricsBoundsWriteTimer = null;
   if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
   fs.mkdirSync(path.dirname(LYRICS_BOUNDS_FILE()), { recursive: true });
   fs.writeFileSync(LYRICS_BOUNDS_FILE(), JSON.stringify(lyricsWindow.getBounds()));
+}
+
+function saveLyricsBounds() {
+  clearTimeout(lyricsBoundsWriteTimer);
+  lyricsBoundsWriteTimer = setTimeout(writeLyricsBounds, 250);
 }
 
 function updateLyricsSettings(value, persist = true) {
@@ -719,7 +758,8 @@ function showLyricsWindow() {
       skipTaskbar: true,
       alwaysOnTop: lyricsSettings.alwaysOnTop,
       show: false,
-      webPreferences: { preload: path.join(__dirname, 'preload.js') },
+      // 가려져 있어도 가사 줄 이동과 미러 영상 동기화가 멈추지 않도록
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
     });
     lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, LYRICS_TOP_LEVEL);
     lyricsWindow.on('moved', saveLyricsBounds);
@@ -1226,6 +1266,7 @@ function createWindow(port) {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       webviewTag: true, // 임베드 차단 곡의 워치페이지 폴백 재생용
+      backgroundThrottling: false, // 최소화 중에도 곡 종료 감지·진행 위치 전달이 계속 돌아야 한다
     },
   });
   win.loadURL(`http://127.0.0.1:${port}/`);
@@ -1315,9 +1356,12 @@ app.whenReady().then(async () => {
     mainWindow.focus();
     mainWindow.webContents.send('lyrics:open-settings');
   });
-  ipcMain.on('lyrics:control', (_event, action) => {
+  // 플로팅 창의 재생 컨트롤 → 메인 창. seek는 0~1 비율, volume은 0~100 값을 함께 넘긴다.
+  ipcMain.on('lyrics:control', (_event, action, value) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (['previous', 'toggle-play', 'next'].includes(action)) mainWindow.webContents.send('lyrics:control', action);
+    if (['previous', 'toggle-play', 'next', 'seek', 'volume'].includes(action)) {
+      mainWindow.webContents.send('lyrics:control', action, Number(value));
+    }
   });
   ipcMain.on('lyrics:update', (_event, data) => updateLyricsState(data));
   ipcMain.on('lyrics:toggle', () => {
@@ -1361,6 +1405,7 @@ app.whenReady().then(async () => {
   app.on('web-contents-created', (_event, wc) => {
     if (wc.getType() !== 'webview') return;
     webviewWC = wc;
+    wc.setBackgroundThrottling(false); // 최소화 중 광고 스킵·종료 감지 인터벌이 늦춰지지 않도록
     wc.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && input.key.toLowerCase() === 'f'
           && !input.control && !input.alt && !input.meta && !input.shift) {
@@ -1393,6 +1438,8 @@ app.whenReady().then(async () => {
 // 앱을 닫으면 세션 쿠키가 유실돼 다음 실행에서 로그아웃되는 문제 방지
 app.on('before-quit', () => {
   session.defaultSession.cookies.flushStore().catch(() => {});
+  if (lyricsSettingsWriteTimer) writeLyricsSettings();
+  if (lyricsBoundsWriteTimer) writeLyricsBounds();
 });
 
 app.on('window-all-closed', () => {

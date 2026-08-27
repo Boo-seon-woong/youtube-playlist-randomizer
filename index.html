@@ -199,20 +199,34 @@
       <p class="settings-hint">하단 재생 바의 가사 버튼으로 여는 플로팅 창의 크기·투명도·표시 항목. 변경 즉시 반영됩니다.</p>
       <div id="lyrics-settings">
         <div class="ls-grid">
-          <label>가로 길이<span class="ls-num"><input type="number" id="ls-width" min="360" max="1400" step="1" /><em>px</em></span></label>
-          <label>세로 길이<span class="ls-num"><input type="number" id="ls-height" min="150" max="700" step="1" /><em>px</em></span></label>
+          <label class="ls-size">
+            <span>가로 길이<span class="ls-num"><input type="number" id="ls-width" min="360" max="1400" step="1" /><em>px</em></span></span>
+            <input type="range" id="ls-width-slider" min="360" max="1400" step="1" />
+          </label>
+          <label class="ls-size">
+            <span>세로 길이<span class="ls-num"><input type="number" id="ls-height" min="150" max="700" step="1" /><em>px</em></span></span>
+            <input type="range" id="ls-height-slider" min="150" max="700" step="1" />
+          </label>
         </div>
-        <label class="ls-range"><span>배경 불투명도<output id="ls-opacity-value"></output></span><input type="range" id="ls-opacity" min="0" max="100" step="1" /></label>
+        <label class="ls-range"><span>가사 배경 불투명도<output id="ls-opacity-value"></output></span><input type="range" id="ls-opacity" min="0" max="100" step="1" /></label>
+        <label class="ls-range"><span>인터페이스 불투명도 (앨범·곡 정보·재생바·컨트롤)<output id="ls-ui-opacity-value"></output></span><input type="range" id="ls-ui-opacity" min="0" max="100" step="1" /></label>
         <label class="ls-range"><span>글씨 크기<output id="ls-font-size-value"></output></span><input type="range" id="ls-font-size" min="10" max="48" step="1" /></label>
+        <label class="ls-select"><span>왼쪽 사각형</span>
+          <select id="ls-cover-mode">
+            <option value="none">표시 안 함</option>
+            <option value="art">앨범 이미지</option>
+            <option value="video">영상 작게 표시 (음소거 미러)</option>
+          </select>
+        </label>
         <div class="ls-toggles">
           <label><input type="checkbox" id="ls-progress" /> 재생바 표시</label>
           <label><input type="checkbox" id="ls-playback" /> 재생 컨트롤 표시</label>
           <label><input type="checkbox" id="ls-previous" /> 이전 곡 버튼</label>
           <label><input type="checkbox" id="ls-pause" /> 일시정지/재생 버튼</label>
           <label><input type="checkbox" id="ls-next" /> 다음 곡 버튼</label>
+          <label><input type="checkbox" id="ls-volume" /> 볼륨 버튼</label>
           <label><input type="checkbox" id="ls-track-info" /> 곡 정보 표시</label>
-          <label><input type="checkbox" id="ls-cover" /> 앨범 이미지 표시</label>
-          <label><input type="checkbox" id="ls-status" /> 상태 문구 표시</label>
+          <label><input type="checkbox" id="ls-status" /> 상태 문구 (가사 출처·언어)</label>
           <label><input type="checkbox" id="ls-topmost" /> 항상 위에 표시</label>
         </div>
         <button id="lyrics-settings-reset">가사 창 기본값으로 되돌리기</button>

@@ -1495,6 +1495,47 @@ input {
   gap: 6px;
 }
 
+.ls-size > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ls-size input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.ls-size .ls-num input {
+  width: 64px;
+  height: 26px;
+  padding: 0 6px;
+}
+
+.ls-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ls-select select {
+  flex: 1;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--panel-active);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.ls-select select:focus {
+  border-color: var(--accent);
+}
+
 .ls-num {
   display: flex;
   align-items: center;

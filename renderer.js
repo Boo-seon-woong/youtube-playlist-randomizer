@@ -38,7 +38,7 @@ const npArtist = document.getElementById('np-artist');
 const npBadge = document.getElementById('np-badge');
 
 let lyricsPublishedState = {
-  id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '',
+  id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '', volume: 100,
 };
 
 let lyricsStateAt = performance.now(); // 마지막 상태 갱신 시각 — 가사 보기 오버레이의 진행 위치 보간용
@@ -1160,17 +1160,21 @@ const lsNumberInputs = {
   height: document.getElementById('ls-height'),
 };
 const lsRangeInputs = {
+  width: document.getElementById('ls-width-slider'),
+  height: document.getElementById('ls-height-slider'),
   backgroundOpacity: document.getElementById('ls-opacity'),
+  uiOpacity: document.getElementById('ls-ui-opacity'),
   fontSize: document.getElementById('ls-font-size'),
 };
+const lsCoverMode = document.getElementById('ls-cover-mode');
 const lsToggleInputs = {
   showProgressBar: document.getElementById('ls-progress'),
   showPlaybackControls: document.getElementById('ls-playback'),
   showPreviousButton: document.getElementById('ls-previous'),
   showPauseButton: document.getElementById('ls-pause'),
   showNextButton: document.getElementById('ls-next'),
+  showVolumeButton: document.getElementById('ls-volume'),
   showTrackInfo: document.getElementById('ls-track-info'),
-  showAlbumArt: document.getElementById('ls-cover'),
   showStatus: document.getElementById('ls-status'),
   alwaysOnTop: document.getElementById('ls-topmost'),
 };
@@ -1180,7 +1184,9 @@ function paintLyricsSettings(next) {
   for (const [key, input] of Object.entries(lsNumberInputs)) input.value = lyricsSettings[key] ?? '';
   for (const [key, input] of Object.entries(lsRangeInputs)) input.value = lyricsSettings[key] ?? 0;
   document.getElementById('ls-opacity-value').textContent = `${lyricsSettings.backgroundOpacity ?? ''}%`;
+  document.getElementById('ls-ui-opacity-value').textContent = `${lyricsSettings.uiOpacity ?? ''}%`;
   document.getElementById('ls-font-size-value').textContent = `${lyricsSettings.fontSize ?? ''}px`;
+  lsCoverMode.value = lyricsSettings.coverMode || 'art';
   for (const [key, input] of Object.entries(lsToggleInputs)) input.checked = !!lyricsSettings[key];
 }
 
@@ -1202,6 +1208,7 @@ for (const [key, input] of Object.entries(lsRangeInputs)) {
 for (const [key, input] of Object.entries(lsToggleInputs)) {
   input.addEventListener('change', () => saveLyricsSettings({ [key]: input.checked }));
 }
+lsCoverMode.addEventListener('change', () => saveLyricsSettings({ coverMode: lsCoverMode.value }));
 document.getElementById('lyrics-settings-reset').addEventListener('click', () => {
   window.lyricsOverlay.resetSettings().then(paintLyricsSettings).catch(() => {});
 });
@@ -1235,6 +1242,7 @@ function clampVolume(v) {
 }
 
 function paintVolumeUI() {
+  publishLyricsState({ volume: masterVolume }); // 플로팅 창 볼륨 슬라이더 동기화
   const v = masterVolume;
   for (const el of [volSlider, soundVolSlider]) {
     el.value = v;
@@ -2228,11 +2236,33 @@ document.getElementById('prev-btn').addEventListener('click', prevTrack);
 document.getElementById('next-btn').addEventListener('click', nextTrack);
 document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue);
 document.getElementById('lyrics-btn').addEventListener('click', () => window.lyricsctl.toggle());
-window.lyrics.onControl((action) => {
+window.lyrics.onControl((action, value) => {
   if (action === 'previous') prevTrack();
   else if (action === 'toggle-play') togglePlayback();
   else if (action === 'next') nextTrack();
+  else if (action === 'seek') seekToFraction(value);
+  else if (action === 'volume') setMasterVolume(value, true);
 });
+
+// 플로팅 창 재생바 클릭 → 곡의 해당 지점(0~1 비율)으로 이동. 임베드는 seekTo, 직접 재생은 video.currentTime.
+function seekToFraction(fraction) {
+  const f = Math.max(0, Math.min(1, Number(fraction) || 0));
+  if (fallbackActive) {
+    fallbackView.executeJavaScript(`(() => {
+      const v = document.querySelector('video');
+      if (v && v.duration) v.currentTime = v.duration * ${f};
+    })()`).catch(() => {});
+    return;
+  }
+  if (!playerReady) return;
+  try {
+    const d = player.getDuration();
+    if (d > 0) {
+      player.seekTo(d * f, true);
+      publishLyricsState({ progress: d * f * 1000, duration: d * 1000 });
+    }
+  } catch {}
+}
 
 // ── 가사 보기: 영상 위 오버레이 ──
 // main이 찾은 현재 곡 가사(lyrics:data)를 오른쪽에 전부 나열하고, 진행 위치를 보간해
