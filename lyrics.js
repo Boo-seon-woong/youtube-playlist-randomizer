@@ -366,6 +366,9 @@ pauseButton.addEventListener('click', () => window.lyricsOverlay.control('toggle
 nextButton.addEventListener('click', () => window.lyricsOverlay.control('next'));
 searchForm.addEventListener('submit', searchLyrics);
 
+// 단축키로 볼륨을 바꿨을 때 새 값을 잠깐 띄운다 (게임 중에는 앱의 볼륨 슬라이더가 보이지 않는다)
+window.lyricsOverlay.onFlash((text) => flashMessage(text));
+
 // 창을 옮기는 동안에만 히트박스(=창 영역) 테두리를 표시 — main이 'move' 이벤트로 알려준다
 window.lyricsOverlay.onDragging((flag) => document.body.classList.toggle('dragging', !!flag));
 

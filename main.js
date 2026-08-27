@@ -690,6 +690,10 @@ function updateLyricsState(data) {
     coverUrl: String(data.coverUrl || ''),
     volume: Math.max(0, Math.min(100, Number.isFinite(Number(data.volume)) ? Number(data.volume) : 100)),
   };
+  if (pendingVolumeFlash && next.volume !== lyricsState.volume) {
+    pendingVolumeFlash = false;
+    sendLyricsFlash(`🔊 볼륨 ${Math.round(next.volume)}`);
+  }
   const key = lyricStateKey(next);
   const keyChanged = key !== lyricsKey;
   lyricsState = next;
@@ -754,8 +758,7 @@ function updateLyricsSettings(value, persist = true) {
 
 // Windows 작업 표시줄·알림 플라이아웃도 topmost라, 같은 밴드 안에서 z-order가 밀리면 가사 창을
 // 덮어버린다(실측: 작업 표시줄이 가사 창 위로 올라옴). 폴링으로 계속 감시하지 않고 **창을 보이게
-// 하거나 단축키를 눌렀을 때만** 최상위를 다시 못박는다 — 가려졌을 때 Alt+1/Alt+2를 누르면 곧바로
-// 올라온다. SetWindowPos는 SWP_NOACTIVATE라 포커스를 건드리지 않으므로 게임 중에도 안전하다.
+// 할 때와 Alt+5를 눌렀을 때만** 최상위를 다시 못박는다(다른 단축키는 이 동작을 하지 않는다). SetWindowPos는 SWP_NOACTIVATE라 포커스를 건드리지 않으므로 게임 중에도 안전하다.
 function keepLyricsOnTop() {
   if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsWindow.isVisible()) return;
   if (!lyricsSettings.alwaysOnTop) return;
@@ -775,31 +778,47 @@ function toggleLyricsWindow() {
   else lyricsWindow.hide();
 }
 
-// 전역 단축키(Alt+1 / Alt+2): 창 전환 없이 가사 창을 조작한다.
+// 전역 단축키(Alt+1~5): 창 전환 없이 볼륨·가사 창을 조작한다.
 // globalShortcut은 OS 핫키(RegisterHotKey)라 우리 창을 활성화하지 않으며, showInactive/hide와
 // setIgnoreMouseEvents 모두 포커스를 옮기지 않는다. 다른 앱이 이미 쓰는 조합이면 등록에 실패한다.
-// Alt+1(잠금 토글)은 조작 주체까지 함께 옮긴다. 전체화면 게임은 마우스 커서를 잡고 있어서,
+// Alt+4(잠금 토글)는 조작 주체까지 함께 옮긴다. 전체화면 게임은 마우스 커서를 잡고 있어서,
 // 잠금만 풀어도 포커스가 게임에 있는 한 커서가 보이지 않아 가사 창을 누를 수 없기 때문이다.
 //  - 잠금 해제 → 가사 창을 focus (게임이 커서를 놓아준다)
 //  - 다시 잠금 → blur 해서 원래 쓰던 창(게임)으로 돌려준다
-// Alt+2(창 표시/숨김)는 요청대로 포커스를 건드리지 않는다(showInactive).
+// Alt+3(창 표시/숨김)은 요청대로 포커스를 건드리지 않는다(showInactive).
 function toggleLyricsClickThrough() {
   const next = !lyricsSettings.clickThrough;
   updateLyricsSettings({ clickThrough: next });
   if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
   if (next) {
-    lyricsWindow.blur();
-    keepLyricsOnTop(); // 게임으로 돌아가되 가사 창은 다시 맨 위로
+    lyricsWindow.blur(); // 게임으로 조작 주체를 돌려준다
     return;
   }
   if (!lyricsWindow.isVisible()) lyricsWindow.show();
   lyricsWindow.focus();
-  keepLyricsOnTop();
+}
+
+// 볼륨은 렌더러가 소유하므로(임베드/직접 재생 양쪽에 적용) 단계 변경을 요청하고,
+// 새 값이 상태로 돌아오면 가사 창에 띄운다 — 게임 중에는 앱의 볼륨 슬라이더가 보이지 않기 때문.
+let pendingVolumeFlash = false;
+
+function stepMasterVolume(delta) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  pendingVolumeFlash = true;
+  mainWindow.webContents.send('lyrics:control', 'volume-step', delta);
+}
+
+function sendLyricsFlash(text) {
+  if (!lyricsWindow || lyricsWindow.isDestroyed() || lyricsWindow.webContents.isLoading()) return;
+  lyricsWindow.webContents.send('lyrics:flash', text);
 }
 
 const LYRICS_SHORTCUTS = [
-  { accelerator: 'Alt+1', label: '클릭 통과 켜기/끄기(조작 주체 전환)', run: toggleLyricsClickThrough },
-  { accelerator: 'Alt+2', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
+  { accelerator: 'Alt+1', label: '볼륨 1 감소', run: () => stepMasterVolume(-1) },
+  { accelerator: 'Alt+2', label: '볼륨 1 증가', run: () => stepMasterVolume(1) },
+  { accelerator: 'Alt+3', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
+  { accelerator: 'Alt+4', label: '클릭 통과 켜기/끄기(조작 주체 전환)', run: toggleLyricsClickThrough },
+  { accelerator: 'Alt+5', label: '가사 창 다시 맨 위로(가리기 해제)', run: () => keepLyricsOnTop() },
 ];
 
 let lyricsShortcutStatus = []; // 설정 패널이 등록 성공 여부를 보여준다 (실패는 조용히 넘기면 안 된다)
@@ -1489,7 +1508,7 @@ app.whenReady().then(async () => {
   // 플로팅 창의 재생 컨트롤 → 메인 창. seek는 0~1 비율, volume은 0~100 값을 함께 넘긴다.
   ipcMain.on('lyrics:control', (_event, action, value) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (['previous', 'toggle-play', 'next', 'seek', 'volume', 'volume-save'].includes(action)) {
+    if (['previous', 'toggle-play', 'next', 'seek', 'volume', 'volume-save', 'volume-step'].includes(action)) {
       mainWindow.webContents.send('lyrics:control', action, Number(value));
     }
   });

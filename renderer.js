@@ -2283,6 +2283,7 @@ window.lyrics.onControl((action, value) => {
   else if (action === 'toggle-play') togglePlayback();
   else if (action === 'next') nextTrack();
   else if (action === 'seek') seekToFraction(value);
+  else if (action === 'volume-step') setMasterVolume(masterVolume + value, true); // 전역 단축키(Alt+1/Alt+2)
   else if (action === 'volume') setMasterVolume(value, false); // 드래그 중 실시간 반영
   else if (action === 'volume-save') setMasterVolume(value, true); // 조작을 마쳤을 때 저장
 });
