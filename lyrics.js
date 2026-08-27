@@ -344,6 +344,9 @@ pauseButton.addEventListener('click', () => window.lyricsOverlay.control('toggle
 nextButton.addEventListener('click', () => window.lyricsOverlay.control('next'));
 searchForm.addEventListener('submit', searchLyrics);
 
+// 창을 옮기는 동안에만 히트박스(=창 영역) 테두리를 표시 — main이 'move' 이벤트로 알려준다
+window.lyricsOverlay.onDragging((flag) => document.body.classList.toggle('dragging', !!flag));
+
 window.lyricsOverlay.onSettings(applyLyricsSettings);
 window.lyricsOverlay.getSettings().then(applyLyricsSettings).catch(() => applyLyricsSettings(lyricsSettings));
 

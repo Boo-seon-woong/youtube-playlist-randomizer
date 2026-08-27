@@ -34,11 +34,28 @@ button {
 }
 
 #lyrics-shell {
+  position: relative;
   width: 100%;
   height: 100%;
   padding: 8px;
   -webkit-app-region: drag;
 }
+
+/* 드래그로 창을 옮기는 동안에만 클릭(드래그) 히트박스 테두리를 보여준다 — 평소엔 완전히 투명해
+   어디를 잡을 수 있는지 알기 어렵기 때문. 밝은 배경에서도 보이도록 안팎에 어두운 선을 겹친다. */
+#lyrics-shell::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 2px dashed rgba(255, 255, 255, 0.85);
+  border-radius: 13px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+body.dragging #lyrics-shell::after { opacity: 1; }
 
 #lyrics-card {
   position: relative;

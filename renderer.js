@@ -718,6 +718,7 @@ function renderQueue() {
     title.textContent = (info && info.title) || id;
     author.textContent = (info && info.author) || '';
     meta.append(title, author);
+    li.title = (info && info.title) || id; // 레일에서는 제목이 안 보인다
 
     const del = document.createElement('button');
     del.className = 'q-del';
@@ -743,11 +744,11 @@ function renderQueue() {
 
 function decorateUnplayable(li) {
   li.classList.add('unplayable');
-  li.title = '재생 불가 (삭제되었거나 비공개인 영상)';
+  li.title = `${li.title ? li.title + ' — ' : ''}재생 불가 (삭제되었거나 비공개인 영상)`;
 }
 
 function decorateFallback(li) {
-  li.title = '임베드 차단 곡 — 유튜브 페이지로 직접 재생됩니다';
+  li.title = `${li.title ? li.title + ' — ' : ''}임베드 차단 곡 — 유튜브 페이지로 직접 재생됩니다`;
   if (!li.querySelector('.q-badge')) {
     const badge = document.createElement('span');
     badge.className = 'q-badge';
@@ -1324,7 +1325,13 @@ soundBackdrop.addEventListener('click', (e) => {
 // 포인터 이벤트를 막아 마우스가 영상 위를 지나도 드래그가 끊기지 않게 한다 (+ pointer capture).
 
 const PANEL_LIMITS = { sidebar: { min: 200, max: 520 }, queue: { min: 220, max: 560 } };
-const DEFAULT_LAYOUT = { sidebarWidth: 300, queueWidth: 320, sidebarCollapsed: false, queueCollapsed: false, centerMin: false };
+// 레일(반 최소화): 버튼이 아니라 드래그로 충분히 좁혔을 때만 들어가는 상태. 썸네일 타일만 남는다.
+const RAIL_WIDTH = 76; // 타일 52 + 좌우 여백 12
+const RAIL_ENTER = 150; // 드래그 폭이 이보다 좁아지면 레일, 다시 넓히면 원래 폭으로 복귀
+const DEFAULT_LAYOUT = {
+  sidebarWidth: 300, queueWidth: 320, sidebarCollapsed: false, queueCollapsed: false,
+  sidebarRail: false, queueRail: false, centerMin: false,
+};
 let layout = { ...DEFAULT_LAYOUT };
 
 const sidebarEl = document.getElementById('sidebar');
@@ -1340,10 +1347,12 @@ function clampPanelWidth(key, w) {
 }
 
 function applyLayout() {
-  sidebarEl.style.width = clampPanelWidth('sidebar', layout.sidebarWidth) + 'px';
-  queuePanelEl.style.width = clampPanelWidth('queue', layout.queueWidth) + 'px';
+  sidebarEl.style.width = (layout.sidebarRail ? RAIL_WIDTH : clampPanelWidth('sidebar', layout.sidebarWidth)) + 'px';
+  queuePanelEl.style.width = (layout.queueRail ? RAIL_WIDTH : clampPanelWidth('queue', layout.queueWidth)) + 'px';
   document.body.classList.toggle('sidebar-collapsed', !!layout.sidebarCollapsed);
   document.body.classList.toggle('queue-collapsed', !!layout.queueCollapsed);
+  document.body.classList.toggle('sidebar-rail', !!layout.sidebarRail);
+  document.body.classList.toggle('queue-rail', !!layout.queueRail);
   document.body.classList.toggle('center-min', !!layout.centerMin);
   minimizeBtn.classList.toggle('active', !!layout.centerMin);
   minimizeBtn.title = layout.centerMin ? '영상 다시 표시' : '영상 최소화 — 화면 구성에서 숨기고 목록을 넓게 (재생은 계속)';
@@ -1356,7 +1365,7 @@ function applyLayout() {
 }
 
 // direction: 핸들을 오른쪽으로 끌 때 패널 폭이 커지면 1(왼쪽 패널), 작아지면 -1(오른쪽 패널)
-function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, direction) {
+function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, railKey, direction) {
   const handle = document.getElementById(handleId);
   const btn = handle.querySelector('.resizer-btn');
   btn.addEventListener('click', (e) => {
@@ -1381,8 +1390,12 @@ function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, direction)
   });
   handle.addEventListener('pointermove', (e) => {
     if (!dragging) return;
-    layout[widthKey] = clampPanelWidth(key, startWidth + (e.clientX - startX) * direction);
-    panelEl.style.width = layout[widthKey] + 'px';
+    const raw = startWidth + (e.clientX - startX) * direction;
+    // 충분히 좁히면 레일(썸네일만), 다시 넓히면 평소 상태 — 접기 버튼과 달리 폭은 그대로 따라간다
+    layout[railKey] = raw < RAIL_ENTER;
+    document.body.classList.toggle(railKey === 'sidebarRail' ? 'sidebar-rail' : 'queue-rail', layout[railKey]);
+    if (!layout[railKey]) layout[widthKey] = clampPanelWidth(key, raw);
+    panelEl.style.width = (layout[railKey] ? RAIL_WIDTH : layout[widthKey]) + 'px';
   });
   const endDrag = (e) => {
     if (!dragging) return;
@@ -1396,8 +1409,8 @@ function setupResizer(handleId, key, panelEl, collapsedKey, widthKey, direction)
   handle.addEventListener('pointercancel', endDrag);
 }
 
-setupResizer('resize-left', 'sidebar', sidebarEl, 'sidebarCollapsed', 'sidebarWidth', 1);
-setupResizer('resize-right', 'queue', queuePanelEl, 'queueCollapsed', 'queueWidth', -1);
+setupResizer('resize-left', 'sidebar', sidebarEl, 'sidebarCollapsed', 'sidebarWidth', 'sidebarRail', 1);
+setupResizer('resize-right', 'queue', queuePanelEl, 'queueCollapsed', 'queueWidth', 'queueRail', -1);
 
 // 영상 최소화: 좌우 패널을 접듯 중앙을 화면 구성에서 없앤다 (CSS가 폭 0으로 접어 재생은 그대로).
 // 곡 구성/검색 오버레이를 열거나 전체화면에 들어가면 자동으로 다시 펼친다 — 그 화면들은 플레이어
@@ -2051,6 +2064,7 @@ function buildPlaylistRow(pl, depth) {
 
   // 행 클릭은 곡 구성 보기이므로, 바로 재생하는 버튼을 따로 둔다 (중앙을 최소화한 상태에서도 재생 가능)
   const playBtn = iconButton(PLAY_SVG, '재생', () => playPlaylist(pl.listId, false));
+  playBtn.classList.add('pl-play'); // 레일 상태에서 썸네일 위에 겹쳐 보여줄 버튼
   const shuffleBtn = iconButton(SHUFFLE_SVG, '셔플 재생', () => playPlaylist(pl.listId, true));
   li.append(thumb, meta, playBtn, shuffleBtn);
   if (!pl.account) {
@@ -2064,7 +2078,7 @@ function buildPlaylistRow(pl, depth) {
     });
     li.append(editBtn, deleteBtn);
   }
-  li.title = '클릭하여 곡 구성 보기 · 우클릭으로 더 보기';
+  li.title = `${pl.name} — 클릭하여 곡 구성 보기 · 우클릭으로 더 보기`; // 레일에서는 이름이 안 보인다
   li.onclick = () => openBrowse(pl); // 바로 재생하지 않고 중앙에 곡 구성만 표시 — 재생은 그 화면의 버튼으로
   li.oncontextmenu = (e) => {
     e.preventDefault();

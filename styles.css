@@ -2092,14 +2092,119 @@ body.center-min #resize-right {
   cursor: default; /* 대기열이 남은 폭을 다 차지하므로 드래그 의미 없음 — 접기 버튼만 */
 }
 
-body.center-min #queue-panel {
+/* 중앙 최소화 시 남는 폭은 대기열이 가져간다 — 단, 레일 상태의 패널은 좁은 폭을 유지하고
+   그 경우 사이드바가 남는 폭을 가져간다 (둘 다 레일이면 둘 다 좁게 둔다) */
+body.center-min:not(.queue-rail) #queue-panel {
   flex: 1;
   width: auto !important;
 }
 
-body.center-min.queue-collapsed #sidebar {
+body.center-min.queue-collapsed:not(.sidebar-rail) #sidebar,
+body.center-min.queue-rail:not(.sidebar-rail) #sidebar {
   flex: 1;
   width: auto !important;
+}
+
+/* ── 레일(반 최소화): 드래그로 충분히 좁혔을 때 — 썸네일 타일만 남긴다 ──
+   접기 버튼(완전 숨김)과 달리 목록은 계속 보이고, 다시 넓게 끌면 평소 상태로 돌아온다. */
+
+body.sidebar-rail #sidebar {
+  padding: 12px 12px 10px;
+  gap: 10px;
+}
+
+body.sidebar-rail #sidebar-head,
+body.sidebar-rail #add-form,
+body.sidebar-rail #playlist-list .pl-meta,
+body.sidebar-rail #playlist-list .pl-icon:not(.pl-play),
+body.sidebar-rail #playlist-list li.list-sep,
+body.sidebar-rail #playlist-list li.folder-empty {
+  display: none;
+}
+
+body.sidebar-rail #playlist-list {
+  align-items: center;
+  gap: 8px;
+}
+
+body.sidebar-rail #playlist-list li {
+  position: relative;
+  margin-left: 0 !important; /* 폴더 깊이 들여쓰기는 인라인 스타일이라 !important가 필요하다 */
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  background: none;
+}
+
+body.sidebar-rail .pl-thumb,
+body.sidebar-rail .pl-folder-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 7px;
+}
+
+body.sidebar-rail .pl-folder-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+body.sidebar-rail #playlist-list li.active .pl-thumb,
+body.sidebar-rail #playlist-list li.active .pl-folder-icon {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 레일에서는 이름 옆 버튼을 놓을 자리가 없으므로, 재생 버튼만 타일 위에 겹쳐 보여준다
+   (중앙까지 최소화한 상태에서도 재생을 시작할 수 있어야 한다) */
+body.sidebar-rail #playlist-list li .pl-play {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.55);
+  opacity: 0;
+}
+
+body.sidebar-rail #playlist-list li:hover .pl-play {
+  opacity: 1;
+}
+
+body.queue-rail #queue-panel {
+  padding: 12px 12px 10px;
+}
+
+body.queue-rail #queue-panel h2,
+body.queue-rail #queue-list .q-idx,
+body.queue-rail #queue-list .q-meta,
+body.queue-rail #queue-list .q-del {
+  display: none;
+}
+
+body.queue-rail #queue-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+body.queue-rail #queue-list li {
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+  background: none;
+}
+
+body.queue-rail .q-thumb {
+  width: 52px;
+  height: 52px;
+  border-radius: 7px;
+  object-fit: cover;
+}
+
+body.queue-rail #queue-list li.current .q-thumb {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ── 몰입 모드: 창 전체화면 + 플레이어만 표시 ── */

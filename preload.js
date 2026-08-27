@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
     ipcRenderer.on('lyrics:settings', handler);
     return () => ipcRenderer.off('lyrics:settings', handler);
   },
+  onDragging: (callback) => ipcRenderer.on('lyrics:dragging', (_event, flag) => callback(flag)),
 });
 
 contextBridge.exposeInMainWorld('fallbackctl', {

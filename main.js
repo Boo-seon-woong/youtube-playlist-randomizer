@@ -614,6 +614,10 @@ async function searchAllLyrics(title, artist) {
 
 let lyricsWindow = null;
 let lyricsServerPort = null;
+// 창을 드래그하는 동안에만 히트박스 테두리를 보여주기 위한 상태 — 창이 투명해서 어디를 잡고 있는지
+// 알기 어렵다. 드래그는 -webkit-app-region이 OS로 넘기므로 렌더러가 알 수 없고, 메인의 'move'로만 안다.
+let lyricsDragging = false;
+let lyricsDragTimer = null;
 // Windows에서 setAlwaysOnTop의 기본 level('floating')은 창을 작업 표시줄 뒤에 두려고 z-order를 다시
 // 끼워 넣는데, 이때 TOPMOST가 풀려 플로팅 창이 메인 창 뒤로 숨는다(Electron 41 실측 — isAlwaysOnTop()=false).
 // 'screen-saver' level은 그 경로를 타지 않아 최상위가 유지된다. macOS/Linux에서는 level이 z-order에 영향 없음.
@@ -744,6 +748,14 @@ function updateLyricsSettings(value, persist = true) {
   return lyricsSettings;
 }
 
+function setLyricsDragging(flag) {
+  if (lyricsDragging === flag) return; // 'move'는 초당 수십 번 오므로 상태가 바뀔 때만 알린다
+  lyricsDragging = flag;
+  if (lyricsWindow && !lyricsWindow.isDestroyed() && !lyricsWindow.webContents.isLoading()) {
+    lyricsWindow.webContents.send('lyrics:dragging', flag);
+  }
+}
+
 function showLyricsWindow() {
   if (!lyricsWindow || lyricsWindow.isDestroyed()) {
     const bounds = loadLyricsBounds();
@@ -762,7 +774,16 @@ function showLyricsWindow() {
       webPreferences: { preload: path.join(__dirname, 'preload.js'), backgroundThrottling: false },
     });
     lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, LYRICS_TOP_LEVEL);
-    lyricsWindow.on('moved', saveLyricsBounds);
+    lyricsWindow.on('move', () => {
+      setLyricsDragging(true);
+      clearTimeout(lyricsDragTimer);
+      lyricsDragTimer = setTimeout(() => setLyricsDragging(false), 260); // 움직임이 멎으면 테두리도 사라진다
+    });
+    lyricsWindow.on('moved', () => {
+      clearTimeout(lyricsDragTimer);
+      lyricsDragTimer = setTimeout(() => setLyricsDragging(false), 120);
+      saveLyricsBounds();
+    });
     lyricsWindow.on('closed', () => { lyricsWindow = null; });
     lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
     lyricsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics.html`);
