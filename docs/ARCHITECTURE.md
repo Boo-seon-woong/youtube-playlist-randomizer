@@ -282,10 +282,12 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
      형제 요소를 전부 `display:none`으로 만든다(자막·스피너·오류 표시, head/script류는 예외).
      결과적으로 영상 말고 그려지는 것이 남지 않으며, 크롬이 `#movie_player` 밖에 있어도 잡힌다.
      `MutationObserver`가 유튜브의 재생성·style 되돌림을 즉시 다시 숨긴다.
+  **가사 창의 '영상 작게 표시' 미러 임베드도 같은 처리를 받는다** — `lyricsWindow`의 `did-frame-finish-load`에
+  같은 훅을 걸고, `lyrics.js`가 미러 준비(onReady)·곡 전환 때 `refreshEmbedChrome`을 부른다.
   주입 대상은 `youtube.com`/`youtube-nocookie.com` 프레임 전부(중첩 프레임 대비), 시점은 프레임 로드
   (`did-frame-finish-load`) + 곡이 바뀔 때마다(`embed:refresh-chrome` IPC).
-  검증: 플레이어 자식 상태가 `html5-video-container=block`(재생 중)·`ytp-unmute=none`·
-  `ytp-player-content=none`·`ytp-caption-window-container=block`, 시킹 중 표시된 오버레이 0건.
+  검증(메인 창·가사 창 미러 두 프레임 모두): 주입·감시자 적용됨, 영상 재생 중, **남아 있는 표시 요소는
+  자막 컨테이너 하나뿐**(의도적으로 유지), 시킹 중 표시된 오버레이 0건.
   (앨범 아트로 플레이어를 덮는 방식은 사용자가 거부 — 되돌렸다.)
 - **직접 재생 시킹 반응성**: 워치페이지 폴링이 1초 주기라 이동 결과가 돌아올 때까지 바가 옛 위치로
   되돌아가 둔했다 → 앱이 아는 재생시간으로 **즉시 낙관적 반영**하고 다음 폴링이 정정한다

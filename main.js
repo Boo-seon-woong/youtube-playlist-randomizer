@@ -869,6 +869,11 @@ function showLyricsWindow() {
     });
     lyricsWindow.on('closed', () => { lyricsWindow = null; });
     lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
+    // '영상 작게 표시'의 미러 임베드도 메인 창과 똑같이 유튜브 자체 UI를 지운다
+    lyricsWindow.webContents.on('did-frame-finish-load', (_event, isMainFrame, frameProcessId, frameRoutingId) => {
+      if (isMainFrame) return;
+      try { hideEmbedChrome(webFrameMain.fromId(frameProcessId, frameRoutingId)); } catch {}
+    });
     lyricsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics.html`);
   }
   applyLyricsClickThrough();

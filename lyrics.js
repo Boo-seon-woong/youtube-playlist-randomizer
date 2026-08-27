@@ -164,11 +164,12 @@ function ensureMiniVideo() {
   mini = new YT.Player('lyrics-video', {
     width: '100%',
     height: '100%',
-    playerVars: { controls: 0, disablekb: 1, fs: 0, rel: 0, mute: 1, playsinline: 1, iv_load_policy: 3, origin: location.origin },
+    playerVars: { controls: 0, disablekb: 1, fs: 0, rel: 0, mute: 1, playsinline: 1, iv_load_policy: 3, modestbranding: 1, origin: location.origin },
     events: {
       onReady: () => {
         miniReady = true;
         try { mini.mute(); mini.setVolume(0); } catch {}
+        try { window.appinfo.refreshEmbedChrome(); } catch {} // 유튜브 자체 UI 제거 (메인 창과 동일 처리)
       },
       onError: (event) => {
         miniLastError = event && event.data;
@@ -195,6 +196,7 @@ function syncMiniVideo() {
   if (miniId !== id) {
     miniId = id;
     try { mini.loadVideoById({ videoId: id, startSeconds: target }); mini.mute(); } catch {}
+    try { window.appinfo.refreshEmbedChrome(); } catch {} // 곡이 바뀔 때도 다시 심는다
     return;
   }
   let state = -1;
