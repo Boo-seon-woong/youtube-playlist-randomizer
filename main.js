@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -758,6 +758,29 @@ function applyLyricsClickThrough() {
   lyricsWindow.setIgnoreMouseEvents(!!lyricsSettings.clickThrough);
 }
 
+function toggleLyricsWindow() {
+  if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsWindow.isVisible()) showLyricsWindow();
+  else lyricsWindow.hide();
+}
+
+// 전역 단축키: 게임/작업 중인 프로그램에서 포커스를 뺏지 않고 가사 창만 조작한다.
+// globalShortcut은 OS 핫키(RegisterHotKey)라 우리 창을 활성화하지 않으며, showInactive/hide와
+// setIgnoreMouseEvents 모두 포커스를 옮기지 않는다. 다른 앱이 이미 쓰는 조합이면 등록에 실패한다.
+const LYRICS_SHORTCUTS = [
+  { accelerator: 'Alt+Y', label: '클릭 통과 켜기/끄기', run: () => updateLyricsSettings({ clickThrough: !lyricsSettings.clickThrough }) },
+  { accelerator: 'Alt+U', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
+];
+
+let lyricsShortcutStatus = []; // 설정 패널이 등록 성공 여부를 보여준다 (실패는 조용히 넘기면 안 된다)
+
+function registerLyricsShortcuts() {
+  lyricsShortcutStatus = LYRICS_SHORTCUTS.map(({ accelerator, label, run }) => {
+    let ok = false;
+    try { ok = globalShortcut.register(accelerator, run); } catch { ok = false; }
+    return { accelerator, label, ok };
+  });
+}
+
 function setLyricsDragging(flag) {
   if (lyricsDragging === flag) return; // 'move'는 초당 수십 번 오므로 상태가 바뀔 때만 알린다
   lyricsDragging = flag;
@@ -1423,6 +1446,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('lyrics:settings:save', (_event, settings) => updateLyricsSettings(settings));
   ipcMain.handle('lyrics:settings:reset', () => updateLyricsSettings(DEFAULT_LYRICS_SETTINGS));
   ipcMain.handle('lyrics:data:get', () => lyricsData);
+  ipcMain.handle('lyrics:shortcuts', () => lyricsShortcutStatus);
   // 플로팅 창의 설정 버튼 → 메인 창을 앞으로 가져와 디자인 설정의 가사 창 섹션을 연다
   ipcMain.on('lyrics:settings:open', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -1438,10 +1462,7 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.on('lyrics:update', (_event, data) => updateLyricsState(data));
-  ipcMain.on('lyrics:toggle', () => {
-    if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsWindow.isVisible()) showLyricsWindow();
-    else lyricsWindow.hide();
-  });
+  ipcMain.on('lyrics:toggle', toggleLyricsWindow);
   ipcMain.on('lyrics:hide', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.hide();
   });
@@ -1503,6 +1524,8 @@ app.whenReady().then(async () => {
 
   createWindow(port);
 
+  registerLyricsShortcuts();
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(port);
   });
@@ -1510,6 +1533,8 @@ app.whenReady().then(async () => {
 
 // 종료 전에 쿠키를 디스크로 강제 플러시 — 크로미움의 지연 저장 때문에 로그인 직후
 // 앱을 닫으면 세션 쿠키가 유실돼 다음 실행에서 로그아웃되는 문제 방지
+app.on('will-quit', () => globalShortcut.unregisterAll());
+
 app.on('before-quit', () => {
   session.defaultSession.cookies.flushStore().catch(() => {});
   if (lyricsSettingsWriteTimer) writeLyricsSettings();

@@ -1603,6 +1603,10 @@ input {
   accent-color: var(--accent);
 }
 
+.ls-shortcut-fail {
+  color: #ff6b6b;
+}
+
 #lyrics-settings-reset {
   padding: 8px 0;
   border: 1px solid #727272;

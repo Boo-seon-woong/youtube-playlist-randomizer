@@ -39,8 +39,28 @@ const searchArtist = document.getElementById('lyrics-search-artist');
 const searchStatus = document.getElementById('lyrics-search-status');
 const searchResults = document.getElementById('lyrics-search-results');
 
+// 단축키(Alt+Y)로 잠금이 바뀐 것을 창에서 바로 알 수 있게 잠깐 띄우는 알림
+let lockStateKnown = false;
+let flashTimer = null;
+
+function flashMessage(text) {
+  const el = document.getElementById('lyrics-flash');
+  el.textContent = text;
+  el.hidden = false;
+  el.style.animation = 'none';
+  void el.offsetWidth; // 애니메이션 재시작
+  el.style.animation = '';
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { el.hidden = true; }, 1600);
+}
+
 function applyLyricsSettings(next) {
+  const wasLocked = lyricsSettings.clickThrough;
   lyricsSettings = { ...lyricsSettings, ...(next || {}) };
+  if (lockStateKnown && lyricsSettings.clickThrough !== wasLocked) {
+    flashMessage(lyricsSettings.clickThrough ? '🔒 클릭 통과 ON' : '🔓 클릭 통과 OFF');
+  }
+  lockStateKnown = true;
   const opacity = Math.max(0, Math.min(100, Number(lyricsSettings.backgroundOpacity) || 0)) / 100;
   document.documentElement.style.setProperty('--lyrics-bg', `rgba(24, 25, 31, ${opacity})`);
   document.documentElement.style.setProperty('--lyrics-bg-2', `rgba(24, 25, 31, ${Math.max(0, opacity * 0.85)})`);

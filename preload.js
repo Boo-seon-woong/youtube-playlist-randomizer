@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld('lyrics', {
     return () => ipcRenderer.off('lyrics:control', handler);
   },
   onOpenSettings: (callback) => ipcRenderer.on('lyrics:open-settings', () => callback()),
+
 });
 
 contextBridge.exposeInMainWorld('lyricsctl', {
@@ -51,6 +52,7 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   getSettings: () => ipcRenderer.invoke('lyrics:settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('lyrics:settings:save', settings),
   resetSettings: () => ipcRenderer.invoke('lyrics:settings:reset'),
+  shortcuts: () => ipcRenderer.invoke('lyrics:shortcuts'),
   onState: (callback) => {
     const handler = (_event, state) => callback(state);
     ipcRenderer.on('lyrics:state', handler);

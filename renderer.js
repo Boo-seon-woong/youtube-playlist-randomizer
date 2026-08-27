@@ -1225,6 +1225,25 @@ document.getElementById('lyrics-settings-reset').addEventListener('click', () =>
 window.lyricsOverlay.onSettings(paintLyricsSettings);
 window.lyricsOverlay.getSettings().then(paintLyricsSettings).catch(() => {});
 // 플로팅 창의 톱니 버튼 → 디자인 설정을 열고 가사 창 섹션까지 스크롤
+// 전역 단축키 등록 결과를 설정 패널에 그대로 보여준다 (다른 프로그램이 선점하면 등록에 실패한다)
+window.lyricsOverlay.shortcuts().then((list) => {
+  const el = document.getElementById('ls-shortcuts');
+  if (!el || !Array.isArray(list) || list.length === 0) return;
+  el.replaceChildren();
+  el.append('단축키 — ');
+  list.forEach((s, i) => {
+    const key = document.createElement('b');
+    key.textContent = s.accelerator;
+    el.append(i ? ', ' : '', key, ` ${s.label}`);
+    if (!s.ok) {
+      const warn = document.createElement('span');
+      warn.className = 'ls-shortcut-fail';
+      warn.textContent = ' (등록 실패 — 다른 프로그램이 사용 중)';
+      el.append(warn);
+    }
+  });
+  el.append('. 게임이나 작업 중인 프로그램에서 창이 전환되지 않고 가사 창만 바뀝니다.');
+}).catch(() => {});
 window.lyrics.onOpenSettings(() => {
   openSettings();
   const panel = document.getElementById('settings-panel');
