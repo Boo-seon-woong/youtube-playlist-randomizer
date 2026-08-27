@@ -1176,6 +1176,10 @@ function closeSettings() {
   settingsBackdrop.hidden = true;
 }
 
+window.appinfo.version().then((v) => {
+  document.getElementById('app-version').textContent = `버전 ${v}`; // 어떤 빌드가 실행 중인지 확인용
+}).catch(() => {});
+
 document.getElementById('settings-btn').addEventListener('click', openSettings);
 document.getElementById('settings-close').addEventListener('click', closeSettings);
 document.getElementById('settings-reset').addEventListener('click', () => {
@@ -2313,6 +2317,27 @@ const progressFill = document.getElementById('progress-fill');
 const pbElapsed = document.getElementById('pb-elapsed');
 const pbDuration = document.getElementById('pb-duration');
 let seekPreview = null; // 드래그 중에는 미리보기 값이 우선
+// 스크럽 커버: 재생바를 잡는 순간부터 이동 직후까지 플레이어를 덮어, 유튜브 임베드가 seekTo 순간
+// 잠깐 띄우는 제목줄·'동영상 더보기' 오버레이·일시정지 베젤이 보이지 않게 한다(교차 출처라 CSS 불가).
+const playerCover = document.getElementById('player-cover');
+const playerCoverArt = document.getElementById('player-cover-art');
+let coverTimer = null;
+
+function showPlayerCover() {
+  clearTimeout(coverTimer);
+  const art = lyricsPublishedState.coverUrl || '';
+  if (playerCoverArt.dataset.src !== art) {
+    playerCoverArt.dataset.src = art;
+    playerCoverArt.src = art;
+  }
+  playerCoverArt.hidden = !art;
+  playerCover.hidden = false;
+}
+
+function hidePlayerCover(delay) {
+  clearTimeout(coverTimer);
+  coverTimer = setTimeout(() => { playerCover.hidden = true; }, delay);
+}
 
 function fractionFromEvent(e) {
   const rect = progressTrack.getBoundingClientRect();
@@ -2334,7 +2359,8 @@ progressTrack.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || !lyricsPublishedState.duration) return;
   seekPreview = fractionFromEvent(e);
   document.body.classList.add('seeking');
-  progressTrack.setPointerCapture(e.pointerId);
+  try { progressTrack.setPointerCapture(e.pointerId); } catch {} // 캡처 실패가 나머지 처리를 막지 않도록
+  showPlayerCover();
   paintProgressBar();
 });
 progressTrack.addEventListener('pointermove', (e) => {
@@ -2350,6 +2376,7 @@ const endSeek = (e) => {
   try { progressTrack.releasePointerCapture(e.pointerId); } catch {}
   seekToFraction(fraction);
   paintProgressBar();
+  hidePlayerCover(1100); // 유튜브 오버레이가 사라질 때까지 잠깐 더 덮어 둔다
 };
 progressTrack.addEventListener('pointerup', endSeek);
 progressTrack.addEventListener('pointercancel', endSeek);
@@ -2371,9 +2398,15 @@ window.lyrics.onControl((action, value) => {
 function seekToFraction(fraction) {
   const f = Math.max(0, Math.min(1, Number(fraction) || 0));
   if (fallbackActive) {
+    // 워치페이지 폴링은 1초 주기라, 이동 결과가 돌아올 때까지 재생바가 옛 위치로 되돌아가 둔하게 느껴진다
+    // → 앱이 아는 재생시간으로 즉시 반영해 두고(낙관적), 다음 폴링이 실제 값으로 정정한다.
+    const known = lyricsPublishedState.duration;
+    if (known > 0) publishLyricsState({ progress: known * f });
     fallbackView.executeJavaScript(`(() => {
       const v = document.querySelector('video');
-      if (v && v.duration) v.currentTime = v.duration * ${f};
+      if (!v) return;
+      const d = v.duration || ${known / 1000};
+      if (d) v.currentTime = d * ${f};
     })()`).catch(() => {});
     return;
   }

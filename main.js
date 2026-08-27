@@ -1498,6 +1498,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('lyrics:settings:reset', () => updateLyricsSettings(DEFAULT_LYRICS_SETTINGS));
   ipcMain.handle('lyrics:data:get', () => lyricsData);
   ipcMain.handle('lyrics:shortcuts', () => lyricsShortcutStatus);
+  ipcMain.handle('app:version', () => app.getVersion());
   // 플로팅 창의 설정 버튼 → 메인 창을 앞으로 가져와 디자인 설정의 가사 창 섹션을 연다
   ipcMain.on('lyrics:settings:open', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;

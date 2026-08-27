@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('uiSettings', {
   save: (settings) => ipcRenderer.invoke('settings:save', settings),
 });
 
+contextBridge.exposeInMainWorld('appinfo', {
+  version: () => ipcRenderer.invoke('app:version'),
+});
+
 contextBridge.exposeInMainWorld('winctl', {
   setFullScreen: (flag) => ipcRenderer.send('window:set-fullscreen', flag),
   cursor: () => ipcRenderer.invoke('window:cursor'),
