@@ -136,6 +136,7 @@ const DEFAULT_LYRICS_SETTINGS = {
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   showStatus: true,
   alwaysOnTop: true,
+  clickThrough: false, // 잠금 모드: 창을 눌러도 아래 프로그램(게임 등)으로 클릭이 지나간다
 };
 const COVER_MODES = ['none', 'art', 'video'];
 
@@ -167,6 +168,7 @@ function normalizeLyricsSettings(value) {
     coverMode,
     showStatus: boolean('showStatus'),
     alwaysOnTop: boolean('alwaysOnTop'),
+    clickThrough: boolean('clickThrough'),
   };
 }
 
@@ -741,11 +743,19 @@ function updateLyricsSettings(value, persist = true) {
     const bounds = lyricsWindow.getBounds();
     lyricsWindow.setBounds({ ...bounds, width: lyricsSettings.width, height: lyricsSettings.height });
     lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, LYRICS_TOP_LEVEL);
+    applyLyricsClickThrough();
     sendLyricsToWindow();
     saveLyricsBounds();
   }
   sendLyricsSettingsToMain();
   return lyricsSettings;
+}
+
+// 잠금 모드: 창 전체를 마우스 히트 테스트에서 제외해 클릭·이동이 아래 창으로 그대로 전달된다.
+// (forward는 쓰지 않는다 — 마우스 이동까지 받으면 눌리지도 않는 버튼이 hover로 떠서 혼란스럽다)
+function applyLyricsClickThrough() {
+  if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
+  lyricsWindow.setIgnoreMouseEvents(!!lyricsSettings.clickThrough);
 }
 
 function setLyricsDragging(flag) {
@@ -788,6 +798,7 @@ function showLyricsWindow() {
     lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
     lyricsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics.html`);
   }
+  applyLyricsClickThrough();
   lyricsWindow.showInactive();
   sendLyricsToWindow();
 }

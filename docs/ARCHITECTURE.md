@@ -356,6 +356,14 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   `-webkit-app-region`이 OS로 넘겨 렌더러가 알 수 없으므로, main이 `BrowserWindow`의 `move` 이벤트로
   판단해 `lyrics:dragging`을 보낸다(상태가 바뀔 때만 — `move`는 초당 수십 번 온다. 멈춘 뒤 260ms,
   `moved` 뒤 120ms에 해제). 창 쪽은 `body.dragging`으로 `#lyrics-shell::after`(점선 테두리)를 띄운다.
+- **잠금(클릭 통과) 모드**: 게임처럼 마우스를 쓰는 프로그램 위에 띄울 때, 조준이 가사 창 위로 가면
+  포인터가 창에 걸려 게임 밖으로 나가는 문제가 있다. 설정의 "클릭 통과 (잠금)"을 켜면
+  `BrowserWindow.setIgnoreMouseEvents(true)`로 창 전체를 히트 테스트에서 빼 클릭·이동이 아래 창으로
+  그대로 전달된다. `{forward: true}`는 쓰지 않는다 — 마우스 이동까지 받으면 눌리지도 않는 버튼이
+  hover로 떠서 혼란스럽다. 창 쪽은 `body.locked`로 동작 버튼/볼륨 팝오버를 감춰 잠긴 상태임을 보여준다.
+  **잠금 중에는 창을 드래그하거나 누를 수 없으므로 해제는 메인 창의 디자인 설정에서 한다.**
+  검증(Windows, 실측): 잠금 켜기 전 창 중앙 좌표의 `WindowFromPoint`는 가사 창(`YouTube Music Lyrics`),
+  켠 뒤에는 그 아래 창(`Program Manager`)을 돌려준다 — 해제하면 다시 가사 창.
 - **불투명도 2종**: `backgroundOpacity`는 가사 줄 칩과 버튼 배경(`--lyrics-bg`), `uiOpacity`는 왼쪽 열 전체와
   상태 문구(`--ui-opacity`)에 적용된다 — 가사는 진하게 두고 앨범·재생바만 흐리게 하는 식의 조합이 가능하다.
 - **줄 묶음**: `parseLrc`는 같은 시각에 붙은 여러 줄(ALSong의 원문·발음·번역)을 한 항목으로 합쳐 `text`를

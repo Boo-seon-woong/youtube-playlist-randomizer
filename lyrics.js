@@ -4,7 +4,7 @@ let lyricsSettings = {
   width: 760, height: 240, backgroundOpacity: 94, uiOpacity: 100, fontSize: 16,
   showProgressBar: true, showPlaybackControls: true,
   showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true,
-  showTrackInfo: true, coverMode: 'art', showStatus: true, alwaysOnTop: true,
+  showTrackInfo: true, coverMode: 'art', showStatus: true, alwaysOnTop: true, clickThrough: false,
 };
 let receivedAt = performance.now();
 let panelMode = '';
@@ -56,6 +56,8 @@ function applyLyricsSettings(next) {
   if (volumeButton.hidden || playbackControls.hidden) closeVolumePop();
   document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo;
   statusEl.hidden = !lyricsSettings.showStatus;
+  // 잠금(클릭 통과) 중에는 눌리지 않는 버튼을 아예 감춰 눌러도 되는 것처럼 보이지 않게 한다
+  document.body.classList.toggle('locked', !!lyricsSettings.clickThrough);
   // 왼쪽 열: 사각형(앨범/영상)은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)
   const coverSize = Math.max(80, Math.min(220,
     lyricsSettings.height - 16 - (progressRow.hidden ? 0 : 22) - (playbackControls.hidden ? 0 : 34)));
