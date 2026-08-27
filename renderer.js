@@ -1206,7 +1206,10 @@ const lsRangeInputs = {
   uiOpacity: document.getElementById('ls-ui-opacity'),
   fontSize: document.getElementById('ls-font-size'),
 };
-const lsCoverMode = document.getElementById('ls-cover-mode');
+const lsSelects = {
+  coverMode: document.getElementById('ls-cover-mode'),
+  videoFit: document.getElementById('ls-video-fit'),
+};
 const lsToggleInputs = {
   showProgressBar: document.getElementById('ls-progress'),
   showPlaybackControls: document.getElementById('ls-playback'),
@@ -1227,7 +1230,7 @@ function paintLyricsSettings(next) {
   document.getElementById('ls-opacity-value').textContent = `${lyricsSettings.backgroundOpacity ?? ''}%`;
   document.getElementById('ls-ui-opacity-value').textContent = `${lyricsSettings.uiOpacity ?? ''}%`;
   document.getElementById('ls-font-size-value').textContent = `${lyricsSettings.fontSize ?? ''}px`;
-  lsCoverMode.value = lyricsSettings.coverMode || 'art';
+  for (const [key, sel] of Object.entries(lsSelects)) if (lyricsSettings[key]) sel.value = lyricsSettings[key];
   for (const [key, input] of Object.entries(lsToggleInputs)) input.checked = !!lyricsSettings[key];
 }
 
@@ -1249,7 +1252,9 @@ for (const [key, input] of Object.entries(lsRangeInputs)) {
 for (const [key, input] of Object.entries(lsToggleInputs)) {
   input.addEventListener('change', () => saveLyricsSettings({ [key]: input.checked }));
 }
-lsCoverMode.addEventListener('change', () => saveLyricsSettings({ coverMode: lsCoverMode.value }));
+for (const [key, sel] of Object.entries(lsSelects)) {
+  sel.addEventListener('change', () => saveLyricsSettings({ [key]: sel.value }));
+}
 document.getElementById('lyrics-settings-reset').addEventListener('click', () => {
   window.lyricsOverlay.resetSettings().then(paintLyricsSettings).catch(() => {});
 });

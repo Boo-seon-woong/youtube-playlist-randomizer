@@ -4,7 +4,7 @@ let lyricsSettings = {
   width: 760, height: 240, backgroundOpacity: 94, uiOpacity: 100, fontSize: 16,
   showProgressBar: true, showPlaybackControls: true,
   showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true,
-  showTrackInfo: true, coverMode: 'art', showStatus: true, alwaysOnTop: true, clickThrough: false,
+  showTrackInfo: true, coverMode: 'art', videoFit: 'cover', showStatus: true, alwaysOnTop: true, clickThrough: false,
 };
 let receivedAt = performance.now();
 let panelMode = '';
@@ -85,6 +85,8 @@ function applyLyricsSettings(next) {
   const showSquare = lyricsSettings.coverMode !== 'none';
   coverBox.hidden = !showSquare && !lyricsSettings.showTrackInfo;
   coverBox.classList.toggle('no-art', !showSquare);
+  // 영상 맞춤: cover면 정사각형을 세로 기준으로 가득 채우고 좌우가 잘린다 (iframe을 16:9로 넓혀 가운데 정렬)
+  document.body.classList.toggle('video-cover', lyricsSettings.videoFit !== 'contain');
   sideEl.hidden = coverBox.hidden && progressRow.hidden && playbackControls.hidden;
   ensureMiniVideo();
   render();

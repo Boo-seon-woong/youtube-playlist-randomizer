@@ -134,11 +134,13 @@ const DEFAULT_LYRICS_SETTINGS = {
   showVolumeButton: true,
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
+  videoFit: 'cover', // 영상 맞춤: 'cover'(상하 기준으로 채우고 좌우는 잘림) | 'contain'(전체가 보이도록)
   showStatus: true,
   alwaysOnTop: true,
   clickThrough: false, // 잠금 모드: 창을 눌러도 아래 프로그램(게임 등)으로 클릭이 지나간다
 };
 const COVER_MODES = ['none', 'art', 'video'];
+const VIDEO_FITS = ['cover', 'contain'];
 
 let lyricsSettings = { ...DEFAULT_LYRICS_SETTINGS };
 
@@ -166,6 +168,7 @@ function normalizeLyricsSettings(value) {
     showVolumeButton: boolean('showVolumeButton'),
     showTrackInfo: boolean('showTrackInfo'),
     coverMode,
+    videoFit: VIDEO_FITS.includes(source.videoFit) ? source.videoFit : DEFAULT_LYRICS_SETTINGS.videoFit,
     showStatus: boolean('showStatus'),
     alwaysOnTop: boolean('alwaysOnTop'),
     clickThrough: boolean('clickThrough'),
