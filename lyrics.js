@@ -58,7 +58,7 @@ function applyLyricsSettings(next) {
   const wasLocked = lyricsSettings.clickThrough;
   lyricsSettings = { ...lyricsSettings, ...(next || {}) };
   if (lockStateKnown && lyricsSettings.clickThrough !== wasLocked) {
-    flashMessage(lyricsSettings.clickThrough ? '🔒 클릭 통과 ON' : '🔓 클릭 통과 OFF');
+    flashMessage(lyricsSettings.clickThrough ? '🔒 클릭 통과 ON · 게임으로 복귀' : '🔓 클릭 통과 OFF · 가사 창 조작');
   }
   lockStateKnown = true;
   const opacity = Math.max(0, Math.min(100, Number(lyricsSettings.backgroundOpacity) || 0)) / 100;

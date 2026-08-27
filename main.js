@@ -763,12 +763,29 @@ function toggleLyricsWindow() {
   else lyricsWindow.hide();
 }
 
-// 전역 단축키: 게임/작업 중인 프로그램에서 포커스를 뺏지 않고 가사 창만 조작한다.
+// 전역 단축키(Alt+1 / Alt+2): 창 전환 없이 가사 창을 조작한다.
 // globalShortcut은 OS 핫키(RegisterHotKey)라 우리 창을 활성화하지 않으며, showInactive/hide와
 // setIgnoreMouseEvents 모두 포커스를 옮기지 않는다. 다른 앱이 이미 쓰는 조합이면 등록에 실패한다.
+// Alt+1(잠금 토글)은 조작 주체까지 함께 옮긴다. 전체화면 게임은 마우스 커서를 잡고 있어서,
+// 잠금만 풀어도 포커스가 게임에 있는 한 커서가 보이지 않아 가사 창을 누를 수 없기 때문이다.
+//  - 잠금 해제 → 가사 창을 focus (게임이 커서를 놓아준다)
+//  - 다시 잠금 → blur 해서 원래 쓰던 창(게임)으로 돌려준다
+// Alt+2(창 표시/숨김)는 요청대로 포커스를 건드리지 않는다(showInactive).
+function toggleLyricsClickThrough() {
+  const next = !lyricsSettings.clickThrough;
+  updateLyricsSettings({ clickThrough: next });
+  if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
+  if (next) {
+    lyricsWindow.blur();
+    return;
+  }
+  if (!lyricsWindow.isVisible()) lyricsWindow.show();
+  lyricsWindow.focus();
+}
+
 const LYRICS_SHORTCUTS = [
-  { accelerator: 'Alt+Y', label: '클릭 통과 켜기/끄기', run: () => updateLyricsSettings({ clickThrough: !lyricsSettings.clickThrough }) },
-  { accelerator: 'Alt+U', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
+  { accelerator: 'Alt+1', label: '클릭 통과 켜기/끄기(조작 주체 전환)', run: toggleLyricsClickThrough },
+  { accelerator: 'Alt+2', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
 ];
 
 let lyricsShortcutStatus = []; // 설정 패널이 등록 성공 여부를 보여준다 (실패는 조용히 넘기면 안 된다)
