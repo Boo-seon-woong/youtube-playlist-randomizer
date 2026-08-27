@@ -573,11 +573,19 @@ input {
   background: #000;
 }
 
+/* 중앙 플레이어는 마우스 상호작용을 막는다 — 재생 제어는 하단 바(전용 재생바·버튼)로만.
+   유튜브 자체 UI(일시정지·메뉴·'YouTube에서 보기' 등)를 눌러 상태가 앱과 어긋나는 것을 막는다.
+   광고 스킵 클릭은 webContents.sendInputEvent로 웹뷰에 직접 넣으므로 이 규칙과 무관하게 동작한다. */
 #player-wrap iframe {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  pointer-events: none;
+}
+
+#fallback-view {
+  pointer-events: none;
 }
 
 #player-placeholder {
@@ -1229,9 +1237,74 @@ input {
 
 #controls-center {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+#transport {
+  display: flex;
   align-items: center;
   gap: 10px;
 }
+
+/* 앱 전용 재생바 — 중앙 플레이어는 마우스 상호작용을 막았으므로 재생 지점 이동은 여기서만 한다 */
+#progress-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: clamp(280px, 34vw, 560px);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+#progress-track {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  padding: 5.5px 0;
+  background-clip: content-box;
+  background-color: var(--panel-active);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+#progress-fill {
+  position: relative;
+  width: 0;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--text-sub);
+}
+
+#progress-track:hover #progress-fill,
+body.seeking #progress-fill {
+  background: var(--accent);
+}
+
+/* 손잡이: 올리거나 끄는 동안에만 보인다 */
+#progress-fill::after {
+  content: '';
+  position: absolute;
+  right: -5px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text);
+  transform: translateY(-50%) scale(0);
+  transition: transform 0.12s ease;
+}
+
+#progress-track:hover #progress-fill::after,
+body.seeking #progress-fill::after {
+  transform: translateY(-50%) scale(1);
+}
+
+#play-btn .icon-play { display: none; }
+#play-btn.paused .icon-play { display: block; }
+#play-btn.paused .icon-pause { display: none; }
 
 #controls-right {
   display: flex;

@@ -104,7 +104,10 @@ function shuffleArray(array) {
 window.onYouTubeIframeAPIReady = () => {
   player = new YT.Player('player', {
     // fs=0: 유튜브 자체 전체화면 버튼 제거 — 전체화면 진입은 앱의 몰입 모드로 일원화
-    playerVars: { rel: 0, fs: 0 },
+    // controls=0: 유튜브 컨트롤 바·상단 제목줄('More videos'·YouTube 로고 포함)을 아예 띄우지 않는다.
+    //   앱 전용 재생바로 재생 지점을 옮길 때마다 유튜브 UI가 나타나는 것을 막기 위함이며,
+    //   중앙 플레이어는 마우스 상호작용도 차단해 두었으므로 그 컨트롤은 어차피 쓸 수 없다.
+    playerVars: { rel: 0, fs: 0, controls: 0, disablekb: 1, iv_load_policy: 3, modestbranding: 1 },
     events: {
       onReady: () => {
         playerReady = true;
@@ -357,9 +360,31 @@ fallbackView.addEventListener('dom-ready', () => {
     if (!window.__adSkipInstalled) {
       window.__adSkipInstalled = true;
       window.__adActive = false;
+      // 광고 시작 순간을 100ms 인터벌이 아니라 클래스 변화로 즉시 잡아 그 자리에서 음소거한다
+      // (인터벌만 쓰면 최대 100ms 동안 광고 소리가 새어 나온다). ad-interrupting이 ad-showing보다 먼저 붙는다.
+      window.__muteIfAd = () => {
+        const moviePlayer = document.querySelector('#movie_player');
+        const v = document.querySelector('video');
+        if (!moviePlayer || !v) return;
+        if (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting')) {
+          window.__adActive = true;
+          if (!v.muted) v.muted = true;
+        }
+      };
+      // #movie_player는 dom-ready 시점에 아직 없을 수 있으므로 인터벌에서 생길 때 한 번 붙인다
+      window.__installAdObserver = () => {
+        if (window.__adObserver) return;
+        const moviePlayer = document.querySelector('#movie_player');
+        if (!moviePlayer) return;
+        window.__adObserver = new MutationObserver(window.__muteIfAd);
+        window.__adObserver.observe(moviePlayer, { attributes: true, attributeFilter: ['class'] });
+        window.__muteIfAd();
+      };
+      window.__installAdObserver();
       setInterval(() => {
+        window.__installAdObserver();
         const video = document.querySelector('video');
-        const adShowing = !!document.querySelector('.ad-showing');
+        const adShowing = !!document.querySelector('.ad-showing, .ad-interrupting');
         if (adShowing && video) {
           window.__adActive = true;
           if (!video.muted) video.muted = true;
@@ -2276,6 +2301,60 @@ document.getElementById('play-now-btn').addEventListener('click', () => {
 
 document.getElementById('prev-btn').addEventListener('click', prevTrack);
 document.getElementById('next-btn').addEventListener('click', nextTrack);
+document.getElementById('play-btn').addEventListener('click', togglePlayback);
+
+// ── 하단 전용 재생바 ──
+// 중앙 플레이어는 마우스 상호작용을 막아 두었으므로(유튜브 자체 UI로 상태가 어긋나는 것 방지)
+// 재생 지점 이동은 이 바에서만 한다. 진행 위치는 가사 창으로 보내는 상태(lyricsPublishedState)를
+// 그대로 쓰고, 폴링 사이는 lyricsProgressNow()로 보간해 부드럽게 채운다.
+const playBtn = document.getElementById('play-btn');
+const progressTrack = document.getElementById('progress-track');
+const progressFill = document.getElementById('progress-fill');
+const pbElapsed = document.getElementById('pb-elapsed');
+const pbDuration = document.getElementById('pb-duration');
+let seekPreview = null; // 드래그 중에는 미리보기 값이 우선
+
+function fractionFromEvent(e) {
+  const rect = progressTrack.getBoundingClientRect();
+  return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+}
+
+function paintProgressBar() {
+  const duration = lyricsPublishedState.duration;
+  const progress = seekPreview != null ? seekPreview * duration : lyricsProgressNow();
+  progressFill.style.width = duration > 0 ? `${Math.min(100, Math.max(0, progress / duration * 100))}%` : '0%';
+  pbElapsed.textContent = formatClock(progress);
+  pbDuration.textContent = formatClock(duration);
+  const playing = lyricsPublishedState.status === 'playing';
+  playBtn.classList.toggle('paused', !playing);
+  playBtn.title = playing ? '일시정지' : '재생';
+}
+
+progressTrack.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || !lyricsPublishedState.duration) return;
+  seekPreview = fractionFromEvent(e);
+  document.body.classList.add('seeking');
+  progressTrack.setPointerCapture(e.pointerId);
+  paintProgressBar();
+});
+progressTrack.addEventListener('pointermove', (e) => {
+  if (seekPreview == null) return;
+  seekPreview = fractionFromEvent(e);
+  paintProgressBar();
+});
+const endSeek = (e) => {
+  if (seekPreview == null) return;
+  const fraction = seekPreview;
+  seekPreview = null;
+  document.body.classList.remove('seeking');
+  try { progressTrack.releasePointerCapture(e.pointerId); } catch {}
+  seekToFraction(fraction);
+  paintProgressBar();
+};
+progressTrack.addEventListener('pointerup', endSeek);
+progressTrack.addEventListener('pointercancel', endSeek);
+setInterval(paintProgressBar, 250);
+paintProgressBar();
 document.getElementById('shuffle-btn').addEventListener('click', reshuffleQueue);
 document.getElementById('lyrics-btn').addEventListener('click', () => window.lyricsctl.toggle());
 window.lyrics.onControl((action, value) => {

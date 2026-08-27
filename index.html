@@ -140,15 +140,26 @@
       </div>
     </div>
     <div id="controls-center">
-      <button id="shuffle-btn" class="ctl-btn" title="현재 재생목록 셔플">
-        <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
-      </button>
-      <button id="prev-btn" class="ctl-btn" title="이전 곡">
-        <svg viewBox="0 0 24 24"><path d="M19 20L9 12l10-8v16z"/><path d="M5 19V5"/></svg>
-      </button>
-      <button id="next-btn" class="ctl-btn" title="다음 곡">
-        <svg viewBox="0 0 24 24"><path d="M5 4l10 8-10 8V4z"/><path d="M19 5v14"/></svg>
-      </button>
+      <div id="transport">
+        <button id="shuffle-btn" class="ctl-btn" title="현재 재생목록 셔플">
+          <svg viewBox="0 0 24 24"><path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/></svg>
+        </button>
+        <button id="prev-btn" class="ctl-btn" title="이전 곡">
+          <svg viewBox="0 0 24 24"><path d="M19 20L9 12l10-8v16z"/><path d="M5 19V5"/></svg>
+        </button>
+        <button id="play-btn" class="ctl-btn" title="재생/일시정지">
+          <svg class="icon-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>
+          <svg class="icon-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></svg>
+        </button>
+        <button id="next-btn" class="ctl-btn" title="다음 곡">
+          <svg viewBox="0 0 24 24"><path d="M5 4l10 8-10 8V4z"/><path d="M19 5v14"/></svg>
+        </button>
+      </div>
+      <div id="progress-row">
+        <span id="pb-elapsed">0:00</span>
+        <div id="progress-track" title="클릭하거나 끌어서 재생 지점 이동"><div id="progress-fill"></div></div>
+        <span id="pb-duration">0:00</span>
+      </div>
     </div>
     <div id="controls-right">
       <button id="recs-btn" class="ctl-btn" title="추천 곡 — 재생 중인 곡 기준 추천을 하단에 표시">
