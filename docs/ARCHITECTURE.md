@@ -278,10 +278,12 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   출처라 손댈 수 없지만 **메인 프로세스는 `webFrameMain`으로 그 프레임 안에서 스크립트를 실행할 수 있다**.
   주입 내용은 두 겹이다(`hideEmbedChrome`):
   1. 알려진 `.ytp-*` 클래스(제목줄·pause overlay·bezel·워터마크 등)를 `display:none`으로 죽이는 스타일
-  2. **클래스 이름에 의존하지 않는 처리** — `#movie_player`의 직계 자식 중 `<video>`를 품지 않은 요소를
-     전부 `display:none`으로 만들고(자막·스피너·오류 표시는 제외), `MutationObserver`로 유튜브가 다시
-     만들어 붙이거나 style을 되돌려도 즉시 다시 숨긴다. 클래스명이 바뀌어도 통한다.
-  주입 시점: 프레임 로드(`did-frame-finish-load`) + 곡이 바뀔 때마다(`embed:refresh-chrome` IPC).
+  2. **클래스 이름·구조에 의존하지 않는 처리** — `<video>`로 이어지는 조상 체인만 남기고 그 각 단계의
+     형제 요소를 전부 `display:none`으로 만든다(자막·스피너·오류 표시, head/script류는 예외).
+     결과적으로 영상 말고 그려지는 것이 남지 않으며, 크롬이 `#movie_player` 밖에 있어도 잡힌다.
+     `MutationObserver`가 유튜브의 재생성·style 되돌림을 즉시 다시 숨긴다.
+  주입 대상은 `youtube.com`/`youtube-nocookie.com` 프레임 전부(중첩 프레임 대비), 시점은 프레임 로드
+  (`did-frame-finish-load`) + 곡이 바뀔 때마다(`embed:refresh-chrome` IPC).
   검증: 플레이어 자식 상태가 `html5-video-container=block`(재생 중)·`ytp-unmute=none`·
   `ytp-player-content=none`·`ytp-caption-window-container=block`, 시킹 중 표시된 오버레이 0건.
   (앨범 아트로 플레이어를 덮는 방식은 사용자가 거부 — 되돌렸다.)

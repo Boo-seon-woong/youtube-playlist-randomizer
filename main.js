@@ -1435,7 +1435,7 @@ function refreshEmbedChrome(wc) {
 }
 
 function hideEmbedChrome(frame, attempt = 0) {
-  if (!frame || typeof frame.url !== 'string' || !frame.url.includes('youtube.com/embed')) return;
+  if (!frame || typeof frame.url !== 'string' || !/youtube(-nocookie)?\.com\//.test(frame.url)) return;
   frame.executeJavaScript(`(() => {
     // ① 알려진 클래스는 CSS로 차단
     let s = document.getElementById('__ymp_no_chrome');
@@ -1446,16 +1446,23 @@ function hideEmbedChrome(frame, attempt = 0) {
     }
     s.textContent = ${JSON.stringify(EMBED_CHROME_CSS)};
 
-    // ② 클래스 이름이 바뀌어도 통하도록: 플레이어의 직계 자식 중 '영상을 담고 있지 않은' 것은 전부 숨긴다.
-    //    자막·로딩·오류 표시는 남긴다. 유튜브가 나중에 다시 만들어 붙여도 옵저버가 곧바로 숨긴다.
+    // ② 클래스 이름·구조가 바뀌어도 통하도록: <video>로 이어지는 계보(조상 체인)만 남기고,
+    //    그 각 단계의 형제 요소를 전부 숨긴다 = 영상 말고 화면에 그려지는 것이 남지 않는다.
+    //    (자막·로딩·오류 표시와 head/script류는 예외.) 유튜브가 나중에 만들어 붙여도 옵저버가 즉시 숨긴다.
     const hideOverlays = () => {
-      const p = document.querySelector('#movie_player');
-      if (!p) return;
-      for (const el of Array.from(p.children)) {
-        if (el.tagName === 'VIDEO' || el.querySelector('video')) continue;
-        const cls = String(el.className || '');
-        if (/caption|spinner|error|loading/i.test(cls)) continue;
-        if (el.style.display !== 'none') el.style.setProperty('display', 'none', 'important');
+      const v = document.querySelector('video');
+      if (!v) return;
+      const keep = new Set();
+      for (let n = v; n; n = n.parentElement) keep.add(n);
+      for (const node of keep) {
+        for (const child of Array.from(node.children)) {
+          if (keep.has(child)) continue;
+          const tag = child.tagName;
+          if (tag === 'HEAD' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'LINK' || tag === 'TEMPLATE') continue;
+          const cls = String(child.className || '');
+          if (/caption|spinner|error|loading/i.test(cls)) continue;
+          if (child.style.display !== 'none') child.style.setProperty('display', 'none', 'important');
+        }
       }
     };
     hideOverlays();
