@@ -343,6 +343,10 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   근사치)을 차례로 비교해 선택한다. 따라서 ALSong 검색 결과의 첫 항목을 무조건 사용하지 않는다.
 - ALSong에 한글 가사가 없을 때만 LRCLIB의 syncedLyrics를 원어 fallback으로 조회하며, 창 하단에
   `한글 번역 없음 · 원어 가사`를 표시한다.
+- **항상 위 표시(Windows)**: `setAlwaysOnTop(true)`의 기본 level `'floating'`은 Windows에서 창을 작업 표시줄
+  뒤에 두려고 z-order를 재배치하며, 이때 TOPMOST가 풀려 `isAlwaysOnTop()`이 false가 되고 창이 메인 창 뒤로
+  숨는다(Electron 41 실측 — "플로팅 창이 아예 안 뜨는" 증상). 그래서 win32에서는 `'screen-saver'` level로
+  호출한다(`LYRICS_TOP_LEVEL`). 표시·숨김·설정 토글 후에도 최상위가 유지됨을 확인.
 - 검색 버튼으로 ALSong/LRCLIB 결과를 직접 선택할 수 있고, 현재 창의 위치는
   `%APPDATA%/YouTube Music Player/lyrics-window.json`에 저장된다.
 - 창 설정 UI는 메인 창 **디자인 설정 패널을 아래로 스크롤하면 나오는 "플로팅 가사 창" 섹션**이다

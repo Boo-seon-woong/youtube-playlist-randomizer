@@ -586,6 +586,10 @@ async function searchAllLyrics(title, artist) {
 
 let lyricsWindow = null;
 let lyricsServerPort = null;
+// Windows에서 setAlwaysOnTop의 기본 level('floating')은 창을 작업 표시줄 뒤에 두려고 z-order를 다시
+// 끼워 넣는데, 이때 TOPMOST가 풀려 플로팅 창이 메인 창 뒤로 숨는다(Electron 41 실측 — isAlwaysOnTop()=false).
+// 'screen-saver' level은 그 경로를 타지 않아 최상위가 유지된다. macOS/Linux에서는 level이 z-order에 영향 없음.
+const LYRICS_TOP_LEVEL = process.platform === 'win32' ? 'screen-saver' : 'floating';
 let lyricsState = { id: '', title: '', artist: '', status: 'idle', progress: 0, duration: 0, coverUrl: '' };
 let lyricsData = null;
 let lyricsKey = '';
@@ -693,7 +697,7 @@ function updateLyricsSettings(value, persist = true) {
   if (lyricsWindow && !lyricsWindow.isDestroyed()) {
     const bounds = lyricsWindow.getBounds();
     lyricsWindow.setBounds({ ...bounds, width: lyricsSettings.width, height: lyricsSettings.height });
-    lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, 'floating');
+    lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, LYRICS_TOP_LEVEL);
     sendLyricsToWindow();
     saveLyricsBounds();
   }
@@ -717,7 +721,7 @@ function showLyricsWindow() {
       show: false,
       webPreferences: { preload: path.join(__dirname, 'preload.js') },
     });
-    lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, 'floating');
+    lyricsWindow.setAlwaysOnTop(lyricsSettings.alwaysOnTop, LYRICS_TOP_LEVEL);
     lyricsWindow.on('moved', saveLyricsBounds);
     lyricsWindow.on('closed', () => { lyricsWindow = null; });
     lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
