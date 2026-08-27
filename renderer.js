@@ -1452,7 +1452,7 @@ minimizeBtn.addEventListener('click', () => setCenterMin(!layout.centerMin));
 // SyntaxError가 나므로 상태 변수는 accountState로 둔다.
 let accountState = { loggedIn: false, name: '', photo: '' };
 let accountPlaylists = [];
-let accountOpen = true;
+let accountOpen = false; // 앱을 켜거나 로그인한 직후에는 계정 폴더를 접어 둔다 (로컬 목록이 먼저 보이게)
 let accountLoading = false;
 
 const loginBtn = document.getElementById('login-btn');
