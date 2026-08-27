@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('uiSettings', {
 
 contextBridge.exposeInMainWorld('appinfo', {
   version: () => ipcRenderer.invoke('app:version'),
+  refreshEmbedChrome: () => ipcRenderer.send('embed:refresh-chrome'),
 });
 
 contextBridge.exposeInMainWorld('winctl', {

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen, globalShortcut, webFrameMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -1401,6 +1401,49 @@ async function fetchPlaylistMeta(listId) {
   return { firstVideoId: out.items.length > 0 ? out.items[0].id : null, count };
 }
 
+// ── 임베드 플레이어(유튜브 iframe) 자체 UI 제거 ──
+// controls:0으로도 seekTo 순간 제목줄·'동영상 더보기' 오버레이·공유/나중에 볼 동영상 버튼·베젤이
+// 수백 ms 떠오른다. 렌더러에서는 교차 출처라 손댈 수 없지만, 메인 프로세스는 webFrameMain으로
+// 그 프레임 안에서 직접 스크립트를 실행할 수 있어 CSS를 심어 아예 그리지 않게 만든다.
+const EMBED_CHROME_CSS = `
+  .ytp-chrome-top, .ytp-chrome-top-buttons, .ytp-chrome-bottom, .ytp-chrome-controls,
+  .ytp-title, .ytp-title-channel, .ytp-title-text, .ytp-show-cards-title,
+  .ytp-gradient-top, .ytp-gradient-bottom,
+  .ytp-pause-overlay, .ytp-pause-overlay-container, .ytp-scroll-min,
+  .ytp-suggestion-set, .ytp-suggested-action, .ytp-suggested-action-badge,
+  .ytp-bezel, .ytp-bezel-text-wrapper,
+  .ytp-watermark, .ytp-impression-link,
+  .ytp-ce-element, .ytp-endscreen-content, .ytp-cards-teaser, .ytp-cards-button,
+  .ytp-share-button, .ytp-watch-later-button, .ytp-large-play-button,
+  .ytp-copylink-button, .ytp-overflow-button, .ytp-info-panel-preview {
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+`;
+
+function refreshEmbedChrome(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  try {
+    for (const frame of wc.mainFrame.framesInSubtree) hideEmbedChrome(frame);
+  } catch {}
+}
+
+function hideEmbedChrome(frame) {
+  if (!frame || typeof frame.url !== 'string' || !frame.url.includes('youtube.com/embed')) return;
+  frame.executeJavaScript(`(() => {
+    let s = document.getElementById('__ymp_no_chrome');
+    if (!s) {
+      s = document.createElement('style');
+      s.id = '__ymp_no_chrome';
+      (document.head || document.documentElement).appendChild(s);
+    }
+    s.textContent = ${JSON.stringify(EMBED_CHROME_CSS)};
+    return true;
+  })()`).catch(() => {});
+}
+
 let mainWindow = null;
 
 function createWindow(port) {
@@ -1416,6 +1459,11 @@ function createWindow(port) {
       webviewTag: true, // 임베드 차단 곡의 워치페이지 폴백 재생용
       backgroundThrottling: false, // 최소화 중에도 곡 종료 감지·진행 위치 전달이 계속 돌아야 한다
     },
+  });
+  // 임베드 iframe이 뜨거나 다시 로드될 때마다 유튜브 자체 UI를 숨기는 CSS를 심는다
+  win.webContents.on('did-frame-finish-load', (_event, isMainFrame, frameProcessId, frameRoutingId) => {
+    if (isMainFrame) return;
+    try { hideEmbedChrome(webFrameMain.fromId(frameProcessId, frameRoutingId)); } catch {}
   });
   win.loadURL(`http://127.0.0.1:${port}/`);
   win.on('closed', () => {
@@ -1499,6 +1547,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('lyrics:data:get', () => lyricsData);
   ipcMain.handle('lyrics:shortcuts', () => lyricsShortcutStatus);
   ipcMain.handle('app:version', () => app.getVersion());
+  // 곡이 바뀔 때마다(임베드 프레임이 새로 준비될 수 있으므로) 유튜브 UI 숨김 CSS를 다시 심는다
+  ipcMain.on('embed:refresh-chrome', (event) => refreshEmbedChrome(event.sender));
   // 플로팅 창의 설정 버튼 → 메인 창을 앞으로 가져와 디자인 설정의 가사 창 섹션을 연다
   ipcMain.on('lyrics:settings:open', () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;

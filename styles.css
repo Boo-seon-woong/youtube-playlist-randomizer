@@ -626,30 +626,6 @@ input {
   cursor: default;
 }
 
-/* 스크럽 커버: 재생바를 잡고 있는 동안과 이동 직후 잠깐 플레이어를 덮는다.
-   유튜브 임베드는 seekTo() 순간 제목줄·일시정지 오버레이('동영상 더보기')·베젤을 찰나 동안 띄우는데,
-   교차 출처 iframe이라 CSS로 지울 수 없다(playerVars의 controls:0으로도 남는다) — 그래서 가린다. */
-#player-cover {
-  position: absolute;
-  inset: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #000;
-}
-
-#player-cover img {
-  max-width: 44%;
-  max-height: 60%;
-  border-radius: 10px;
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
-}
-
-#player-cover img[hidden] {
-  display: none;
-}
-
 /* ── 재생목록 곡 구성: 플레이어 위 오버레이 — 사이드바 클릭 시 곡 목록만 보여주고 재생은 버튼으로 ── */
 
 #browse-panel {

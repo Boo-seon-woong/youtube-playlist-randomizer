@@ -601,6 +601,8 @@ function captureQueue(token, shuffle, retries) {
 let pendingQueuePlay = false; // 플레이어 준비 전에 검색 결과 등에서 들어온 곡 단위 재생 요청
 
 function playCurrent() {
+  // 임베드 프레임에 유튜브 자체 UI 숨김 CSS를 다시 심는다 (프레임이 새로 준비됐을 수 있다)
+  try { window.appinfo.refreshEmbedChrome(); } catch {}
   if (queueIndex < 0 || queueIndex >= queue.length) return;
   if (!playerReady) {
     pendingQueuePlay = true;
@@ -2317,28 +2319,6 @@ const progressFill = document.getElementById('progress-fill');
 const pbElapsed = document.getElementById('pb-elapsed');
 const pbDuration = document.getElementById('pb-duration');
 let seekPreview = null; // 드래그 중에는 미리보기 값이 우선
-// 스크럽 커버: 재생바를 잡는 순간부터 이동 직후까지 플레이어를 덮어, 유튜브 임베드가 seekTo 순간
-// 잠깐 띄우는 제목줄·'동영상 더보기' 오버레이·일시정지 베젤이 보이지 않게 한다(교차 출처라 CSS 불가).
-const playerCover = document.getElementById('player-cover');
-const playerCoverArt = document.getElementById('player-cover-art');
-let coverTimer = null;
-
-function showPlayerCover() {
-  clearTimeout(coverTimer);
-  const art = lyricsPublishedState.coverUrl || '';
-  if (playerCoverArt.dataset.src !== art) {
-    playerCoverArt.dataset.src = art;
-    playerCoverArt.src = art;
-  }
-  playerCoverArt.hidden = !art;
-  playerCover.hidden = false;
-}
-
-function hidePlayerCover(delay) {
-  clearTimeout(coverTimer);
-  coverTimer = setTimeout(() => { playerCover.hidden = true; }, delay);
-}
-
 function fractionFromEvent(e) {
   const rect = progressTrack.getBoundingClientRect();
   return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
@@ -2360,7 +2340,6 @@ progressTrack.addEventListener('pointerdown', (e) => {
   seekPreview = fractionFromEvent(e);
   document.body.classList.add('seeking');
   try { progressTrack.setPointerCapture(e.pointerId); } catch {} // 캡처 실패가 나머지 처리를 막지 않도록
-  showPlayerCover();
   paintProgressBar();
 });
 progressTrack.addEventListener('pointermove', (e) => {
@@ -2376,7 +2355,6 @@ const endSeek = (e) => {
   try { progressTrack.releasePointerCapture(e.pointerId); } catch {}
   seekToFraction(fraction);
   paintProgressBar();
-  hidePlayerCover(1100); // 유튜브 오버레이가 사라질 때까지 잠깐 더 덮어 둔다
 };
 progressTrack.addEventListener('pointerup', endSeek);
 progressTrack.addEventListener('pointercancel', endSeek);
