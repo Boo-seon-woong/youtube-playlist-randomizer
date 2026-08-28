@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('winctl', {
 contextBridge.exposeInMainWorld('lyrics', {
   update: (state) => ipcRenderer.send('lyrics:update', state),
   getData: () => ipcRenderer.invoke('lyrics:data:get'),
+  setTheme: (theme) => ipcRenderer.send('app:theme', theme),
   onControl: (callback) => {
     const handler = (_event, action, value) => callback(action, value);
     ipcRenderer.on('lyrics:control', handler);
@@ -57,6 +58,8 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   openSettings: () => ipcRenderer.send('lyrics:settings:open'),
   closeSettings: () => ipcRenderer.send('lyrics:settings:close'),
   setHit: (flag) => ipcRenderer.send('lyrics:hit', flag),
+  drag: (flag) => ipcRenderer.send('lyrics:drag', flag),
+  onTheme: (callback) => ipcRenderer.on('lyrics:theme', (_event, theme) => callback(theme)),
   getSettings: () => ipcRenderer.invoke('lyrics:settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('lyrics:settings:save', settings),
   resetSettings: () => ipcRenderer.invoke('lyrics:settings:reset'),

@@ -225,8 +225,10 @@ function syncMiniVideo() {
 }
 
 function render() {
-  title.textContent = playback.title || '';
-  artist.textContent = playback.artist || '';
+  // 가사를 찾았으면 유튜브 제목 대신 가사 DB의 곡명·아티스트를 보여준다
+  const matched = lyricData && !lyricData.unavailable && lyricData.title;
+  title.textContent = matched ? lyricData.title : (playback.title || '');
+  artist.textContent = matched ? (lyricData.artist || playback.artist || '') : (playback.artist || '');
   if (cover.dataset.src !== (playback.coverUrl || '')) {
     cover.dataset.src = playback.coverUrl || '';
     cover.src = playback.coverUrl || '';
@@ -381,6 +383,23 @@ previousButton.addEventListener('click', () => window.lyricsOverlay.control('pre
 pauseButton.addEventListener('click', () => window.lyricsOverlay.control('toggle-play'));
 nextButton.addEventListener('click', () => window.lyricsOverlay.control('next'));
 searchForm.addEventListener('submit', searchLyrics);
+
+// 창 이동: 앨범/영상 박스를 누르는 동안 main이 커서를 따라 창을 옮긴다 (-webkit-app-region은 히트박스 모드와 충돌)
+coverBox.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  try { coverBox.setPointerCapture(e.pointerId); } catch {}
+  window.lyricsOverlay.drag(true);
+});
+const endDrag = () => window.lyricsOverlay.drag(false);
+coverBox.addEventListener('pointerup', endDrag);
+coverBox.addEventListener('pointercancel', endDrag);
+window.addEventListener('blur', endDrag);
+
+// 3) 메인 앱 테마 색 적용 (재생바·볼륨 슬라이더·컨트롤 hover)
+window.lyricsOverlay.onTheme((theme) => {
+  if (theme && theme.accent) document.documentElement.style.setProperty('--accent', theme.accent);
+});
 
 // 마우스 히트박스: 상호작용 요소(.hit) 위에 커서가 있을 때만 창이 마우스를 받도록 main에 알린다.
 // 창은 평소 forward 모드로 마우스를 무시하므로 mouseenter/leave는 그대로 들어온다.

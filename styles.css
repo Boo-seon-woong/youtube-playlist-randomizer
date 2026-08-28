@@ -1834,43 +1834,6 @@ body.seeking #progress-fill::after {
   color: rgba(255, 255, 255, 0.9);
 }
 
-/* 오버레이 위 도구 버튼(가사 검색·다시 찾기) — 오버레이는 클릭을 통과시키므로 이 버튼만 받는다 */
-#lyrics-overlay-tools {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 3;
-  display: flex;
-  gap: 6px;
-  pointer-events: auto;
-  opacity: 0.55;
-  transition: opacity 0.15s;
-}
-
-#lyrics-overlay-tools:hover { opacity: 1; }
-
-#lyrics-overlay-tools button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 11px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
-  background: rgba(18, 18, 18, 0.75);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-}
-
-#lyrics-overlay-tools button:hover { background: rgba(40, 40, 40, 0.9); }
-#lyrics-overlay-tools svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-#lo-retry { padding: 0 9px; }
-
-body.immersive #lyrics-overlay-tools { top: 14px; left: 14px; }
-
 #lyrics-overlay-msg {
   position: absolute;
   right: 5%;

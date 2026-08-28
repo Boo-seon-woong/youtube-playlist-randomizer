@@ -1176,6 +1176,7 @@ function applyTheme(t) {
   root.setProperty('--bg-base', theme.base);
   root.setProperty('--panel', theme.panel);
   syncSettingsUI();
+  try { window.lyrics.setTheme(theme); } catch {} // 가사 창·설정 팝업도 같은 색을 쓴다
 }
 
 // 가사 보기(영상 위 가사)의 글꼴·크기 — settings.json의 lyricsView에 저장
@@ -1188,25 +1189,22 @@ const LYRIC_FONT_STACKS = {
   'gowun-dodum': '"Gowun Dodum", "Pretendard", sans-serif',
   'ibm-plex': '"IBM Plex Sans KR", "Segoe UI", sans-serif',
 };
-const DEFAULT_LYRICS_VIEW = { font: 'default', scale: 100 };
+const DEFAULT_LYRICS_VIEW = { scale: 100 };
 let lyricsView = { ...DEFAULT_LYRICS_VIEW };
-const lvFont = document.getElementById('lv-font');
 const lvScale = document.getElementById('lv-scale');
 
 function applyLyricsView(next) {
-  lyricsView = {
-    font: LYRIC_FONT_STACKS[next && next.font] ? next.font : 'default',
-    scale: Math.max(60, Math.min(180, Number(next && next.scale) || 100)),
-  };
-  const root = document.documentElement.style;
-  root.setProperty('--lv-font', LYRIC_FONT_STACKS[lyricsView.font]);
-  root.setProperty('--lv-scale', String(lyricsView.scale / 100));
-  lvFont.value = lyricsView.font;
+  lyricsView = { scale: Math.max(60, Math.min(180, Number(next && next.scale) || 100)) };
+  document.documentElement.style.setProperty('--lv-scale', String(lyricsView.scale / 100));
   lvScale.value = lyricsView.scale;
   document.getElementById('lv-scale-value').textContent = `${lyricsView.scale}%`;
 }
 
-lvFont.addEventListener('change', () => { applyLyricsView({ ...lyricsView, font: lvFont.value }); saveSettings(); });
+// 글꼴은 플로팅 가사 창 설정(fontFamily) 하나를 가사 보기에도 같이 쓴다
+function applyLyricsFont(fontFamily) {
+  document.documentElement.style.setProperty('--lv-font', LYRIC_FONT_STACKS[fontFamily] || LYRIC_FONT_STACKS.default);
+}
+
 lvScale.addEventListener('input', () => applyLyricsView({ ...lyricsView, scale: Number(lvScale.value) }));
 lvScale.addEventListener('change', saveSettings);
 
@@ -1310,6 +1308,7 @@ const lsToggleInputs = {
 
 function paintLyricsSettings(next) {
   lyricsSettings = { ...lyricsSettings, ...(next || {}) };
+  applyLyricsFont(lyricsSettings.fontFamily);
   for (const [key, input] of Object.entries(lsNumberInputs)) input.value = lyricsSettings[key] ?? '';
   for (const [key, input] of Object.entries(lsRangeInputs)) input.value = lyricsSettings[key] ?? 0;
   document.getElementById('ls-opacity-value').textContent = `${lyricsSettings.backgroundOpacity ?? ''}%`;
@@ -2457,10 +2456,19 @@ window.lyrics.onControl((action, value) => {
   else if (action === 'toggle-play') togglePlayback();
   else if (action === 'next') nextTrack();
   else if (action === 'seek') seekToFraction(value);
+  else if (action === 'seek-by') seekBySeconds(value);
   else if (action === 'volume-step') setMasterVolume(masterVolume + value, true); // 전역 단축키(Alt+1/Alt+2)
   else if (action === 'volume') setMasterVolume(value, false); // 드래그 중 실시간 반영
   else if (action === 'volume-save') setMasterVolume(value, true); // 조작을 마쳤을 때 저장
 });
+
+// Alt+Q/E를 꾹 누를 때: 현재 위치에서 몇 초 앞뒤로 (전역 단축키 자동 반복마다 호출)
+function seekBySeconds(seconds) {
+  const d = lyricsPublishedState.duration;
+  if (!(d > 0)) return;
+  const target = Math.max(0, Math.min(d, lyricsProgressNow() + Number(seconds) * 1000));
+  seekToFraction(target / d);
+}
 
 // 플로팅 창 재생바 클릭 → 곡의 해당 지점(0~1 비율)으로 이동. 임베드는 seekTo, 직접 재생은 video.currentTime.
 function seekToFraction(fraction) {
@@ -2610,8 +2618,8 @@ function closeLyricsSearch() {
   lyricsSearchBackdrop.hidden = true;
 }
 
-document.getElementById('lo-search').addEventListener('click', openLyricsSearch);
-document.getElementById('lo-retry').addEventListener('click', () => window.lyricsOverlay.retry());
+document.getElementById('lyrics-search-btn').addEventListener('click', openLyricsSearch);
+document.getElementById('lyrics-retry-btn').addEventListener('click', () => { window.lyricsOverlay.retry(); showToast('가사를 다시 찾는 중…'); });
 document.getElementById('lyrics-search-close').addEventListener('click', closeLyricsSearch);
 lyricsSearchBackdrop.addEventListener('click', (e) => { if (e.target === lyricsSearchBackdrop) closeLyricsSearch(); });
 document.getElementById('lyrics-search-form').addEventListener('submit', async (e) => {

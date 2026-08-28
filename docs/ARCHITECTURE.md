@@ -399,7 +399,20 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   화면 맞춤은 `videoFit` 설정으로 고른다 — 기본 `cover`는 **세로(상하)를 기준으로 정사각형을 가득 채우고
   좌우를 잘라낸다**(iframe을 `높이 × 16/9`로 넓혀 가운데 정렬 + `overflow: hidden`), `contain`은 예전처럼
   영상 전체가 보이도록 맞춘다(위아래 여백). 미러 임베드도 메인 창과 같은 유튜브 UI 제거 처리를 받는다.
-- **곡 정보는 가사 상단**: 제목·아티스트를 앨범/영상 위가 아니라 가사 블록 위에 칩 한 줄로 둔다.
+- **곡 정보는 가사 상단에 고정**: 제목·아티스트 칩은 `#lyrics-body` 맨 위에 고정하고(`flex: 0 0 auto`), 가사
+  블록만 남은 공간 가운데에 놓는다 — 곡이 진행돼도 곡 정보가 밀리지 않는다. 가사를 찾았으면 유튜브 제목
+  대신 **가사 DB의 곡명·아티스트**를 보여준다.
+- **창 이동은 수동 드래그**: `-webkit-app-region: drag`는 `setIgnoreMouseEvents(true, {forward})` 히트박스
+  모드와 같이 쓰면 먹지 않는다(실측 신고). 렌더러가 앨범/영상 박스의 pointerdown/up을 `lyrics:drag`로 알리면
+  main이 16ms마다 `screen.getCursorScreenPoint()`를 읽어 창을 옮긴다.
+- **테마 색 공유**: 메인 창 `applyTheme`가 `app:theme`으로 포인트·배경·패널 색을 보내고, main이 가사 창·설정
+  팝업에 `lyrics:theme`으로 뿌린다 — 재생바·볼륨 슬라이더·체크박스는 포인트 색, 설정 팝업 카드는 패널 색.
+- **글꼴은 하나**: 플로팅 창의 `fontFamily` 설정을 메인 창 가사 보기(`--lv-font`)도 같이 쓴다.
+- **저작권 음악 정보 폴백**: 영상 제목으로 못 찾으면 InnerTube `next` 응답의 `videoAttributeViewModel`
+  (설명란 '음악' 카드: 곡명 `title`, 아티스트 `subtitle`)로 한 번 더 검색한다(`fetchVideoMusicInfo`, 캐시).
+- **Alt+Q/E 길게 누르기**: 전역 단축키는 키를 뗀 순간을 모르지만, 누르고 있으면 OS 자동 반복으로 콜백이
+  계속 오므로 250ms 안의 반복을 '누르고 있음'으로 본다. 반복 중엔 100ms마다 ±2초 `seek-by`(초당 20초),
+  반복이 없으면 260ms 뒤 이전/다음 곡으로 확정(단발 입력은 그만큼 늦게 반응).
 - **마우스 히트박스 제한**: 창은 평소 `setIgnoreMouseEvents(true, {forward: true})`로 마우스를 무시하되
   mousemove는 계속 받는다. 렌더러가 `.hit` 요소(앨범/영상 박스·재생바·재생 컨트롤·볼륨 팝오버·동작 버튼·
   검색 패널) 위에 커서가 들어오면 `lyrics:hit`으로 알리고 그 동안만 창이 마우스를 받는다 → 가사 글자나
@@ -569,8 +582,8 @@ disable-backgrounding-occluded-windows / disable-features=IntensiveWakeUpThrottl
   시엔 `lyrics:data:get`으로 받아온다). 플로팅 창을 열지 않아도 main은 곡이 바뀔 때마다 가사를 찾아두므로
   오버레이만 켜도 즉시 표시된다. 진행 위치는 렌더러 자신이 발행하는 `lyricsPublishedState`를 마지막 갱신
   시각(`lyricsStateAt`)부터 보간한다(임베드 250ms, 직접 재생 1s 주기).
-- 오버레이 좌상단의 **가사 검색 / 다시 찾기** 버튼(이 버튼만 `pointer-events: auto`)으로 메인 창에서도
-  ALSong/LRCLIB 결과를 골라 적용할 수 있다(`#lyrics-search-modal`, 플로팅 창의 검색과 같은 IPC).
+- 하단 재생 바(추천 곡 버튼 옆)의 **가사 검색 / 가사 다시 찾기** 버튼으로 메인 창에서도 ALSong/LRCLIB 결과를
+  골라 적용할 수 있다(`#lyrics-search-modal`, 플로팅 창의 검색과 같은 IPC).
 - 오버레이는 `pointer-events: none`이라 영상 클릭·유튜브 컨트롤을 가리지 않는다. z-index는 폴백 웹뷰와 같은
   2(DOM 순서상 위)이고 곡 구성/검색 패널(3)보다 아래. 몰입 모드에서는 하단 재생 바가 사라지므로 왼쪽 아래에
   썸네일·제목·아티스트·이전/일시정지/다음·경과 시간 블록(`#lyrics-overlay-info`)을 함께 그린다

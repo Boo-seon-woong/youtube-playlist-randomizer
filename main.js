@@ -765,9 +765,21 @@ function sendLyricsToMain() {
 function sendLyricsToWindow() {
   sendLyricsToMain();
   if (!lyricsWindow || lyricsWindow.isDestroyed() || lyricsWindow.webContents.isLoading()) return;
+  if (appTheme && !lyricsWindow.__themeSent) { lyricsWindow.__themeSent = true; lyricsWindow.webContents.send('lyrics:theme', appTheme); }
   lyricsWindow.webContents.send('lyrics:state', lyricsState);
   lyricsWindow.webContents.send('lyrics:data', lyricsData);
   lyricsWindow.webContents.send('lyrics:settings', lyricsSettings);
+}
+
+// 메인 앱 테마(포인트·배경·패널 색)를 가사 창과 설정 팝업에도 뿌린다 — 재생바·슬라이더·카드 배경이 따라간다
+let appTheme = null;
+
+function sendThemeToLyricsWindows() {
+  if (!appTheme) return;
+  for (const win of [lyricsWindow, lyricsSettingsWindow]) {
+    if (!win || win.isDestroyed() || win.webContents.isLoading()) continue;
+    win.webContents.send('lyrics:theme', appTheme);
+  }
 }
 
 // 플로팅 창 설정 UI는 메인 창의 디자인 설정 패널과 별도 설정 팝업 두 곳 — 양쪽에 같은 값을 뿌린다
@@ -782,6 +794,32 @@ function lyricStateKey(state) {
   return [state.id, state.title, state.artist].join('\\u0000').toLowerCase();
 }
 
+// 유튜브가 영상에 등록한 저작권 음악 정보(설명란의 '음악' 카드: 곡명·아티스트·앨범). 영상 제목으로 못 찾을 때
+// 마지막 수단으로 이 곡명/아티스트로 다시 검색한다. next 응답의 videoAttributeViewModel에 실려 있다.
+const videoMusicCache = new Map();
+
+async function fetchVideoMusicInfo(videoId) {
+  if (!videoId) return null;
+  if (videoMusicCache.has(videoId)) return videoMusicCache.get(videoId);
+  let info = null;
+  try {
+    const data = await innertube('next', { videoId });
+    const text = (x) => (x && (x.content || x.simpleText || (x.runs || []).map((r) => r.text).join(''))) || '';
+    (function walk(node) {
+      if (info || !node || typeof node !== 'object') return;
+      if (Array.isArray(node)) return node.forEach(walk);
+      const vm = node.videoAttributeViewModel;
+      if (vm && vm.title) {
+        info = { title: text(vm.title) || String(vm.title), artist: text(vm.subtitle) || String(vm.subtitle || '') };
+        return;
+      }
+      for (const value of Object.values(node)) walk(value);
+    })(data);
+  } catch {}
+  videoMusicCache.set(videoId, info);
+  return info;
+}
+
 async function loadLyricsForState(state, key) {
   if (lyricsLoadingKey === key) return;
   if (lyricsCache.has(key)) {
@@ -792,7 +830,12 @@ async function loadLyricsForState(state, key) {
   lyricsLoadingKey = key;
   const requestId = ++lyricsRequestId;
   try {
-    const data = await findLyricsForTrack(state.title, state.artist, state.duration);
+    let data = await findLyricsForTrack(state.title, state.artist, state.duration);
+    if (!data) {
+      // 영상 제목으로 못 찾으면 유튜브에 등록된 곡명·아티스트로 한 번 더
+      const music = await fetchVideoMusicInfo(state.id);
+      if (music && music.title) data = await findLyricsForTrack(music.title, music.artist, state.duration);
+    }
     const displayData = data || { unavailable: true, lines: [] };
     lyricsCache.set(key, displayData);
     if (requestId !== lyricsRequestId || key !== lyricsKey) return;
@@ -958,7 +1001,7 @@ function showLyricsSettingsWindow() {
   });
   lyricsSettingsWindow.setAlwaysOnTop(true, LYRICS_TOP_LEVEL);
   lyricsSettingsWindow.on('closed', () => { lyricsSettingsWindow = null; });
-  lyricsSettingsWindow.webContents.on('did-finish-load', sendLyricsSettingsToMain);
+  lyricsSettingsWindow.webContents.on('did-finish-load', () => { sendLyricsSettingsToMain(); sendThemeToLyricsWindows(); });
   lyricsSettingsWindow.once('ready-to-show', () => { lyricsSettingsWindow.show(); lyricsSettingsWindow.focus(); });
   lyricsSettingsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics-settings.html`);
 }
@@ -1010,14 +1053,39 @@ const LYRICS_SHORTCUTS = [
   { accelerator: 'Alt+3', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
   { accelerator: 'Alt+4', label: '클릭 통과 켜기/끄기(조작 주체 전환)', run: toggleLyricsClickThrough },
   { accelerator: 'Alt+5', label: '가사 창 다시 맨 위로(가리기 해제)', run: () => keepLyricsOnTop() },
-  { accelerator: 'Alt+Q', label: '이전 곡', run: () => sendControl('previous') },
+  { accelerator: 'Alt+Q', label: '이전 곡 (꾹 누르면 되감기)', run: () => holdOrTap('Alt+Q', -1) },
   { accelerator: 'Alt+W', label: '재생/일시정지', run: () => sendControl('toggle-play') },
-  { accelerator: 'Alt+E', label: '다음 곡', run: () => sendControl('next') },
+  { accelerator: 'Alt+E', label: '다음 곡 (꾹 누르면 빨리 감기)', run: () => holdOrTap('Alt+E', 1) },
 ];
 
-function sendControl(action) {
+// 한 번 누르면 이전/다음 곡, 꾹 누르면 재생 위치를 그 방향으로 슬라이드. 전역 단축키는 키를 뗀 순간을 알 수 없지만
+// 키를 누르고 있으면 OS 자동 반복으로 콜백이 계속 들어오므로, 짧은 간격의 반복을 '누르고 있음'으로 본다.
+// 첫 입력은 반복이 오는지 260ms 기다렸다가 곡 이동으로 확정한다(그래서 단발 입력은 그만큼 늦게 반응).
+const holdState = new Map();
+
+function holdOrTap(key, direction) {
+  const now = Date.now();
+  const st = holdState.get(key) || { last: 0, held: false, timer: null, lastSeek: 0 };
+  clearTimeout(st.timer);
+  if (now - st.last < 250) {
+    st.held = true;
+    if (now - st.lastSeek >= 100) { // 자동 반복은 초당 30회 안팎 — 100ms마다 2초씩 = 초당 20초
+      st.lastSeek = now;
+      sendControl('seek-by', direction * 2);
+    }
+  }
+  st.last = now;
+  st.timer = setTimeout(() => {
+    if (!st.held) sendControl(direction < 0 ? 'previous' : 'next');
+    st.held = false;
+    st.last = 0;
+  }, 260);
+  holdState.set(key, st);
+}
+
+function sendControl(action, value) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('lyrics:control', action);
+  mainWindow.webContents.send('lyrics:control', action, value);
 }
 
 let lyricsShortcutStatus = []; // 설정 패널이 등록 성공 여부를 보여준다 (실패는 조용히 넘기면 안 된다)
@@ -1028,6 +1096,33 @@ function registerLyricsShortcuts() {
     try { ok = globalShortcut.register(accelerator, run); } catch { ok = false; }
     return { accelerator, label, ok };
   });
+}
+
+// 창 이동: -webkit-app-region 드래그는 setIgnoreMouseEvents(forward) 상태와 같이 쓰면 먹지 않는다(실측 신고).
+// 대신 렌더러가 앨범/영상 박스에서 pointerdown/up을 알리면 main이 커서 위치를 폴링해 창을 옮긴다.
+let lyricsDragTimer2 = null;
+let lyricsDragOffset = null;
+
+function beginLyricsDrag() {
+  if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const bounds = lyricsWindow.getBounds();
+  lyricsDragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
+  clearInterval(lyricsDragTimer2);
+  setLyricsDragging(true);
+  lyricsDragTimer2 = setInterval(() => {
+    if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsDragOffset) return endLyricsDrag();
+    const c = screen.getCursorScreenPoint();
+    lyricsWindow.setPosition(c.x - lyricsDragOffset.x, c.y - lyricsDragOffset.y);
+  }, 16);
+}
+
+function endLyricsDrag() {
+  clearInterval(lyricsDragTimer2);
+  lyricsDragTimer2 = null;
+  lyricsDragOffset = null;
+  setLyricsDragging(false);
+  saveLyricsBounds();
 }
 
 function setLyricsDragging(flag) {
@@ -1795,6 +1890,13 @@ app.whenReady().then(async () => {
     if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
   });
   // 렌더러가 상호작용 요소 위에 커서가 있는지 알려준다 → 그 동안만 창이 마우스를 받는다
+  ipcMain.on('app:theme', (_event, theme) => {
+    if (!theme || typeof theme !== 'object') return;
+    appTheme = { accent: String(theme.accent || '#1db954'), base: String(theme.base || '#000'), panel: String(theme.panel || '#18191f') };
+    if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.__themeSent = true;
+    sendThemeToLyricsWindows();
+  });
+  ipcMain.on('lyrics:drag', (_event, flag) => { if (flag) beginLyricsDrag(); else endLyricsDrag(); });
   ipcMain.on('lyrics:hit', (_event, flag) => {
     lyricsHit = !!flag;
     applyLyricsClickThrough();
@@ -1802,7 +1904,7 @@ app.whenReady().then(async () => {
   // 플로팅 창의 재생 컨트롤 → 메인 창. seek는 0~1 비율, volume은 0~100 값을 함께 넘긴다.
   ipcMain.on('lyrics:control', (_event, action, value) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (['previous', 'toggle-play', 'next', 'seek', 'volume', 'volume-save', 'volume-step'].includes(action)) {
+    if (['previous', 'toggle-play', 'next', 'seek', 'seek-by', 'volume', 'volume-save', 'volume-step'].includes(action)) {
       mainWindow.webContents.send('lyrics:control', action, Number(value));
     }
   });

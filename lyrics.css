@@ -121,8 +121,7 @@ body.locked #lyrics-volume-pop { display: none; }
   overflow: hidden;
   background: var(--lyrics-bg);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
-  -webkit-app-region: drag;
-  cursor: move;
+  cursor: move; /* 드래그는 렌더러가 pointerdown을 main에 알리고 main이 커서를 따라 창을 옮긴다 */
 }
 
 #lyrics-cover {
@@ -149,11 +148,12 @@ body.video-cover #lyrics-video {
 
 /* 곡 정보: 가사 위에 칩 한 줄로 (제목 · 아티스트) */
 #lyrics-track {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  margin-bottom: 2px;
+  margin: 4px 0 2px;
   opacity: var(--ui-opacity);
 }
 
@@ -248,7 +248,7 @@ body.video-cover #lyrics-video {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start; /* 곡 정보는 맨 위에 고정, 가사만 남은 공간 가운데 */
   gap: 6px;
   overflow: hidden;
   /* 창 높이를 넘치는 이전/다음 블록은 위아래로 서서히 사라지게 */
@@ -257,8 +257,11 @@ body.video-cover #lyrics-video {
 }
 
 #lyrics-lines {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   align-items: flex-start;
   gap: 9px;
   min-width: 0;

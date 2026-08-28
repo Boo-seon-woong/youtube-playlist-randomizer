@@ -64,10 +64,6 @@
         <div id="player-guard"></div>
         <button id="fs-exit-btn" title="전체화면 해제 (Esc)">전체화면 해제</button>
         <div id="lyrics-overlay" hidden>
-          <div id="lyrics-overlay-tools">
-            <button id="lo-search" title="다른 가사 검색"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>가사 검색</button>
-            <button id="lo-retry" title="가사 다시 찾기"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
-          </div>
           <div id="lyrics-overlay-viewport"><ol id="lyrics-overlay-list"></ol></div>
           <p id="lyrics-overlay-msg" hidden></p>
           <div id="lyrics-overlay-info">
@@ -173,6 +169,12 @@
       <button id="recs-btn" class="ctl-btn" title="추천 곡 — 재생 중인 곡 기준 추천을 하단에 표시">
         <svg viewBox="0 0 24 24"><path d="M11 4l1.8 5.2L18 11l-5.2 1.8L11 18l-1.8-5.2L4 11l5.2-1.8z"/><path d="M19 3v4M17 5h4"/></svg>
       </button>
+      <button id="lyrics-search-btn" class="ctl-btn" title="가사 검색 — 다른 ALSong/LRCLIB 결과를 골라 적용">
+        <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m20 20-4.5-4.5"/><path d="M8 10.5h5M10.5 8v5"/></svg>
+      </button>
+      <button id="lyrics-retry-btn" class="ctl-btn" title="가사 다시 찾기">
+        <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+      </button>
       <button id="lyrics-btn" class="ctl-btn" title="가사 플로팅 창 표시/숨기기">
         <svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v14.5a2.5 2.5 0 0 0-2.5-2.5h-13A2.5 2.5 0 0 0 2 17.5v-12A2.5 2.5 0 0 1 4.5 3H6"/><path d="M6 7h10M6 10.5h8"/><path d="M4.5 15H18a2 2 0 0 1 2 2v4H6a2 2 0 0 1-2-2v-2.5A1.5 1.5 0 0 1 5.5 15Z"/></svg>
       </button>
@@ -216,18 +218,8 @@
 
       <hr class="settings-divider" />
       <p class="settings-label">가사 보기 (영상 위 가사)</p>
+      <p class="settings-hint">글꼴은 아래 플로팅 가사 창의 글꼴을 함께 씁니다.</p>
       <div id="lyrics-view-settings">
-        <label class="ls-select"><span>글꼴</span>
-          <select id="lv-font">
-            <option value="default">기본 (Pretendard / Segoe UI)</option>
-            <option value="noto-sans">Noto Sans KR</option>
-            <option value="ibm-plex">IBM Plex Sans KR</option>
-            <option value="gowun-dodum">고운돋움</option>
-            <option value="noto-serif">Noto Serif KR</option>
-            <option value="nanum-myeongjo">나눔명조</option>
-            <option value="gowun-batang">고운바탕</option>
-          </select>
-        </label>
         <label class="ls-range"><span>글씨 크기<output id="lv-scale-value"></output></span><input type="range" id="lv-scale" min="60" max="180" step="5" /></label>
       </div>
 
@@ -284,7 +276,7 @@
           <label><input type="checkbox" id="ls-topmost" /> 항상 위에 표시</label>
           <label title="게임처럼 마우스를 쓰는 프로그램 위에 띄울 때 — 가사 창을 눌러도 아래 프로그램이 클릭을 받습니다"><input type="checkbox" id="ls-lock" /> 클릭 통과 (잠금)</label>
         </div>
-        <p class="settings-hint" id="ls-shortcuts">단축키 — <b>Alt+1/Alt+2</b> 볼륨 감소/증가, <b>Alt+3</b> 가사 창 표시/숨기기, <b>Alt+4</b> 클릭 통과, <b>Alt+5</b> 가사 창 다시 맨 위로, <b>Alt+Q/W/E</b> 이전 곡·재생/일시정지·다음 곡. 게임이나 작업 중인 프로그램에서 창이 전환되지 않습니다(클릭 통과 해제만 예외 — 커서를 쓰려면 조작 주체가 넘어와야 합니다).</p>
+        <p class="settings-hint" id="ls-shortcuts">단축키 — <b>Alt+1/Alt+2</b> 볼륨 감소/증가, <b>Alt+3</b> 가사 창 표시/숨기기, <b>Alt+4</b> 클릭 통과, <b>Alt+5</b> 가사 창 다시 맨 위로, <b>Alt+Q/W/E</b> 이전 곡·재생/일시정지·다음 곡 (Q/E를 꾹 누르면 되감기/빨리 감기). 게임이나 작업 중인 프로그램에서 창이 전환되지 않습니다(클릭 통과 해제만 예외 — 커서를 쓰려면 조작 주체가 넘어와야 합니다).</p>
         <button id="lyrics-settings-reset">가사 창 기본값으로 되돌리기</button>
       </div>
     </div>
