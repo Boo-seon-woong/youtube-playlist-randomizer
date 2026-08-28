@@ -1110,10 +1110,19 @@ function beginLyricsDrag() {
   lyricsDragOffset = { x: cursor.x - bounds.x, y: cursor.y - bounds.y };
   clearInterval(lyricsDragTimer2);
   setLyricsDragging(true);
+  lyricsHit = true; // 드래그 중에는 커서가 박스 밖으로 살짝 나가도 마우스를 계속 받는다
+  applyLyricsClickThrough();
   lyricsDragTimer2 = setInterval(() => {
     if (!lyricsWindow || lyricsWindow.isDestroyed() || !lyricsDragOffset) return endLyricsDrag();
     const c = screen.getCursorScreenPoint();
-    lyricsWindow.setPosition(c.x - lyricsDragOffset.x, c.y - lyricsDragOffset.y);
+    // setPosition만 쓰면 Windows의 DPI 배율(125% 등)에서 프레임 없는 투명 창의 크기가 조금씩 커진다(실측 신고)
+    // → 매번 폭·높이를 설정값으로 못박아 크기를 고정한다
+    lyricsWindow.setBounds({
+      x: Math.round(c.x - lyricsDragOffset.x),
+      y: Math.round(c.y - lyricsDragOffset.y),
+      width: lyricsSettings.width,
+      height: lyricsSettings.height,
+    });
   }, 16);
 }
 
@@ -1122,6 +1131,10 @@ function endLyricsDrag() {
   lyricsDragTimer2 = null;
   lyricsDragOffset = null;
   setLyricsDragging(false);
+  if (lyricsWindow && !lyricsWindow.isDestroyed()) {
+    const b = lyricsWindow.getBounds();
+    lyricsWindow.setBounds({ ...b, width: lyricsSettings.width, height: lyricsSettings.height });
+  }
   saveLyricsBounds();
 }
 

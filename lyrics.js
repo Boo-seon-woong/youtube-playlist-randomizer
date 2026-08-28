@@ -20,6 +20,8 @@ const LYRIC_FONT_STACKS = {
 let receivedAt = performance.now();
 let panelMode = '';
 let volumeDragging = false; // 슬라이더를 잡고 있는 동안은 메인에서 오는 볼륨 값으로 덮어쓰지 않는다
+let hitCount = 0; // 커서가 올라가 있는 상호작용 요소 수
+let draggingWindow = false; // 앨범/영상 박스를 잡고 창을 옮기는 중
 
 const card = document.getElementById('lyrics-card');
 const sideEl = document.getElementById('lyrics-side');
@@ -389,9 +391,16 @@ coverBox.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   e.preventDefault();
   try { coverBox.setPointerCapture(e.pointerId); } catch {}
+  draggingWindow = true;
+  window.lyricsOverlay.setHit(true); // 히트 알림이 아직 안 갔더라도 드래그 동안은 확실히 받게
   window.lyricsOverlay.drag(true);
 });
-const endDrag = () => window.lyricsOverlay.drag(false);
+const endDrag = () => {
+  if (!draggingWindow) return;
+  draggingWindow = false;
+  window.lyricsOverlay.drag(false);
+  if (hitCount === 0) window.lyricsOverlay.setHit(false); // 드래그 중 밖으로 나갔던 커서 상태를 정리
+};
 coverBox.addEventListener('pointerup', endDrag);
 coverBox.addEventListener('pointercancel', endDrag);
 window.addEventListener('blur', endDrag);
@@ -403,10 +412,12 @@ window.lyricsOverlay.onTheme((theme) => {
 
 // 마우스 히트박스: 상호작용 요소(.hit) 위에 커서가 있을 때만 창이 마우스를 받도록 main에 알린다.
 // 창은 평소 forward 모드로 마우스를 무시하므로 mouseenter/leave는 그대로 들어온다.
-let hitCount = 0;
 for (const el of document.querySelectorAll('.hit')) {
   el.addEventListener('mouseenter', () => { hitCount += 1; window.lyricsOverlay.setHit(true); });
-  el.addEventListener('mouseleave', () => { hitCount = Math.max(0, hitCount - 1); if (hitCount === 0) window.lyricsOverlay.setHit(false); });
+  el.addEventListener('mouseleave', () => {
+    hitCount = Math.max(0, hitCount - 1);
+    if (hitCount === 0 && !draggingWindow) window.lyricsOverlay.setHit(false); // 드래그 중엔 놓지 않는다
+  });
 }
 // 검색 패널이 열리는 동안은 통째로 받는다 (입력창 타이핑)
 const hitObserver = new MutationObserver(() => {

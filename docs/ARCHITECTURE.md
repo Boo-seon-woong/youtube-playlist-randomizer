@@ -404,7 +404,10 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   대신 **가사 DB의 곡명·아티스트**를 보여준다.
 - **창 이동은 수동 드래그**: `-webkit-app-region: drag`는 `setIgnoreMouseEvents(true, {forward})` 히트박스
   모드와 같이 쓰면 먹지 않는다(실측 신고). 렌더러가 앨범/영상 박스의 pointerdown/up을 `lyrics:drag`로 알리면
-  main이 16ms마다 `screen.getCursorScreenPoint()`를 읽어 창을 옮긴다.
+  main이 16ms마다 `screen.getCursorScreenPoint()`를 읽어 창을 옮긴다. 이때 `setPosition`이 아니라
+  **`setBounds`에 폭·높이를 설정값으로 함께 넣는다** — Windows DPI 배율(125% 등)에서 프레임 없는 투명 창을
+  `setPosition`으로 옮기면 크기가 조금씩 커진다(실측 신고). 드래그 중에는 커서가 박스 밖으로 살짝 나가도
+  히트 상태를 놓지 않으며(`draggingWindow`), 왼쪽 열 전체(`#lyrics-side`)를 히트 영역으로 잡아 틈에서 놓치지 않는다.
 - **테마 색 공유**: 메인 창 `applyTheme`가 `app:theme`으로 포인트·배경·패널 색을 보내고, main이 가사 창·설정
   팝업에 `lyrics:theme`으로 뿌린다 — 재생바·볼륨 슬라이더·체크박스는 포인트 색, 설정 팝업 카드는 패널 색.
 - **글꼴은 하나**: 플로팅 창의 `fontFamily` 설정을 메인 창 가사 보기(`--lv-font`)도 같이 쓴다.
