@@ -522,13 +522,48 @@ function bestTitleScore(value, titles) {
 // 괄호 병기 같은 보조 제목 변형("keep me going (BIRDBRAIN)"의 BIRDBRAIN)은 아티스트까지 맞아야 한다 —
 // 그렇지 않으면 이름만 같은 다른 곡이 걸린다.
 // 제목만 정확히 같고 아티스트는 다른 후보(동명이곡)는 재생시간이 맞을 때만 받는다 — 재생시간을 아는 경우에 한해.
+// DB 항목 제목도 유튜브 제목처럼 "아티스트 - 제목 feat.X" 꼴로 올라온 것이 많다("Chenomio - フィクションです。feat.重音テト").
+// 그대로 비교하면 우리 제목(フィクションです。)과 길이 비율이 낮아 걸러지므로, 항목 쪽도 같은 정제를 거쳐
+// 아티스트 조각·feat·잡음을 뗀 '핵심 제목'을 함께 비교한다.
+function candidateTitleVariants(candidate) {
+  const raw = String(candidate.title || '');
+  const out = [raw];
+  const cleaned = stripFeat(stripTitleNoise(raw));
+  if (cleaned && cleaned !== raw) out.push(cleaned);
+  const artistKey = normalizeMatch(candidate.artist);
+  // "Chenomio -フィクションです。"처럼 구분자 한쪽에만 공백이 있는 경우: 앞 조각이 아티스트면 뒤만 남긴다
+  const loose = (cleaned || raw).match(/^(.+?)\s*[-–—_|:：]\s*(.+)$/);
+  if (loose) {
+    const [, head, tail] = loose;
+    const headKey = normalizeMatch(head);
+    if (artistKey && headKey && (headKey === artistKey || artistKey.includes(headKey) || headKey.includes(artistKey))) out.push(tail.trim());
+  }
+  const { parts } = splitOutsideBrackets(cleaned || raw);
+  if (parts.length >= 2) {
+    const rest = parts.filter((part) => {
+      const key = normalizeMatch(part);
+      return !(artistKey && key && (key === artistKey || artistKey.includes(key) || key.includes(artistKey)));
+    });
+    if (rest.length > 0 && rest.length < parts.length) out.push(rest.join(' '));
+    else out.push(...parts);
+  }
+  return out.filter(Boolean);
+}
+
+function bestCandidateTitleScore(candidate, titles) {
+  return candidateTitleVariants(candidate).reduce((best, variant) => Math.max(best, bestTitleScore(variant, titles)), 0);
+}
+
 function lyricMatchScore(candidate, queries, targetDuration = 0) {
-  const title = bestTitleScore(candidate.title, queries.titles);
-  const primary = bestTitleScore(candidate.title, queries.primaryTitles || queries.titles);
+  const title = bestCandidateTitleScore(candidate, queries.titles);
+  const primary = bestCandidateTitleScore(candidate, queries.primaryTitles || queries.titles);
   const artist = bestMatchScore(candidate.artist, queries.artists);
   const hasArtistQuery = (queries.artists || []).length > 0;
-  const unknownArtist = !candidate.artist || /알\s*수\s*없음|unknown/i.test(candidate.artist);
-  let accepted = title >= 0.8 && (artist > 0 || !hasArtistQuery);
+  // 가수 칸에 영상 제목을 통째로 넣은 쓰레기 항목(제목과 같거나 비정상적으로 김)도 '가수 미상'으로 본다
+  const unknownArtist = !candidate.artist || /알\s*수\s*없음|unknown/i.test(candidate.artist)
+    || String(candidate.artist).length > 40 || normalizeMatch(candidate.artist) === normalizeMatch(candidate.title);
+  const raw = bestTitleScore(candidate.title, queries.titles); // 정제 없이 제목 그대로의 일치도 (동점 정리용)
+  let accepted = !unknownArtist && title >= 0.8 && (artist > 0 || !hasArtistQuery);
   if (!accepted && primary === 1 && !unknownArtist) {
     // 제목만 같고 가수가 다른 후보(동명이곡): 재생시간이 맞고, 일본 곡이면 후보도 일본 곡이어야 한다
     const canCheckDuration = targetDuration > 0 && candidate.duration > 0;
@@ -536,7 +571,7 @@ function lyricMatchScore(candidate, queries, targetDuration = 0) {
     const scriptOk = !queries.expectJapanese || candidateIsJapanese(candidate);
     accepted = durationOk && scriptOk;
   }
-  return { title, artist, accepted };
+  return { title, artist, raw, accepted };
 }
 
 function bestMatchScore(value, queries) {
@@ -565,6 +600,9 @@ function rankLyricCandidates(candidates, queries, targetDuration) {
       if (Math.abs(titleScore) > 0.05) return titleScore;
       const artistScore = b.match.artist - a.match.artist;
       if (artistScore) return artistScore;
+      // 같은 곡이 여럿이면 제목이 깔끔한 항목("뭘 알어")을 "창모 - 뭘 알어 (REMIX)"보다 앞에
+      const rawScore = b.match.raw - a.match.raw;
+      if (Math.abs(rawScore) > 0.05) return rawScore;
       if (queries.expectJapanese) {
         const ja = candidateIsJapanese(b) - candidateIsJapanese(a);
         if (ja) return ja;
