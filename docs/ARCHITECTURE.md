@@ -407,15 +407,20 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   main이 16ms마다 `screen.getCursorScreenPoint()`를 읽어 창을 옮긴다. 이때 `setPosition`이 아니라
   **`setBounds`에 폭·높이를 설정값으로 함께 넣는다** — Windows DPI 배율(125% 등)에서 프레임 없는 투명 창을
   `setPosition`으로 옮기면 크기가 조금씩 커진다(실측 신고). 드래그 중에는 커서가 박스 밖으로 살짝 나가도
+  히트 상태를 놓지 않으며(`draggingWindow`), 왼쪽 열 전체(`#lyrics-side`)를 히트 영역으로 잡아 틈에서 놓치지 않는다. 이때 `setPosition`이 아니라
+  **`setBounds`에 폭·높이를 설정값으로 함께 넣는다** — Windows DPI 배율(125% 등)에서 프레임 없는 투명 창을
+  `setPosition`으로 옮기면 크기가 조금씩 커진다(실측 신고). 드래그 중에는 커서가 박스 밖으로 살짝 나가도
   히트 상태를 놓지 않으며(`draggingWindow`), 왼쪽 열 전체(`#lyrics-side`)를 히트 영역으로 잡아 틈에서 놓치지 않는다.
 - **테마 색 공유**: 메인 창 `applyTheme`가 `app:theme`으로 포인트·배경·패널 색을 보내고, main이 가사 창·설정
-  팝업에 `lyrics:theme`으로 뿌린다 — 재생바·볼륨 슬라이더·체크박스는 포인트 색, 설정 팝업 카드는 패널 색.
+  팝업에 `lyrics:theme`으로 뿌린다. 창이 뜰 때는 `did-finish-load` 시점에 아직 `isLoading()`이라 push가
+  빠질 수 있어, 각 창이 시작하며 `lyrics:theme:get`으로 직접 가져온다 — 재생바·볼륨 슬라이더·체크박스는 포인트 색, 설정 팝업 카드는 패널 색.
 - **글꼴은 하나**: 플로팅 창의 `fontFamily` 설정을 메인 창 가사 보기(`--lv-font`)도 같이 쓴다.
 - **저작권 음악 정보 폴백**: 영상 제목으로 못 찾으면 InnerTube `next` 응답의 `videoAttributeViewModel`
   (설명란 '음악' 카드: 곡명 `title`, 아티스트 `subtitle`)로 한 번 더 검색한다(`fetchVideoMusicInfo`, 캐시).
 - **Alt+Q/E 길게 누르기**: 전역 단축키는 키를 뗀 순간을 모르지만, 누르고 있으면 OS 자동 반복으로 콜백이
   계속 오므로 250ms 안의 반복을 '누르고 있음'으로 본다. 반복 중엔 100ms마다 ±2초 `seek-by`(초당 20초),
-  반복이 없으면 260ms 뒤 이전/다음 곡으로 확정(단발 입력은 그만큼 늦게 반응).
+  반복이 없으면 **700ms** 뒤 이전/다음 곡으로 확정 — Windows 키 반복 지연이 기본 약 500ms(최대 1초)라
+  260ms로 잡았을 땐 첫 반복이 오기 전에 곡이 넘어갔다(실측 신고). 단발 입력은 그만큼 늦게 반응한다.
 - **마우스 히트박스 제한**: 창은 평소 `setIgnoreMouseEvents(true, {forward: true})`로 마우스를 무시하되
   mousemove는 계속 받는다. 렌더러가 `.hit` 요소(앨범/영상 박스·재생바·재생 컨트롤·볼륨 팝오버·동작 버튼·
   검색 패널) 위에 커서가 들어오면 `lyrics:hit`으로 알리고 그 동안만 창이 마우스를 받는다 → 가사 글자나

@@ -777,7 +777,7 @@ let appTheme = null;
 function sendThemeToLyricsWindows() {
   if (!appTheme) return;
   for (const win of [lyricsWindow, lyricsSettingsWindow]) {
-    if (!win || win.isDestroyed() || win.webContents.isLoading()) continue;
+    if (!win || win.isDestroyed()) continue;
     win.webContents.send('lyrics:theme', appTheme);
   }
 }
@@ -1067,7 +1067,10 @@ function holdOrTap(key, direction) {
   const now = Date.now();
   const st = holdState.get(key) || { last: 0, held: false, timer: null, lastSeek: 0 };
   clearTimeout(st.timer);
-  if (now - st.last < 250) {
+  // Windows 키 반복 지연은 기본 약 500ms(설정에 따라 최대 1초) — 첫 반복이 오기 전에 곡 이동을 확정해 버리면
+  // "곡이 넘어간 뒤에 슬라이드가 시작"된다(실측 신고). 그래서 700ms 안의 반복을 '누르고 있음'으로 보고,
+  // 단발 입력은 700ms 뒤에 확정한다.
+  if (now - st.last < 700) {
     st.held = true;
     if (now - st.lastSeek >= 100) { // 자동 반복은 초당 30회 안팎 — 100ms마다 2초씩 = 초당 20초
       st.lastSeek = now;
@@ -1079,7 +1082,7 @@ function holdOrTap(key, direction) {
     if (!st.held) sendControl(direction < 0 ? 'previous' : 'next');
     st.held = false;
     st.last = 0;
-  }, 260);
+  }, 700);
   holdState.set(key, st);
 }
 
@@ -1909,6 +1912,7 @@ app.whenReady().then(async () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.__themeSent = true;
     sendThemeToLyricsWindows();
   });
+  ipcMain.handle('lyrics:theme:get', () => appTheme); // 창이 뜬 뒤 스스로 가져간다 (did-finish-load 시점엔 아직 isLoading일 수 있다)
   ipcMain.on('lyrics:drag', (_event, flag) => { if (flag) beginLyricsDrag(); else endLyricsDrag(); });
   ipcMain.on('lyrics:hit', (_event, flag) => {
     lyricsHit = !!flag;

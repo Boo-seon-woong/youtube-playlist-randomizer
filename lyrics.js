@@ -406,9 +406,11 @@ coverBox.addEventListener('pointercancel', endDrag);
 window.addEventListener('blur', endDrag);
 
 // 3) 메인 앱 테마 색 적용 (재생바·볼륨 슬라이더·컨트롤 hover)
-window.lyricsOverlay.onTheme((theme) => {
+const applyAppTheme = (theme) => {
   if (theme && theme.accent) document.documentElement.style.setProperty('--accent', theme.accent);
-});
+};
+window.lyricsOverlay.onTheme(applyAppTheme);
+window.lyricsOverlay.getTheme().then(applyAppTheme).catch(() => {});
 
 // 마우스 히트박스: 상호작용 요소(.hit) 위에 커서가 있을 때만 창이 마우스를 받도록 main에 알린다.
 // 창은 평소 forward 모드로 마우스를 무시하므로 mouseenter/leave는 그대로 들어온다.

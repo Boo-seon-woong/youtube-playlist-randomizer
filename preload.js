@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   setHit: (flag) => ipcRenderer.send('lyrics:hit', flag),
   drag: (flag) => ipcRenderer.send('lyrics:drag', flag),
   onTheme: (callback) => ipcRenderer.on('lyrics:theme', (_event, theme) => callback(theme)),
+  getTheme: () => ipcRenderer.invoke('lyrics:theme:get'),
   getSettings: () => ipcRenderer.invoke('lyrics:settings:get'),
   saveSettings: (settings) => ipcRenderer.invoke('lyrics:settings:save', settings),
   resetSettings: () => ipcRenderer.invoke('lyrics:settings:reset'),

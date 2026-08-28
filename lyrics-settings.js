@@ -32,7 +32,7 @@ document.getElementById('ls-close').addEventListener('click', () => window.lyric
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.lyricsOverlay.closeSettings(); });
 
 // 메인 앱 테마 색을 따른다 (포인트 색 → 슬라이더·체크박스, 패널 색 → 카드 배경)
-window.lyricsOverlay.onTheme((theme) => {
+function applyTheme(theme) {
   if (!theme) return;
   const root = document.documentElement.style;
   if (theme.accent) root.setProperty('--accent', theme.accent);
@@ -44,7 +44,9 @@ window.lyricsOverlay.onTheme((theme) => {
       root.setProperty('--bg-2', `rgba(${Math.max(0, r - 8)}, ${Math.max(0, g - 8)}, ${Math.max(0, b - 8)}, 0.9)`);
     }
   }
-});
+}
+window.lyricsOverlay.onTheme(applyTheme);
+window.lyricsOverlay.getTheme().then(applyTheme).catch(() => {});
 
 window.lyricsOverlay.onSettings(paint);
 window.lyricsOverlay.getSettings().then(paint).catch(() => {});
