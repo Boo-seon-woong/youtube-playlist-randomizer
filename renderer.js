@@ -2594,9 +2594,12 @@ const lyricsSearchArtist = document.getElementById('lyrics-search-artist');
 const lyricsSearchStatus = document.getElementById('lyrics-search-status');
 const lyricsSearchResults = document.getElementById('lyrics-search-results');
 
-function openLyricsSearch() {
-  lyricsSearchTitle.value = lyricsPublishedState.title || '';
-  lyricsSearchArtist.value = lyricsPublishedState.artist || '';
+async function openLyricsSearch() {
+  // 유튜브 제목 그대로가 아니라 앱이 정제한 제목/아티스트를 기본값으로
+  let parsed = { title: lyricsPublishedState.title || '', artist: lyricsPublishedState.artist || '' };
+  try { parsed = await window.lyricsOverlay.parse(parsed); } catch {}
+  lyricsSearchTitle.value = parsed.title || '';
+  lyricsSearchArtist.value = parsed.artist || '';
   lyricsSearchStatus.textContent = lyricsPublishedState.id ? '' : '재생 중인 곡이 없습니다 — 제목을 직접 입력해 검색할 수 있습니다';
   lyricsSearchResults.replaceChildren();
   lyricsSearchBackdrop.hidden = false;

@@ -306,10 +306,12 @@ volumeSlider.addEventListener('change', () => {
 });
 volumeSlider.addEventListener('pointerup', () => { volumeDragging = false; });
 
-function showSearch() {
+async function showSearch() {
   openPanel('search');
-  searchTitle.value = playback.title || '';
-  searchArtist.value = playback.artist || '';
+  let parsed = { title: playback.title || '', artist: playback.artist || '' };
+  try { parsed = await window.lyricsOverlay.parse(parsed); } catch {} // 정제된 제목/아티스트를 기본값으로
+  searchTitle.value = parsed.title || '';
+  searchArtist.value = parsed.artist || '';
   searchStatus.textContent = '';
   searchResults.replaceChildren();
   searchTitle.focus();

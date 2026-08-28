@@ -317,6 +317,7 @@ function stripTitleNoise(text) {
     .replace(/\blyrics?\b/gi, ' ')
     .replace(/\s+ver\.?\s*$/i, ' ')
     .replace(/가사|뮤비|뮤직비디오|공식\s*영상|불러\s*보았다\.?|歌ってみた|歌いました/g, ' ')
+    .replace(/\s*\bcover(?:ed)?\s+by\b.*$/i, ' ') // "ヒバナ Covered by あらき" — 부른 사람은 채널명으로 충분하다
     .replace(/\s+/g, ' ')
     .replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '')
     .trim();
@@ -339,7 +340,9 @@ function stripFeat(text) {
 }
 
 function primaryArtist(text) {
-  return stripFeat(text).replace(/\s*[×&,、，\/／]\s*.*$|\s+(?:x|및|and|with)\s+.*$/i, '').trim();
+  return stripFeat(text)
+    .replace(/^[^.。!?]{0,40}[.。!?]\s+(?=\S)/, '') // 앞에 붙은 설명 문장("함께서 즐거웠어요. 요네즈 켄시")
+    .replace(/\s*[×&,、，\/／]\s*.*$|\s+(?:x|및|and|with)\s+.*$/i, '').trim();
 }
 
 // "Good Day(좋은 날)" → ["좋은 날", "Good Day"] (한글 표기 우선), 괄호가 없으면 원문 그대로
@@ -355,9 +358,21 @@ function nameVariants(text) {
     if (v && !out.includes(v)) out.push(v);
   };
   const source = String(text || '');
-  const all = [source.replace(BRACKET_RE, ' '), ...[...source.matchAll(BRACKET_RE)].map((m) => m[1])];
+  const inner = [...source.matchAll(BRACKET_RE)].flatMap((m) => m[1].split(/\s*[\/／|]\s*/));
+  const all = [source.replace(BRACKET_RE, ' '), ...inner];
   all.filter(hasHangul).forEach(push);
   all.forEach(push);
+  // "춤 踊"처럼 구분자 없이 한글 표기와 원어 표기를 나란히 쓴 제목은 문자 체계별로도 나눈다
+  for (const value of [...out]) {
+    const segments = value.split(/\s+/);
+    if (segments.length < 2) continue;
+    const scripts = segments.map((seg) => (/[가-힣]/.test(seg) ? 'ko' : /[ぁ-んァ-ン一-龯]/.test(seg) ? 'ja' : 'other'));
+    if (new Set(scripts.filter((x) => x !== 'other')).size < 2) continue;
+    for (const script of ['ko', 'ja']) {
+      const part = segments.filter((seg, i) => scripts[i] === script).join(' ');
+      if (part) push(part);
+    }
+  }
   return out;
 }
 
@@ -384,7 +399,7 @@ function splitOutsideBrackets(text) {
 // titleOnly=false 인 조합의 제목은 제목 단독 검색에 쓰지 않는다(아티스트명으로 검색하면 엉뚱한 곡만 걸린다).
 // 선두의 【Ado】·[레오루] 같은 라벨과 말미의 【Eve】는 제목이 아니라 아티스트 후보다
 // (말미의 ()/[]는 "봄도둑(春泥棒)"처럼 병기 제목이므로 남긴다).
-function splitArtistTitle(input) {
+function splitArtistTitle(input, channel = '') {
   const labels = [];
   let text = input
     .replace(/^\s*[\[［【]([^\]］】]*)[\]］】]\s*(?=\S)/, (m, inner) => { labels.push(inner.trim()); return ''; })
@@ -404,9 +419,20 @@ function splitArtistTitle(input) {
     parts = parts.slice(1);
     seps = seps.slice(1);
   }
+  // 조각이 채널명(정제본)과 같거나 서로 포함하면 그쪽이 아티스트 — "그 아이 시크릿 - Eve MV"(채널 Eve)는
+  // 구분자 관례("아티스트 - 제목")와 반대로 뒤가 아티스트다
+  const channelKey = normalizeMatch(channel);
+  const looksLikeChannel = (part) => {
+    const key = normalizeMatch(part);
+    // 한 글자짜리 한자 예명("遊")도 채널명(宮下遊)에 들어 있으면 인정한다
+    const meaningful = key.length >= 2 || /[\u3040-\u9fff]/.test(part);
+    return !!channelKey && !!key && meaningful && (key === channelKey || channelKey.includes(key) || key.includes(channelKey));
+  };
   const pair = (index) => {
-    const titleFirst = /^[\/／]$/.test(seps[index]);
     const [a, b] = [parts[index], parts[index + 1]];
+    if (looksLikeChannel(b) && !looksLikeChannel(a)) return { title: a, artist: b };
+    if (looksLikeChannel(a) && !looksLikeChannel(b)) return { title: b, artist: a };
+    const titleFirst = /^[\/／]$/.test(seps[index]);
     return titleFirst ? { title: a, artist: b } : { title: b, artist: a };
   };
   if (parts.length < 2 || !parts[0] || !parts[1]) return [withLabel({ title: text, artist: '', titleOnly: true })];
@@ -422,8 +448,9 @@ function splitArtistTitle(input) {
 // 검색 순서: 1순위 조합 제목×아티스트(≤4) → 나머지 조합(각 ≤1) → 제목 단독(≤3). 첫 결과가 나오는 조합에서 멈추고,
 // 제목 단독 검색은 여러 아티스트가 섞여 오므로 이후 rankLyricCandidates가 아티스트 일치로 골라낸다.
 function buildLyricQueries(rawTitle, rawAuthor) {
-  const splits = splitArtistTitle(stripTitleNoise(rawTitle));
-  const channel = nameVariants(primaryArtist(cleanChannelName(rawAuthor)));
+  const cleanedChannel = cleanChannelName(rawAuthor);
+  const splits = splitArtistTitle(stripTitleNoise(rawTitle), primaryArtist(cleanedChannel));
+  const channel = nameVariants(primaryArtist(cleanedChannel));
   const pairs = [];
   const seen = new Set();
   const add = (title, artist) => {
@@ -436,9 +463,15 @@ function buildLyricQueries(rawTitle, rawAuthor) {
   const allArtists = [];
   const titleOnly = [];
   const primaryTitles = [];
+  const matchTitles = [];
   splits.forEach((split, index) => {
-    const titles = nameVariants(stripFeat(split.title)).slice(0, 2);
-    if (titles[0]) primaryTitles.push(titles[0]);
+    const titles = nameVariants(stripFeat(split.title)).slice(0, 3);
+    if (split.titleOnly) {
+      // 첫 조합의 괄호 병기 변형(해바라기 / ひまわり / Himawari)은 전부 정식 제목이다
+      if (index === 0) primaryTitles.push(...titles);
+      else if (titles[0]) primaryTitles.push(titles[0]);
+      matchTitles.push(...titles);
+    }
     const artists = [
       ...nameVariants(primaryArtist(split.artist)),
       ...(index === 0 ? [...channel, ...split.labels.flatMap((label) => nameVariants(primaryArtist(label)))] : []),
@@ -451,7 +484,17 @@ function buildLyricQueries(rawTitle, rawAuthor) {
   });
   for (const title of titleOnly.slice(0, 3)) add(title, '');
   if (pairs.length === 0 && String(rawTitle || '').trim()) add(String(rawTitle).trim(), '');
-  return { pairs, titles: allTitles, primaryTitles, artists: [...allArtists, ...channel] };
+  // 원어 표기가 섞여 있으면(가나) 일본 곡이다 — 동명의 한국 곡을 걸러내는 데 쓴다
+  const expectJapanese = /[ぁ-んァ-ン]/.test(String(rawTitle || ''));
+  return { pairs, titles: matchTitles.length > 0 ? matchTitles : allTitles, primaryTitles, artists: [...allArtists, ...channel], expectJapanese };
+}
+
+function hasKana(text) {
+  return /[ぁ-んァ-ン]/.test(String(text || ''));
+}
+
+function candidateIsJapanese(candidate) {
+  return hasKana(candidate.title) || hasKana(candidate.artist) || (candidate.lines || []).some((line) => hasKana(line.text));
 }
 
 // 제목 유사도: 정규화 후 같으면 1, 한쪽이 다른 쪽을 포함하면 길이 비율(짧은/긴) — "Deluxe" vs "Night Deluxe"는
@@ -480,10 +523,14 @@ function lyricMatchScore(candidate, queries, targetDuration = 0) {
   const primary = bestTitleScore(candidate.title, queries.primaryTitles || queries.titles);
   const artist = bestMatchScore(candidate.artist, queries.artists);
   const hasArtistQuery = (queries.artists || []).length > 0;
+  const unknownArtist = !candidate.artist || /알\s*수\s*없음|unknown/i.test(candidate.artist);
   let accepted = title >= 0.8 && (artist > 0 || !hasArtistQuery);
-  if (!accepted && primary === 1) {
+  if (!accepted && primary === 1 && !unknownArtist) {
+    // 제목만 같고 가수가 다른 후보(동명이곡): 재생시간이 맞고, 일본 곡이면 후보도 일본 곡이어야 한다
     const canCheckDuration = targetDuration > 0 && candidate.duration > 0;
-    accepted = !canCheckDuration || durationMatchScore(candidate.duration, targetDuration) >= 0.85;
+    const durationOk = !canCheckDuration || durationMatchScore(candidate.duration, targetDuration) >= 0.85;
+    const scriptOk = !queries.expectJapanese || candidateIsJapanese(candidate);
+    accepted = durationOk && scriptOk;
   }
   return { title, artist, accepted };
 }
@@ -514,6 +561,10 @@ function rankLyricCandidates(candidates, queries, targetDuration) {
       if (Math.abs(titleScore) > 0.05) return titleScore;
       const artistScore = b.match.artist - a.match.artist;
       if (artistScore) return artistScore;
+      if (queries.expectJapanese) {
+        const ja = candidateIsJapanese(b) - candidateIsJapanese(a);
+        if (ja) return ja;
+      }
       if (a.hasKorean !== b.hasKorean) return b.hasKorean ? 1 : -1;
       const durationScore = durationMatchScore(b.duration, targetDuration) - durationMatchScore(a.duration, targetDuration);
       if (Math.abs(durationScore) > 0.02) return durationScore;
@@ -1764,6 +1815,12 @@ app.whenReady().then(async () => {
     if (lyricsState.status !== 'idle' && lyricsState.title) {
       loadLyricsForState(lyricsState, lyricsKey).catch(() => {});
     }
+  });
+  // 검색창 기본값: 유튜브 제목을 그대로 넣지 않고 정제한 제목/아티스트를 준다
+  ipcMain.handle('lyrics:parse', (_event, params) => {
+    const q = buildLyricQueries(String(params && params.title || ''), String(params && params.artist || ''));
+    const first = q.pairs[0] || { title: String(params && params.title || ''), artist: '' };
+    return { title: first.title, artist: first.artist || (q.artists[0] || '') };
   });
   ipcMain.handle('lyrics:search', (_event, params) => searchAllLyrics(
     String(params && params.title || '').trim(),

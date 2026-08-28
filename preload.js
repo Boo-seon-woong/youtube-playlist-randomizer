@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   retry: () => ipcRenderer.send('lyrics:retry'),
   control: (action, value) => ipcRenderer.send('lyrics:control', action, value),
   search: (params) => ipcRenderer.invoke('lyrics:search', params),
+  parse: (params) => ipcRenderer.invoke('lyrics:parse', params),
   select: (candidate) => ipcRenderer.invoke('lyrics:select', candidate),
   openSettings: () => ipcRenderer.send('lyrics:settings:open'),
   closeSettings: () => ipcRenderer.send('lyrics:settings:close'),
