@@ -1109,9 +1109,9 @@ function holdOrTap(key, direction) {
   const now = Date.now();
   const st = holdState.get(key) || { last: 0, held: false, timer: null, lastSeek: 0 };
   clearTimeout(st.timer);
-  // 단발/꾹 판정 대기는 고정 200ms(사용자 결정). 키 반복 지연이 이보다 길면 꾹 누르기 시작 전에 곡 이동이
+  // 단발/꾹 판정 대기는 고정 300ms(사용자 결정). 키 반복 지연이 이보다 길면 꾹 누르기 시작 전에 곡 이동이
   // 한 번 확정될 수 있으나, 단발 반응 속도를 우선한다.
-  const wait = 200;
+  const wait = 300;
   if (st.last && now - st.last < 700) {
     st.held = true;
     if (now - st.lastSeek >= 100) { // 자동 반복은 초당 30회 안팎 — 100ms마다 2초씩 = 초당 20초
