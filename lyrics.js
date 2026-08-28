@@ -21,6 +21,12 @@ let receivedAt = performance.now();
 let panelMode = '';
 let volumeDragging = false; // 슬라이더를 잡고 있는 동안은 메인에서 오는 볼륨 값으로 덮어쓰지 않는다
 let hitCount = 0; // 커서가 올라가 있는 상호작용 요소 수
+let hitSent = null; // main에 마지막으로 보낸 히트 상태 (같은 값은 다시 보내지 않는다 — mousemove마다 호출되므로)
+function sendHit(flag) {
+  if (hitSent === flag) return;
+  hitSent = flag;
+  window.lyricsOverlay.setHit(flag);
+}
 let draggingWindow = false; // 앨범/영상 박스를 잡고 창을 옮기는 중
 
 const card = document.getElementById('lyrics-card');
@@ -70,6 +76,7 @@ function flashMessage(text) {
 function applyLyricsSettings(next) {
   const wasLocked = lyricsSettings.clickThrough;
   lyricsSettings = { ...lyricsSettings, ...(next || {}) };
+  if (lyricsSettings.clickThrough !== wasLocked) hitSent = null; // main이 히트 상태를 새로 잡았으니 다시 보낸다
   if (lockStateKnown && lyricsSettings.clickThrough !== wasLocked) {
     flashMessage(lyricsSettings.clickThrough ? '🔒 클릭 통과 ON · 게임으로 복귀' : '🔓 클릭 통과 OFF · 가사 창 조작');
   }
@@ -392,14 +399,14 @@ coverBox.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   try { coverBox.setPointerCapture(e.pointerId); } catch {}
   draggingWindow = true;
-  window.lyricsOverlay.setHit(true); // 히트 알림이 아직 안 갔더라도 드래그 동안은 확실히 받게
+  sendHit(true); // 히트 알림이 아직 안 갔더라도 드래그 동안은 확실히 받게
   window.lyricsOverlay.drag(true);
 });
 const endDrag = () => {
   if (!draggingWindow) return;
   draggingWindow = false;
   window.lyricsOverlay.drag(false);
-  if (hitCount === 0) window.lyricsOverlay.setHit(false); // 드래그 중 밖으로 나갔던 커서 상태를 정리
+  if (hitCount === 0) sendHit(false); // 드래그 중 밖으로 나갔던 커서 상태를 정리
 };
 coverBox.addEventListener('pointerup', endDrag);
 coverBox.addEventListener('pointercancel', endDrag);
@@ -414,16 +421,22 @@ window.lyricsOverlay.getTheme().then(applyAppTheme).catch(() => {});
 
 // 마우스 히트박스: 상호작용 요소(.hit) 위에 커서가 있을 때만 창이 마우스를 받도록 main에 알린다.
 // 창은 평소 forward 모드로 마우스를 무시하므로 mouseenter/leave는 그대로 들어온다.
+// 잠금 해제 직후 main은 마우스를 통째로 받게 해 둔다 — 커서가 상호작용 요소 밖이면 첫 움직임에서 통과 모드로 되돌린다
+document.addEventListener('mousemove', (e) => {
+  if (draggingWindow || hitCount > 0 || !searchPanel.hidden) return;
+  if (e.target && e.target.closest && e.target.closest('.hit')) return;
+  sendHit(false);
+});
 for (const el of document.querySelectorAll('.hit')) {
-  el.addEventListener('mouseenter', () => { hitCount += 1; window.lyricsOverlay.setHit(true); });
+  el.addEventListener('mouseenter', () => { hitCount += 1; sendHit(true); });
   el.addEventListener('mouseleave', () => {
     hitCount = Math.max(0, hitCount - 1);
-    if (hitCount === 0 && !draggingWindow) window.lyricsOverlay.setHit(false); // 드래그 중엔 놓지 않는다
+    if (hitCount === 0 && !draggingWindow) sendHit(false); // 드래그 중엔 놓지 않는다
   });
 }
 // 검색 패널이 열리는 동안은 통째로 받는다 (입력창 타이핑)
 const hitObserver = new MutationObserver(() => {
-  if (!searchPanel.hidden) { hitCount = 1; window.lyricsOverlay.setHit(true); }
+  if (!searchPanel.hidden) { hitCount = 1; sendHit(true); }
 });
 hitObserver.observe(searchPanel, { attributes: true, attributeFilter: ['hidden'] });
 
