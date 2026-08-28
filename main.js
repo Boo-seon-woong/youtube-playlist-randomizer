@@ -1095,37 +1095,49 @@ const LYRICS_SHORTCUTS = [
   { accelerator: 'Alt+3', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
   { accelerator: 'Alt+4', label: '클릭 통과 켜기/끄기(조작 주체 전환)', run: toggleLyricsClickThrough },
   { accelerator: 'Alt+5', label: '가사 창 다시 맨 위로(가리기 해제)', run: () => keepLyricsOnTop() },
-  { accelerator: 'Alt+Q', label: '이전 곡 (꾹 누르면 되감기)', run: () => holdOrTap('Alt+Q', -1) },
-  { accelerator: 'Alt+W', label: '재생/일시정지', run: () => sendControl('toggle-play') },
-  { accelerator: 'Alt+E', label: '다음 곡 (꾹 누르면 빨리 감기)', run: () => holdOrTap('Alt+E', 1) },
+  { accelerator: 'Alt+Q', label: '이전 곡 (Alt+W 누른 채 Q 꾹: 되감기)', run: () => trackOrScrub('Alt+Q', -1) },
+  { accelerator: 'Alt+W', label: '재생/일시정지', run: () => playToggleOrChord() },
+  { accelerator: 'Alt+E', label: '다음 곡 (Alt+W 누른 채 E 꾹: 빨리 감기)', run: () => trackOrScrub('Alt+E', 1) },
 ];
 
-// 한 번 누르면 이전/다음 곡, 꾹 누르면 재생 위치를 그 방향으로 슬라이드. 전역 단축키는 키를 뗀 순간을 알 수 없지만
-// 키를 누르고 있으면 OS 자동 반복으로 콜백이 계속 들어오므로, 짧은 간격의 반복을 '누르고 있음'으로 본다.
-// 첫 입력은 반복이 오는지 260ms 기다렸다가 곡 이동으로 확정한다(그래서 단발 입력은 그만큼 늦게 반응).
-const holdState = new Map();
+// Alt+Q/E는 즉시 이전/다음 곡(판정 대기 없음). 되감기/빨리 감기는 Alt+W를 누른 채 Q/E를 꾹 누르는 코드.
+// 전역 단축키는 키를 뗀 순간을 모르지만, 누르고 있으면 OS 자동 반복으로 콜백이 계속 오는 성질을 쓴다:
+//  - Alt+W 콜백이 최근(350ms 안)에 왔으면 W를 누르고 있는 것 → 그때 오는 Alt+Q/E는 슬라이드
+//  - 슬라이드가 시작되면 Q/E의 자동 반복(마지막 누른 키만 반복된다)이 250ms 안에 이어지는 동안 계속 슬라이드
+//  - Alt+W 자체의 재생/일시정지는 250ms 뒤에 확정 — 그 안에 Q/E가 따라오면(코드) 토글하지 않는다
+let wLastAt = 0;
+let wTimer = null;
+let wChorded = false;
+const scrubState = new Map(); // key → { lastAt, lastSeek, timer }
 
-function holdOrTap(key, direction) {
+function playToggleOrChord() {
   const now = Date.now();
-  const st = holdState.get(key) || { last: 0, held: false, timer: null, lastSeek: 0 };
-  clearTimeout(st.timer);
-  // 단발/꾹 판정 대기는 고정 400ms(사용자 결정). 키 반복 지연이 이보다 길면 꾹 누르기 시작 전에 곡 이동이
-  // 한 번 확정될 수 있으나, 단발 반응 속도를 우선한다.
-  const wait = 400;
-  if (st.last && now - st.last < 700) {
-    st.held = true;
-    if (now - st.lastSeek >= 100) { // 자동 반복은 초당 30회 안팎 — 100ms마다 2초씩 = 초당 20초
-      st.lastSeek = now;
-      sendControl('seek-by', direction * 2);
-    }
+  const repeat = now - wLastAt < 700;
+  wLastAt = now;
+  if (repeat) return; // W를 누르고 있는 동안의 자동 반복 — 코드 창만 연장
+  wChorded = false;
+  clearTimeout(wTimer);
+  wTimer = setTimeout(() => { if (!wChorded) sendControl('toggle-play'); }, 250);
+}
+
+function trackOrScrub(key, direction) {
+  const now = Date.now();
+  const st = scrubState.get(key) || { lastAt: 0, lastSeek: 0, timer: null };
+  const scrubbing = now - st.lastAt < 250 || now - wLastAt < 350;
+  if (!scrubbing) {
+    sendControl(direction < 0 ? 'previous' : 'next'); // 단발: 즉시
+    return;
   }
-  st.last = now;
-  st.timer = setTimeout(() => {
-    if (!st.held) sendControl(direction < 0 ? 'previous' : 'next');
-    st.held = false;
-    st.last = 0;
-  }, wait);
-  holdState.set(key, st);
+  wChorded = true;
+  clearTimeout(wTimer);
+  st.lastAt = now;
+  if (now - st.lastSeek >= 100) { // 자동 반복은 초당 30회 안팎 — 100ms마다 2초씩 = 초당 20초
+    st.lastSeek = now;
+    sendControl('seek-by', direction * 2);
+  }
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => { st.lastAt = 0; }, 250);
+  scrubState.set(key, st);
 }
 
 function sendControl(action, value) {
