@@ -467,9 +467,13 @@ function buildLyricQueries(rawTitle, rawAuthor) {
   splits.forEach((split, index) => {
     const titles = nameVariants(stripFeat(split.title)).slice(0, 3);
     if (split.titleOnly) {
-      // 첫 조합의 괄호 병기 변형(해바라기 / ひまわり / Himawari)은 전부 정식 제목이다
-      if (index === 0) primaryTitles.push(...titles);
-      else if (titles[0]) primaryTitles.push(titles[0]);
+      // 첫 조합의 괄호 병기 변형(해바라기 / ひまわり / Himawari)은 정식 제목이다 — 단 주 제목과 문자 체계가
+      // 다른 것만("Trapstar Lifestyle (Deluxe)"의 Deluxe처럼 같은 알파벳 꼬리표는 제목이 아니다)
+      if (titles[0]) primaryTitles.push(titles[0]);
+      if (index === 0) {
+        const script = (t) => (/[가-힣]/.test(t) ? 'ko' : /[ぁ-んァ-ン一-龯]/.test(t) ? 'ja' : 'latin');
+        for (const t of titles.slice(1)) if (script(t) !== script(titles[0])) primaryTitles.push(t);
+      }
       matchTitles.push(...titles);
     }
     const artists = [
