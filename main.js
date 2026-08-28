@@ -1108,11 +1108,12 @@ const LYRICS_SHORTCUTS = [
 let wLastAt = 0;
 let wTimer = null;
 let wChorded = false;
+const W_HELD_WINDOW = 1000; // W 콜백 후 이 시간 안에 오는 Q/E는 코드로 본다 (키 반복 지연 최대 1초를 덮는다)
 const scrubState = new Map(); // key → { lastAt, lastSeek, timer }
 
 function playToggleOrChord() {
   const now = Date.now();
-  const repeat = now - wLastAt < 700;
+  const repeat = now - wLastAt < W_HELD_WINDOW;
   wLastAt = now;
   if (repeat) return; // W를 누르고 있는 동안의 자동 반복 — 코드 창만 연장
   wChorded = false;
@@ -1120,24 +1121,29 @@ function playToggleOrChord() {
   wTimer = setTimeout(() => { if (!wChorded) sendControl('toggle-play'); }, 250);
 }
 
+// W를 '누르고 있는 중'으로 보는 창: W의 첫 반복은 키 반복 지연(기본 500ms, 최대 1초) 뒤에야 오므로
+// 마지막 W 콜백 후 1초까지는 눌린 것으로 본다(그 사이 Q/E가 오면 코드). W 반복이 이어지면 창이 계속 연장된다.
 function trackOrScrub(key, direction) {
   const now = Date.now();
-  const st = scrubState.get(key) || { lastAt: 0, lastSeek: 0, timer: null };
-  const scrubbing = now - st.lastAt < 250 || now - wLastAt < 350;
-  if (!scrubbing) {
+  const st = scrubState.get(key) || { lastAt: 0, lastSeek: 0, scrubbing: false, timer: null };
+  const repeat = now - st.lastAt < 250; // Q/E를 계속 누르고 있어 자동 반복으로 들어온 콜백
+  st.lastAt = now;
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => { st.lastAt = 0; st.scrubbing = false; }, 250);
+  scrubState.set(key, st);
+  if (repeat && !st.scrubbing) return; // 코드가 아닌데 Q/E를 붙잡고 있는 경우: 곡을 연달아 넘기지 않는다
+  const chord = st.scrubbing || now - wLastAt < W_HELD_WINDOW;
+  if (!chord) {
     sendControl(direction < 0 ? 'previous' : 'next'); // 단발: 즉시
     return;
   }
+  st.scrubbing = true;
   wChorded = true;
   clearTimeout(wTimer);
-  st.lastAt = now;
   if (now - st.lastSeek >= 100) { // 자동 반복은 초당 30회 안팎 — 100ms마다 2초씩 = 초당 20초
     st.lastSeek = now;
     sendControl('seek-by', direction * 2);
   }
-  clearTimeout(st.timer);
-  st.timer = setTimeout(() => { st.lastAt = 0; }, 250);
-  scrubState.set(key, st);
 }
 
 function sendControl(action, value) {
