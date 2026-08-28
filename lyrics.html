@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>YouTube Music Lyrics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&family=Noto+Serif+KR:wght@400;700&family=Nanum+Myeongjo:wght@400;700&family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&family=IBM+Plex+Sans+KR:wght@400;700&display=swap" />
   <link rel="stylesheet" href="lyrics.css" />
 </head>
 <body>
@@ -11,35 +14,35 @@
     <div id="lyrics-flash" hidden></div>
     <section id="lyrics-card" aria-live="polite">
       <div id="lyrics-side">
-        <div id="lyrics-cover-box">
+        <div id="lyrics-cover-box" class="hit" title="드래그하여 창 이동">
           <img id="lyrics-cover" alt="" />
           <div id="lyrics-video-wrap" hidden><div id="lyrics-video"></div><div id="lyrics-video-shield"></div></div>
-          <div id="lyrics-track">
-            <div id="lyrics-title"></div>
-            <div id="lyrics-artist"></div>
-          </div>
         </div>
-        <div id="lyrics-progress-row">
+        <div id="lyrics-progress-row" class="hit">
           <span id="lyrics-elapsed">0:00</span>
           <div id="lyrics-progress-track" title="클릭한 지점으로 이동"><div id="lyrics-progress-fill"></div></div>
           <span id="lyrics-duration">0:00</span>
         </div>
-        <div id="lyrics-playback-controls">
+        <div id="lyrics-playback-controls" class="hit">
           <button id="lyrics-previous" title="이전 곡" aria-label="이전 곡">◀|</button>
           <button id="lyrics-pause" title="일시정지" aria-label="일시정지">Ⅱ</button>
           <button id="lyrics-next" title="다음 곡" aria-label="다음 곡">|▶</button>
           <button id="lyrics-volume" title="볼륨" aria-label="볼륨"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg></button>
         </div>
-        <div id="lyrics-volume-pop" hidden>
+        <div id="lyrics-volume-pop" class="hit" hidden>
           <input id="lyrics-volume-slider" type="range" min="0" max="100" step="1" title="마스터 볼륨" />
           <span id="lyrics-volume-value">100</span>
         </div>
       </div>
       <div id="lyrics-body">
+        <div id="lyrics-track">
+          <span id="lyrics-title" class="lyric-chip"></span>
+          <span id="lyrics-artist" class="lyric-chip"></span>
+        </div>
         <div id="lyrics-lines"></div>
         <div id="lyrics-status"></div>
       </div>
-      <div id="lyrics-actions">
+      <div id="lyrics-actions" class="hit">
         <button id="lyrics-search" title="다른 가사 검색" aria-label="다른 가사 검색">⌕</button>
         <button id="lyrics-retry" title="가사 다시 검색" aria-label="가사 다시 검색">↻</button>
         <button id="lyrics-settings" title="가사 창 설정 (디자인 설정에서 조절)" aria-label="가사 창 설정"><svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="m19.4 15 .1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0V19a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.8 12a1.7 1.7 0 0 0-1.2-1.7h-.2a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.8 3.4l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10.5 0h.2a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21.6 7h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.2 2.9Z" transform="translate(-1 1.5) scale(.92)"/></svg></button>
@@ -47,7 +50,7 @@
       </div>
     </section>
 
-    <section id="lyrics-search-panel" hidden>
+    <section id="lyrics-search-panel" class="hit" hidden>
       <form id="lyrics-search-form">
         <input id="lyrics-search-title" type="text" placeholder="곡 제목" />
         <input id="lyrics-search-artist" type="text" placeholder="아티스트" />

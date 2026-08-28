@@ -1,0 +1,63 @@
+/* 플로팅 가사 창의 톱니로 여는 설정 팝업 — 플로팅 창과 같은 어두운 반투명 칩 분위기 */
+:root {
+  color-scheme: dark;
+  --accent: #1db954;
+  --bg: rgba(24, 25, 31, 0.94);
+  --bg-2: rgba(24, 25, 31, 0.80);
+  --text: #fff;
+  --muted: rgba(255, 255, 255, 0.58);
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body { background: transparent; color: var(--text); font-family: "Pretendard", "Segoe UI", sans-serif; user-select: none; }
+button, input, select { font: inherit; }
+button { border: 0; color: inherit; cursor: pointer; }
+
+#ls-card {
+  height: 100%;
+  margin: 8px;
+  padding: 16px 18px 18px;
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45), inset 0 1px rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+}
+
+#ls-head { display: flex; align-items: flex-start; justify-content: space-between; -webkit-app-region: drag; }
+#ls-head h1 { margin: 0; font-size: 16px; }
+#ls-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+#ls-close {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.8);
+  font-size: 18px; line-height: 24px; -webkit-app-region: no-drag;
+}
+#ls-close:hover { background: rgba(255, 255, 255, 0.22); color: #fff; }
+
+section { display: flex; flex-direction: column; gap: 9px; }
+section h2 { margin: 0; font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; }
+
+.row { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: rgba(255, 255, 255, 0.85); }
+.row > span { display: flex; justify-content: space-between; }
+.row output { color: var(--muted); }
+.row input[type='range'] { width: 100%; accent-color: var(--accent); }
+.row.select { flex-direction: row; align-items: center; justify-content: space-between; }
+.row.select select {
+  min-width: 190px; height: 28px; padding: 0 8px; border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14); background: var(--bg-2); color: #fff; outline: none;
+}
+
+.toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 12px; color: rgba(255, 255, 255, 0.88); }
+.toggles label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.toggles input { margin: 0; accent-color: var(--accent); }
+.hint { margin: 2px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+
+#ls-reset {
+  margin-top: auto; height: 32px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.86); font-size: 12px; font-weight: 700;
+}
+#ls-reset:hover { background: rgba(255, 255, 255, 0.2); }

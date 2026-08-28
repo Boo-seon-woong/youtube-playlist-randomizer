@@ -135,12 +135,15 @@ const DEFAULT_LYRICS_SETTINGS = {
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   videoFit: 'cover', // 영상 맞춤: 'cover'(상하 기준으로 채우고 좌우는 잘림) | 'contain'(전체가 보이도록)
+  fontFamily: 'default', // 가사 글꼴 (LYRIC_FONTS 키)
   showStatus: true,
   alwaysOnTop: true,
   clickThrough: false, // 잠금 모드: 창을 눌러도 아래 프로그램(게임 등)으로 클릭이 지나간다
 };
 const COVER_MODES = ['none', 'art', 'video'];
 const VIDEO_FITS = ['cover', 'contain'];
+// 가사 글꼴 후보 — 웹폰트(Google Fonts)라 오프라인이면 시스템 글꼴로 대체된다
+const LYRIC_FONTS = ['default', 'noto-sans', 'noto-serif', 'nanum-myeongjo', 'gowun-batang', 'gowun-dodum', 'ibm-plex'];
 
 let lyricsSettings = { ...DEFAULT_LYRICS_SETTINGS };
 
@@ -169,6 +172,7 @@ function normalizeLyricsSettings(value) {
     showTrackInfo: boolean('showTrackInfo'),
     coverMode,
     videoFit: VIDEO_FITS.includes(source.videoFit) ? source.videoFit : DEFAULT_LYRICS_SETTINGS.videoFit,
+    fontFamily: LYRIC_FONTS.includes(source.fontFamily) ? source.fontFamily : DEFAULT_LYRICS_SETTINGS.fontFamily,
     showStatus: boolean('showStatus'),
     alwaysOnTop: boolean('alwaysOnTop'),
     clickThrough: boolean('clickThrough'),
@@ -288,7 +292,7 @@ function durationMatchScore(value, target) {
 // 채널명("1theK (원더케이)", "IU - Topic")이다. ALSong 검색은 제목·아티스트 모두 부분 문자열 매칭이라
 // 이 원문을 그대로 넣으면 0건이 된다(실측). 태그를 걷어낸 뒤 제목/아티스트 후보를 여러 개 뽑아
 // 구체적인 조합부터 순서대로 검색한다.
-const NOISE_BRACKET_RE = /\b(?:official|mv|m\/v|pv|video|audio|lyrics?|live|ver|version|visualizer|performance|teaser|remaster(?:ed)?|hd|hq|4k|color coded|ost|clip|stage|practice|sub|cover|from|youtube|feat\.?|ft\.?|prod\.?)\b|가사|뮤비|뮤직비디오|공식|자막|라이브|안무|버전|음원|풀버전|해석|발음|번역|불러\s*보았다|オリジナル|歌ってみた|カバー|公式|ミュージックビデオ|フル|ボカロ|自作曲/i;
+const NOISE_BRACKET_RE = /\b(?:official|mv|m\/v|pv|video|audio|lyrics?|live|ver|version|visualizer|performance|teaser|remaster(?:ed)?|hd|hq|4k|color coded|ost|clip|stage|practice|sub|cover|from|youtube|feat\.?|ft\.?|prod\.?|full\s*(?:album|track)|eng|kor|jpn)\b|가사|뮤비|뮤직비디오|공식|자막|라이브|안무|버전|음원|풀버전|해석|발음|번역|불러\s*보았다|전체\s*듣기|전곡|정규\s*\d+\s*집|미니\s*\d*\s*집|オリジナル|歌ってみた|カバー|公式|ミュージックビデオ|フル|ボカロ|自作曲/i;
 const BRACKET_RE = /[\(\[\{（［【]([^()\[\]{}（）［］【】]*)[\)\]\}）］】]/g;
 // 구분자: " - ", " _ ", " | " 는 "아티스트 - 제목", " / " 는 일본 관례대로 "제목 / 아티스트", ": " 는 앞이 설명문인 경우가 많다
 const SEPARATOR_RE = /\s+[-–—_|]\s+|\s*[:：]\s+|\s+[\/／]\s+/g;
@@ -300,6 +304,13 @@ function stripTitleNoise(text) {
   return String(text || '')
     .replace(/　/g, ' ')
     .replace(EMOJI_RE, ' ')
+    // 'ㅣ'(한글 자모)를 세로선 대신 쓰는 채널이 있다: "제목ㅣLyrics/가사" — 구분자로 취급
+    .replace(/(?<![ㄱ-ㅎㅏ-ㅣ])\s*ㅣ\s*(?![ㄱ-ㅎㅏ-ㅣ])/g, ' | ') // "ㅈㅣㅂ"처럼 자모로 쓴 제목은 건드리지 않는다
+    .replace(/\s*\|\s*lyrics?\s*\/?\s*(?:가사)?\s*$/i, ' ')
+    // 말미의 발매일 "- 2015.03.20" 은 제목이 아니다
+    .replace(/\s*[-–—]?\s*\d{4}\.\d{1,2}\.\d{1,2}\.?\s*$/, ' ')
+    // 앨범 전체 재생 영상의 꼬리표
+    .replace(/(?:앨범\s*)?전체\s*듣기|전곡\s*듣기|전곡|\bfull\s*(?:album|track)\b/gi, ' ')
     .replace(BRACKET_RE, (match, inner) => (NOISE_BRACKET_RE.test(inner) ? ' ' : match))
     .replace(/\b(?:official\s+)?(?:music\s+video|lyric\s+video|m\/v|mv|pv|visualizer)\b/gi, ' ')
     .replace(/\bofficial\s+(?:video|audio)\b/gi, ' ')
@@ -380,9 +391,11 @@ function splitArtistTitle(input) {
     .replace(/(?<=\S)\s*【([^】]*)】\s*$/, (m, inner) => { labels.push(inner.trim()); return ''; })
     .trim();
   const withLabel = (split) => ({ ...split, artist: split.artist || labels[0] || '', labels });
+  // "가사 한 줄" 제목 [아티스트 앨범] 처럼 맨 앞의 따옴표 구절은 인용문이므로 버린다
+  text = text.replace(/^['‘“"][^'’”"]{6,}['’”"]\s+(?=\S)/, '').trim();
   const quoted = text.match(/^(.*?)(?:^|\s)['‘“"]([^'’”"]+)['’”"](?=\s|$)/)
     || text.match(/^(.*?)[「『《]([^」』》]+)[」』》]/);
-  if (quoted && quoted[2].trim()) {
+  if (quoted && quoted[2].trim() && quoted[1].trim()) {
     return [withLabel({ title: quoted[2].trim(), artist: quoted[1].trim(), titleOnly: true })];
   }
   let { parts, seps } = splitOutsideBrackets(text);
@@ -422,8 +435,10 @@ function buildLyricQueries(rawTitle, rawAuthor) {
   const allTitles = [];
   const allArtists = [];
   const titleOnly = [];
+  const primaryTitles = [];
   splits.forEach((split, index) => {
     const titles = nameVariants(stripFeat(split.title)).slice(0, 2);
+    if (titles[0]) primaryTitles.push(titles[0]);
     const artists = [
       ...nameVariants(primaryArtist(split.artist)),
       ...(index === 0 ? [...channel, ...split.labels.flatMap((label) => nameVariants(primaryArtist(label)))] : []),
@@ -436,7 +451,41 @@ function buildLyricQueries(rawTitle, rawAuthor) {
   });
   for (const title of titleOnly.slice(0, 3)) add(title, '');
   if (pairs.length === 0 && String(rawTitle || '').trim()) add(String(rawTitle).trim(), '');
-  return { pairs, titles: allTitles, artists: [...allArtists, ...channel] };
+  return { pairs, titles: allTitles, primaryTitles, artists: [...allArtists, ...channel] };
+}
+
+// 제목 유사도: 정규화 후 같으면 1, 한쪽이 다른 쪽을 포함하면 길이 비율(짧은/긴) — "Deluxe" vs "Night Deluxe"는
+// 0.55라 걸러지고 "Black Star (검은 별)" vs "Black Star"는 괄호가 벗겨져 1이 된다.
+function titleSimilarity(value, query) {
+  const actual = normalizeMatch(value);
+  const wanted = normalizeMatch(query);
+  if (!actual || !wanted) return 0;
+  if (actual === wanted) return 1;
+  if (actual.includes(wanted) || wanted.includes(actual)) {
+    return Math.min(actual.length, wanted.length) / Math.max(actual.length, wanted.length);
+  }
+  return 0;
+}
+
+function bestTitleScore(value, titles) {
+  return (titles || []).reduce((best, query) => Math.max(best, titleSimilarity(value, query)), 0);
+}
+
+// 후보 채택 기준: 제목이 거의 같고(≥0.8) 아티스트도 맞거나, 주 제목과 정확히 같다.
+// 괄호 병기 같은 보조 제목 변형("keep me going (BIRDBRAIN)"의 BIRDBRAIN)은 아티스트까지 맞아야 한다 —
+// 그렇지 않으면 이름만 같은 다른 곡이 걸린다.
+// 제목만 정확히 같고 아티스트는 다른 후보(동명이곡)는 재생시간이 맞을 때만 받는다 — 재생시간을 아는 경우에 한해.
+function lyricMatchScore(candidate, queries, targetDuration = 0) {
+  const title = bestTitleScore(candidate.title, queries.titles);
+  const primary = bestTitleScore(candidate.title, queries.primaryTitles || queries.titles);
+  const artist = bestMatchScore(candidate.artist, queries.artists);
+  const hasArtistQuery = (queries.artists || []).length > 0;
+  let accepted = title >= 0.8 && (artist > 0 || !hasArtistQuery);
+  if (!accepted && primary === 1) {
+    const canCheckDuration = targetDuration > 0 && candidate.duration > 0;
+    accepted = !canCheckDuration || durationMatchScore(candidate.duration, targetDuration) >= 0.85;
+  }
+  return { title, artist, accepted };
 }
 
 function bestMatchScore(value, queries) {
@@ -454,17 +503,20 @@ function markLyricLanguage(candidate, fallbackNotice = false) {
   };
 }
 
+// 정렬: 채택 기준을 통과한 후보 → 제목 유사도 → 아티스트 일치 → 한글 가사 → 재생시간 근사 → 한글 양.
+// 예전에는 한글 여부를 최우선으로 두어, 이름만 비슷한 다른 곡의 한글 가사가 진짜 곡을 이기곤 했다.
 function rankLyricCandidates(candidates, queries, targetDuration) {
   return [...candidates]
-    .map((candidate) => markLyricLanguage(candidate))
+    .map((candidate) => ({ ...markLyricLanguage(candidate), match: lyricMatchScore(candidate, queries, targetDuration) }))
     .sort((a, b) => {
-      if (a.hasKorean !== b.hasKorean) return b.hasKorean ? 1 : -1;
-      const titleScore = bestMatchScore(b.title, queries.titles) - bestMatchScore(a.title, queries.titles);
-      if (titleScore) return titleScore;
-      const artistScore = bestMatchScore(b.artist, queries.artists) - bestMatchScore(a.artist, queries.artists);
+      if (a.match.accepted !== b.match.accepted) return b.match.accepted ? 1 : -1;
+      const titleScore = b.match.title - a.match.title;
+      if (Math.abs(titleScore) > 0.05) return titleScore;
+      const artistScore = b.match.artist - a.match.artist;
       if (artistScore) return artistScore;
+      if (a.hasKorean !== b.hasKorean) return b.hasKorean ? 1 : -1;
       const durationScore = durationMatchScore(b.duration, targetDuration) - durationMatchScore(a.duration, targetDuration);
-      if (durationScore) return durationScore;
+      if (Math.abs(durationScore) > 0.02) return durationScore;
       return hangulCount(b.lines) - hangulCount(a.lines);
     });
 }
@@ -553,22 +605,32 @@ async function fetchLrclibCandidates(queries) {
   return result;
 }
 
+// 조합을 순서대로 검색하되 첫 결과에서 멈추지 않는다 — 앞 조합이 이름만 비슷한 엉뚱한 곡을 돌려주고
+// 진짜 곡은 뒤 조합에서 나오는 경우가 있어, 채택 기준을 통과하는 후보가 나올 때까지(최대 6조합) 모아 병합한다.
 async function fetchAlsongCandidates(queries) {
+  const merged = new Map();
+  let tried = 0;
   for (const search of queries.pairs) {
+    if (tried >= 6) break;
+    tried += 1;
     try {
       const fields = { encData: ALSong_ENC_DATA, pageNo: 1, title: search.title };
       if (search.artist) fields.artist = search.artist;
       const xml = await alsongRequest('GetResembleLyricList2', fields);
-      const result = xmlBlocks(xml, 'ST_SEARCHLYRIC_LIST').map((block) => lyricCandidate('alsong', {
-        id: xmlText(block, 'lyricID'),
-        title: xmlText(block, 'title'),
-        artist: xmlText(block, 'artist'),
-        album: xmlText(block, 'album'),
-      })).filter((item) => item.id);
-      if (result.length > 0) return result;
+      for (const block of xmlBlocks(xml, 'ST_SEARCHLYRIC_LIST')) {
+        const item = lyricCandidate('alsong', {
+          id: xmlText(block, 'lyricID'),
+          title: xmlText(block, 'title'),
+          artist: xmlText(block, 'artist'),
+          album: xmlText(block, 'album'),
+        });
+        if (item.id && !merged.has(item.id)) merged.set(item.id, item);
+      }
+      const hit = [...merged.values()].some((item) => lyricMatchScore(item, queries).accepted);
+      if (hit) break; // 진짜 곡 후보가 나왔으면 더 넓은(느슨한) 조합은 검색하지 않는다
     } catch {}
   }
-  return [];
+  return [...merged.values()];
 }
 
 async function resolveLyricCandidate(candidate) {
@@ -596,13 +658,15 @@ async function resolveAlsongCandidates(queries, targetDuration) {
 
 async function findLyricsForTrack(title, artist, targetDuration) {
   const queries = buildLyricQueries(title, artist);
-  const alsong = await resolveAlsongCandidates(queries, targetDuration);
+  const alsong = (await resolveAlsongCandidates(queries, targetDuration)).filter((c) => c.match.accepted);
   const korean = alsong.find((candidate) => candidate.hasKorean);
   if (korean) return korean;
 
-  // ALSong에 한글 가사가 없을 때만 LRCLIB 원어 가사로 내려간다.
-  const lrclib = rankLyricCandidates(await fetchLrclibCandidates(queries), queries, targetDuration);
+  // ALSong에 한글 가사가 없을 때만 LRCLIB 원어 가사로 내려간다. 여기서도 채택 기준을 통과한 것만.
+  const lrclib = rankLyricCandidates(await fetchLrclibCandidates(queries), queries, targetDuration)
+    .filter((c) => c.match.accepted);
   if (lrclib.length > 0) return markLyricLanguage(lrclib[0], true);
+  // 이름만 비슷한 다른 곡을 보여주느니 "찾지 못함"이 낫다
   return alsong.length > 0 ? markLyricLanguage(alsong[0], true) : null;
 }
 
@@ -618,6 +682,7 @@ async function searchAllLyrics(title, artist) {
 }
 
 let lyricsWindow = null;
+let lyricsSettingsWindow = null; // 플로팅 창의 톱니로 여는 별도 설정 팝업 (플로팅 창과 같은 분위기)
 let lyricsServerPort = null;
 // 창을 드래그하는 동안에만 히트박스 테두리를 보여주기 위한 상태 — 창이 투명해서 어디를 잡고 있는지
 // 알기 어렵다. 드래그는 -webkit-app-region이 OS로 넘기므로 렌더러가 알 수 없고, 메인의 'move'로만 안다.
@@ -650,10 +715,12 @@ function sendLyricsToWindow() {
   lyricsWindow.webContents.send('lyrics:settings', lyricsSettings);
 }
 
-// 플로팅 창 설정 UI는 메인 창의 디자인 설정 패널 안에 있다
+// 플로팅 창 설정 UI는 메인 창의 디자인 설정 패널과 별도 설정 팝업 두 곳 — 양쪽에 같은 값을 뿌린다
 function sendLyricsSettingsToMain() {
-  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
-  mainWindow.webContents.send('lyrics:settings', lyricsSettings);
+  for (const win of [mainWindow, lyricsSettingsWindow]) {
+    if (!win || win.isDestroyed() || win.webContents.isLoading()) continue;
+    win.webContents.send('lyrics:settings', lyricsSettings);
+  }
 }
 
 function lyricStateKey(state) {
@@ -743,8 +810,19 @@ function saveLyricsBounds() {
   lyricsBoundsWriteTimer = setTimeout(writeLyricsBounds, 250);
 }
 
+let lyricsOutlineTimer = null;
+
+// 디자인 설정의 크기 슬라이더로 창 크기를 바꿀 때도 드래그할 때처럼 테두리를 잠깐 보여준다
+function pulseLyricsOutline() {
+  setLyricsDragging(true);
+  clearTimeout(lyricsOutlineTimer);
+  lyricsOutlineTimer = setTimeout(() => setLyricsDragging(false), 700);
+}
+
 function updateLyricsSettings(value, persist = true) {
+  const before = lyricsSettings;
   lyricsSettings = normalizeLyricsSettings({ ...lyricsSettings, ...(value || {}) });
+  if (lyricsSettings.width !== before.width || lyricsSettings.height !== before.height) pulseLyricsOutline();
   if (persist) saveLyricsSettings();
   if (lyricsWindow && !lyricsWindow.isDestroyed()) {
     const bounds = lyricsWindow.getBounds();
@@ -769,11 +847,65 @@ function keepLyricsOnTop() {
   lyricsWindow.moveTop();
 }
 
-// 잠금 모드: 창 전체를 마우스 히트 테스트에서 제외해 클릭·이동이 아래 창으로 그대로 전달된다.
-// (forward는 쓰지 않는다 — 마우스 이동까지 받으면 눌리지도 않는 버튼이 hover로 떠서 혼란스럽다)
+// 마우스 히트박스: 평소에는 창이 마우스를 무시하되(forward로 mousemove는 계속 받는다), 렌더러가
+// 앨범/영상·재생바·컨트롤·버튼처럼 상호작용이 있는 요소 위에 커서가 올라왔다고 알리면(lyrics:hit)
+// 그 동안만 마우스를 받는다 → 가사 글자나 빈 곳을 눌러도 아래 창으로 통과한다.
+// 잠금(clickThrough) 모드는 forward 없이 통째로 무시한다 — 마우스 이동까지 받으면 눌리지도 않는
+// 버튼이 hover로 떠서 혼란스럽다. forward 옵션은 Windows/macOS 전용이라 Linux(개발용)에서는 예전처럼 창 전체가 받는다.
+const HIT_FORWARD_SUPPORTED = process.platform !== 'linux';
+let lyricsHit = false;
+
 function applyLyricsClickThrough() {
   if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
-  lyricsWindow.setIgnoreMouseEvents(!!lyricsSettings.clickThrough);
+  if (lyricsSettings.clickThrough) {
+    lyricsWindow.setIgnoreMouseEvents(true);
+    return;
+  }
+  if (!HIT_FORWARD_SUPPORTED) {
+    lyricsWindow.setIgnoreMouseEvents(false);
+    return;
+  }
+  if (lyricsHit) lyricsWindow.setIgnoreMouseEvents(false);
+  else lyricsWindow.setIgnoreMouseEvents(true, { forward: true });
+}
+
+function showLyricsSettingsWindow() {
+  if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) {
+    lyricsSettingsWindow.show();
+    lyricsSettingsWindow.focus();
+    return;
+  }
+  // 플로팅 창 옆에 띄운다 (화면 밖으로 나가면 작업 영역 안으로 당긴다)
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = 440;
+  const height = 720;
+  let x = area.x + Math.round((area.width - width) / 2);
+  let y = area.y + Math.round((area.height - height) / 2);
+  if (lyricsWindow && !lyricsWindow.isDestroyed()) {
+    const b = lyricsWindow.getBounds();
+    x = b.x + b.width + 12;
+    y = b.y - Math.round((height - b.height) / 2);
+  }
+  x = Math.max(area.x, Math.min(area.x + area.width - width, x));
+  y = Math.max(area.y, Math.min(area.y + area.height - height, y));
+  lyricsSettingsWindow = new BrowserWindow({
+    x, y, width, height,
+    title: '가사 창 설정',
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: { preload: path.join(__dirname, 'preload.js') },
+  });
+  lyricsSettingsWindow.setAlwaysOnTop(true, LYRICS_TOP_LEVEL);
+  lyricsSettingsWindow.on('closed', () => { lyricsSettingsWindow = null; });
+  lyricsSettingsWindow.webContents.on('did-finish-load', sendLyricsSettingsToMain);
+  lyricsSettingsWindow.once('ready-to-show', () => { lyricsSettingsWindow.show(); lyricsSettingsWindow.focus(); });
+  lyricsSettingsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics-settings.html`);
 }
 
 function toggleLyricsWindow() {
@@ -791,6 +923,7 @@ function toggleLyricsWindow() {
 // Alt+3(창 표시/숨김)은 요청대로 포커스를 건드리지 않는다(showInactive).
 function toggleLyricsClickThrough() {
   const next = !lyricsSettings.clickThrough;
+  lyricsHit = false;
   updateLyricsSettings({ clickThrough: next });
   if (!lyricsWindow || lyricsWindow.isDestroyed()) return;
   if (next) {
@@ -822,7 +955,15 @@ const LYRICS_SHORTCUTS = [
   { accelerator: 'Alt+3', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
   { accelerator: 'Alt+4', label: '클릭 통과 켜기/끄기(조작 주체 전환)', run: toggleLyricsClickThrough },
   { accelerator: 'Alt+5', label: '가사 창 다시 맨 위로(가리기 해제)', run: () => keepLyricsOnTop() },
+  { accelerator: 'Alt+Q', label: '이전 곡', run: () => sendControl('previous') },
+  { accelerator: 'Alt+W', label: '재생/일시정지', run: () => sendControl('toggle-play') },
+  { accelerator: 'Alt+E', label: '다음 곡', run: () => sendControl('next') },
 ];
+
+function sendControl(action) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('lyrics:control', action);
+}
 
 let lyricsShortcutStatus = []; // 설정 패널이 등록 성공 여부를 보여준다 (실패는 조용히 넘기면 안 된다)
 
@@ -1511,6 +1652,7 @@ function createWindow(port) {
   win.loadURL(`http://127.0.0.1:${port}/`);
   win.on('closed', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.close();
+    if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
     mainWindow = null;
   });
 }
@@ -1592,12 +1734,15 @@ app.whenReady().then(async () => {
   ipcMain.handle('app:version', () => app.getVersion());
   // 곡이 바뀔 때마다(임베드 프레임이 새로 준비될 수 있으므로) 유튜브 UI 숨김 CSS를 다시 심는다
   ipcMain.on('embed:refresh-chrome', (event) => refreshEmbedChrome(event.sender));
-  // 플로팅 창의 설정 버튼 → 메인 창을 앞으로 가져와 디자인 설정의 가사 창 섹션을 연다
-  ipcMain.on('lyrics:settings:open', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-    mainWindow.webContents.send('lyrics:open-settings');
+  // 플로팅 창의 설정 버튼 → 플로팅 창 옆에 별도 설정 팝업 (메인 창의 디자인 설정 섹션과 같은 값을 공유)
+  ipcMain.on('lyrics:settings:open', showLyricsSettingsWindow);
+  ipcMain.on('lyrics:settings:close', () => {
+    if (lyricsSettingsWindow && !lyricsSettingsWindow.isDestroyed()) lyricsSettingsWindow.close();
+  });
+  // 렌더러가 상호작용 요소 위에 커서가 있는지 알려준다 → 그 동안만 창이 마우스를 받는다
+  ipcMain.on('lyrics:hit', (_event, flag) => {
+    lyricsHit = !!flag;
+    applyLyricsClickThrough();
   });
   // 플로팅 창의 재생 컨트롤 → 메인 창. seek는 0~1 비율, volume은 0~100 값을 함께 넘긴다.
   ipcMain.on('lyrics:control', (_event, action, value) => {

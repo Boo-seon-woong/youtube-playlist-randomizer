@@ -213,7 +213,9 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !soundBackdrop.hidden) {
+  if (e.key === 'Escape' && !lyricsSearchBackdrop.hidden) {
+    closeLyricsSearch();
+  } else if (e.key === 'Escape' && !soundBackdrop.hidden) {
     closeSoundPanel();
   } else if (e.key === 'Escape' && !settingsBackdrop.hidden) {
     closeSettings();
@@ -245,6 +247,9 @@ function startFallback(id) {
   try { player.stopVideo(); } catch {}
   placeholder.hidden = true;
   fallbackView.classList.add('active');
+  // 광고 소리 차단은 호스트 단에서: 워치페이지가 뜨는 순간부터 웹뷰 오디오를 통째로 막고,
+  // 주입 스크립트가 "광고 아님"을 알려올 때만 연다 → 주입 전 프리롤·광고 사이 전환 구간도 새지 않는다
+  fallbackAdGate(true);
   fallbackView.src = `https://www.youtube.com/watch?v=${id}`;
   updateQueueHighlight();
   const info = titleCache.get(id);
@@ -265,7 +270,32 @@ function stopFallback() {
   clearInterval(skipPollTimer);
   fallbackView.classList.remove('active');
   fallbackView.src = 'about:blank';
+  fallbackAdGate(false);
 }
+
+// ── 오디오 게이트(호스트 단): "실제 음악이 재생 중"일 때만 웹뷰 소리를 연다 ──
+// 광고 감지의 찰나 지연을 쫓아 새는 소리를 막는 건 불가능에 가깝다. 대신 웹뷰 오디오를
+// setAudioMuted로 기본 차단해 두고, 주입 스크립트가 "광고 아님 + 영상 재생 중"을 알려올 때만 연다.
+// 프리롤·광고 묶음 사이·로딩·정지 구간은 전부 '재생 아님'이라 조용하다. 열 때는 250ms 확인 후.
+let adGateTimer = null;
+
+function fallbackAdGate(muted) {
+  clearTimeout(adGateTimer);
+  adGateTimer = null;
+  try { fallbackView.setAudioMuted(muted); } catch {}
+}
+
+fallbackView.addEventListener('console-message', (e) => {
+  const msg = String(e.message || '');
+  if (!msg.startsWith('__ymp_playing:')) return;
+  const playing = msg.endsWith('1');
+  if (!playing) {
+    fallbackAdGate(true);
+    return;
+  }
+  clearTimeout(adGateTimer);
+  adGateTimer = setTimeout(() => { try { fallbackView.setAudioMuted(false); } catch {} }, 250);
+});
 
 // 광고 스킵 버튼 네이티브 클릭: 주입 스크립트의 click()이 신뢰되지 않은 이벤트라 무시되는
 // 경우를 대비해, 주입 스크립트가 남긴 버튼 좌표(__skipRect)를 소비해 main이 실제 마우스
@@ -362,15 +392,36 @@ fallbackView.addEventListener('dom-ready', () => {
       window.__adActive = false;
       // 광고 시작 순간을 100ms 인터벌이 아니라 클래스 변화로 즉시 잡아 그 자리에서 음소거한다
       // (인터벌만 쓰면 최대 100ms 동안 광고 소리가 새어 나온다). ad-interrupting이 ad-showing보다 먼저 붙는다.
+      // "실제 음악이 재생 중"일 때만 소리를 낸다. 광고 중·정지 중·로딩 중은 전부 '재생 아님'으로 보고
+      // 호스트가 웹뷰 오디오를 통째로 막는다(console-message로 상태 변화만 알린다). 광고 감지의
+      // 찰나 지연을 쫓기보다, 음악이 확실히 나오는 순간에만 여는 쪽이 단순하고 새지 않는다.
+      window.__playReported = null;
+      window.__reportPlaying = () => {
+        const moviePlayer = document.querySelector('#movie_player');
+        const v = document.querySelector('video');
+        const ad = !!moviePlayer && (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting'));
+        const playing = !!v && !ad && !v.paused && v.readyState >= 2 && v.currentTime > 0.2;
+        if (window.__playReported === playing) return;
+        window.__playReported = playing;
+        console.log('__ymp_playing:' + (playing ? 1 : 0));
+      };
       window.__muteIfAd = () => {
         const moviePlayer = document.querySelector('#movie_player');
         const v = document.querySelector('video');
+        window.__reportPlaying();
         if (!moviePlayer || !v) return;
-        if (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting')) {
+        const ad = moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting');
+        if (ad) {
           window.__adActive = true;
           if (!v.muted) v.muted = true;
         }
       };
+      // 재생/정지/소스 교체 이벤트에서도 즉시 보고 (인터벌 100ms 사이의 틈을 줄인다)
+      document.addEventListener('play', window.__reportPlaying, true);
+      document.addEventListener('pause', window.__reportPlaying, true);
+      document.addEventListener('playing', window.__reportPlaying, true);
+      document.addEventListener('emptied', window.__reportPlaying, true);
+      document.addEventListener('loadstart', window.__reportPlaying, true);
       // #movie_player는 dom-ready 시점에 아직 없을 수 있으므로 인터벌에서 생길 때 한 번 붙인다
       window.__installAdObserver = () => {
         if (window.__adObserver) return;
@@ -385,6 +436,7 @@ fallbackView.addEventListener('dom-ready', () => {
         window.__installAdObserver();
         const video = document.querySelector('video');
         const adShowing = !!document.querySelector('.ad-showing, .ad-interrupting');
+        window.__reportPlaying();
         if (adShowing && video) {
           window.__adActive = true;
           if (!video.muted) video.muted = true;
@@ -1126,9 +1178,41 @@ function applyTheme(t) {
   syncSettingsUI();
 }
 
-// settings.json은 테마 3색 + 마스터 볼륨 + 패널 레이아웃을 한 객체로 저장한다
+// 가사 보기(영상 위 가사)의 글꼴·크기 — settings.json의 lyricsView에 저장
+const LYRIC_FONT_STACKS = {
+  default: '"Pretendard", "Segoe UI", sans-serif',
+  'noto-sans': '"Noto Sans KR", "Pretendard", sans-serif',
+  'noto-serif': '"Noto Serif KR", "Batang", serif',
+  'nanum-myeongjo': '"Nanum Myeongjo", "Batang", serif',
+  'gowun-batang': '"Gowun Batang", "Batang", serif',
+  'gowun-dodum': '"Gowun Dodum", "Pretendard", sans-serif',
+  'ibm-plex': '"IBM Plex Sans KR", "Segoe UI", sans-serif',
+};
+const DEFAULT_LYRICS_VIEW = { font: 'default', scale: 100 };
+let lyricsView = { ...DEFAULT_LYRICS_VIEW };
+const lvFont = document.getElementById('lv-font');
+const lvScale = document.getElementById('lv-scale');
+
+function applyLyricsView(next) {
+  lyricsView = {
+    font: LYRIC_FONT_STACKS[next && next.font] ? next.font : 'default',
+    scale: Math.max(60, Math.min(180, Number(next && next.scale) || 100)),
+  };
+  const root = document.documentElement.style;
+  root.setProperty('--lv-font', LYRIC_FONT_STACKS[lyricsView.font]);
+  root.setProperty('--lv-scale', String(lyricsView.scale / 100));
+  lvFont.value = lyricsView.font;
+  lvScale.value = lyricsView.scale;
+  document.getElementById('lv-scale-value').textContent = `${lyricsView.scale}%`;
+}
+
+lvFont.addEventListener('change', () => { applyLyricsView({ ...lyricsView, font: lvFont.value }); saveSettings(); });
+lvScale.addEventListener('input', () => applyLyricsView({ ...lyricsView, scale: Number(lvScale.value) }));
+lvScale.addEventListener('change', saveSettings);
+
+// settings.json은 테마 3색 + 마스터 볼륨 + 패널 레이아웃 + 가사 보기 글꼴/크기를 한 객체로 저장한다
 function saveSettings() {
-  window.uiSettings.save({ ...theme, volume: masterVolume, layout });
+  window.uiSettings.save({ ...theme, volume: masterVolume, layout, lyricsView });
 }
 
 function syncSettingsUI() {
@@ -1209,6 +1293,7 @@ const lsRangeInputs = {
 const lsSelects = {
   coverMode: document.getElementById('ls-cover-mode'),
   videoFit: document.getElementById('ls-video-fit'),
+  fontFamily: document.getElementById('ls-font-family'),
 };
 const lsToggleInputs = {
   showProgressBar: document.getElementById('ls-progress'),
@@ -2501,6 +2586,75 @@ function setLyricsView(flag) {
 }
 
 lyricsViewBtn.addEventListener('click', () => setLyricsView(!lyricsViewOn));
+
+// ── 가사 검색 (메인 창): 플로팅 창의 검색과 같은 IPC(lyricsOverlay.search/select)를 쓴다 ──
+const lyricsSearchBackdrop = document.getElementById('lyrics-search-backdrop');
+const lyricsSearchTitle = document.getElementById('lyrics-search-title');
+const lyricsSearchArtist = document.getElementById('lyrics-search-artist');
+const lyricsSearchStatus = document.getElementById('lyrics-search-status');
+const lyricsSearchResults = document.getElementById('lyrics-search-results');
+
+function openLyricsSearch() {
+  lyricsSearchTitle.value = lyricsPublishedState.title || '';
+  lyricsSearchArtist.value = lyricsPublishedState.artist || '';
+  lyricsSearchStatus.textContent = lyricsPublishedState.id ? '' : '재생 중인 곡이 없습니다 — 제목을 직접 입력해 검색할 수 있습니다';
+  lyricsSearchResults.replaceChildren();
+  lyricsSearchBackdrop.hidden = false;
+  lyricsSearchTitle.focus();
+}
+
+function closeLyricsSearch() {
+  lyricsSearchBackdrop.hidden = true;
+}
+
+document.getElementById('lo-search').addEventListener('click', openLyricsSearch);
+document.getElementById('lo-retry').addEventListener('click', () => window.lyricsOverlay.retry());
+document.getElementById('lyrics-search-close').addEventListener('click', closeLyricsSearch);
+lyricsSearchBackdrop.addEventListener('click', (e) => { if (e.target === lyricsSearchBackdrop) closeLyricsSearch(); });
+document.getElementById('lyrics-search-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  lyricsSearchStatus.textContent = '검색 중…';
+  lyricsSearchResults.replaceChildren();
+  let candidates = [];
+  try {
+    candidates = await window.lyricsOverlay.search({ title: lyricsSearchTitle.value, artist: lyricsSearchArtist.value });
+  } catch {
+    lyricsSearchStatus.textContent = '가사 검색에 실패했습니다.';
+    return;
+  }
+  if (!candidates || candidates.length === 0) {
+    lyricsSearchStatus.textContent = '동기화된 가사를 찾지 못했습니다.';
+    return;
+  }
+  lyricsSearchStatus.textContent = `${candidates.length}개 결과 — 클릭하면 현재 곡의 가사로 적용됩니다`;
+  for (const candidate of candidates) {
+    const li = document.createElement('li');
+    const main = document.createElement('div');
+    main.className = 'lr-main';
+    const title = document.createElement('div');
+    title.className = 'lr-title';
+    title.textContent = candidate.title || '(제목 없음)';
+    const artist = document.createElement('div');
+    artist.className = 'lr-artist';
+    artist.textContent = candidate.artist || candidate.album || '';
+    main.append(title, artist);
+    const source = document.createElement('span');
+    source.className = 'lr-source';
+    source.textContent = `${candidate.source}${candidate.hasKorean ? ' · 한국어' : ' · 원어'}`;
+    li.append(main, source);
+    li.addEventListener('click', async () => {
+      lyricsSearchStatus.textContent = '가사 적용 중…';
+      const selected = await window.lyricsOverlay.select(candidate);
+      if (selected) {
+        closeLyricsSearch();
+        showToast('가사를 적용했습니다');
+      } else {
+        lyricsSearchStatus.textContent = '가사를 불러오지 못했습니다.';
+      }
+    });
+    lyricsSearchResults.append(li);
+  }
+});
 new ResizeObserver(() => { if (lyricsViewOn) tickLyricsView(true); }).observe(lyricsViewport);
 window.lyricsOverlay.onData((data) => {
   lyricsViewData = data;
@@ -2523,6 +2677,7 @@ loPause.addEventListener('click', togglePlayback);
   paintVolumeUI(); // 저장값이 없어도 슬라이더 채움 표시는 초기화 필요
   if (saved && saved.layout) layout = { ...DEFAULT_LAYOUT, ...saved.layout };
   applyLayout(); // 저장값이 없어도 핸들 버튼 아이콘은 그려야 한다
+  applyLyricsView(saved && saved.lyricsView);
   playlists = normalizeItems(await window.store.load());
   renderList();
   fetchMissingMeta();

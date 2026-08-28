@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>가사 창 설정</title>
+  <link rel="stylesheet" href="lyrics-settings.css" />
+</head>
+<body>
+  <main id="ls-card">
+    <header id="ls-head">
+      <div>
+        <h1>가사 창 설정</h1>
+        <p>바꾸는 즉시 플로팅 창에 반영됩니다</p>
+      </div>
+      <button id="ls-close" title="닫기" aria-label="닫기">×</button>
+    </header>
+
+    <section>
+      <h2>크기</h2>
+      <label class="row"><span>가로 <output id="v-width"></output></span><input type="range" id="s-width" data-key="width" min="360" max="1400" step="1" /></label>
+      <label class="row"><span>세로 <output id="v-height"></output></span><input type="range" id="s-height" data-key="height" min="150" max="700" step="1" /></label>
+    </section>
+
+    <section>
+      <h2>모양</h2>
+      <label class="row"><span>가사 배경 불투명도 <output id="v-backgroundOpacity"></output></span><input type="range" id="s-backgroundOpacity" data-key="backgroundOpacity" min="0" max="100" step="1" /></label>
+      <label class="row"><span>인터페이스 불투명도 <output id="v-uiOpacity"></output></span><input type="range" id="s-uiOpacity" data-key="uiOpacity" min="0" max="100" step="1" /></label>
+      <label class="row"><span>글씨 크기 <output id="v-fontSize"></output></span><input type="range" id="s-fontSize" data-key="fontSize" min="10" max="48" step="1" /></label>
+      <label class="row select"><span>글꼴</span>
+        <select data-key="fontFamily">
+          <option value="default">기본 (Pretendard / Segoe UI)</option>
+          <option value="noto-sans">Noto Sans KR</option>
+          <option value="ibm-plex">IBM Plex Sans KR</option>
+          <option value="gowun-dodum">고운돋움</option>
+          <option value="noto-serif">Noto Serif KR</option>
+          <option value="nanum-myeongjo">나눔명조</option>
+          <option value="gowun-batang">고운바탕</option>
+        </select>
+      </label>
+      <label class="row select"><span>왼쪽 사각형</span>
+        <select data-key="coverMode">
+          <option value="none">표시 안 함</option>
+          <option value="art">앨범 이미지</option>
+          <option value="video">영상 작게 표시</option>
+        </select>
+      </label>
+      <label class="row select"><span>영상 맞춤</span>
+        <select data-key="videoFit">
+          <option value="cover">채우기 (좌우 잘림)</option>
+          <option value="contain">전체 보이기</option>
+        </select>
+      </label>
+    </section>
+
+    <section>
+      <h2>표시 항목</h2>
+      <div class="toggles">
+        <label><input type="checkbox" data-key="showTrackInfo" /> 곡 정보</label>
+        <label><input type="checkbox" data-key="showStatus" /> 상태 문구</label>
+        <label><input type="checkbox" data-key="showProgressBar" /> 재생바</label>
+        <label><input type="checkbox" data-key="showPlaybackControls" /> 재생 컨트롤</label>
+        <label><input type="checkbox" data-key="showPreviousButton" /> 이전 곡 버튼</label>
+        <label><input type="checkbox" data-key="showPauseButton" /> 재생/일시정지 버튼</label>
+        <label><input type="checkbox" data-key="showNextButton" /> 다음 곡 버튼</label>
+        <label><input type="checkbox" data-key="showVolumeButton" /> 볼륨 버튼</label>
+        <label><input type="checkbox" data-key="alwaysOnTop" /> 항상 위에 표시</label>
+        <label><input type="checkbox" data-key="clickThrough" /> 클릭 통과 (잠금)</label>
+      </div>
+      <p class="hint">단축키 — Alt+1/2 볼륨, Alt+3 창 표시, Alt+4 클릭 통과, Alt+5 맨 위로, Alt+Q/W/E 이전·재생/정지·다음</p>
+    </section>
+
+    <button id="ls-reset">기본값으로 되돌리기</button>
+  </main>
+  <script src="lyrics-settings.js"></script>
+</body>
+</html>

@@ -4,7 +4,18 @@ let lyricsSettings = {
   width: 760, height: 240, backgroundOpacity: 94, uiOpacity: 100, fontSize: 16,
   showProgressBar: true, showPlaybackControls: true,
   showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true,
-  showTrackInfo: true, coverMode: 'art', videoFit: 'cover', showStatus: true, alwaysOnTop: true, clickThrough: false,
+  showTrackInfo: true, coverMode: 'art', videoFit: 'cover', fontFamily: 'default', showStatus: true, alwaysOnTop: true, clickThrough: false,
+};
+
+// 가사 글꼴 후보 (main의 LYRIC_FONTS와 같은 키) — 웹폰트가 안 받아지면 시스템 글꼴로 대체
+const LYRIC_FONT_STACKS = {
+  default: '"Pretendard", "Segoe UI", sans-serif',
+  'noto-sans': '"Noto Sans KR", "Pretendard", sans-serif',
+  'noto-serif': '"Noto Serif KR", "Batang", serif',
+  'nanum-myeongjo': '"Nanum Myeongjo", "Batang", serif',
+  'gowun-batang': '"Gowun Batang", "Batang", serif',
+  'gowun-dodum': '"Gowun Dodum", "Pretendard", sans-serif',
+  'ibm-plex': '"IBM Plex Sans KR", "Segoe UI", sans-serif',
 };
 let receivedAt = performance.now();
 let panelMode = '';
@@ -66,6 +77,7 @@ function applyLyricsSettings(next) {
   document.documentElement.style.setProperty('--lyrics-bg-2', `rgba(24, 25, 31, ${Math.max(0, opacity * 0.85)})`);
   document.documentElement.style.setProperty('--ui-opacity', String(Math.max(0, Math.min(100, Number(lyricsSettings.uiOpacity) || 0)) / 100));
   document.documentElement.style.setProperty('--lyrics-font-size', `${lyricsSettings.fontSize}px`);
+  document.documentElement.style.setProperty('--lyrics-font', LYRIC_FONT_STACKS[lyricsSettings.fontFamily] || LYRIC_FONT_STACKS.default);
   progressRow.hidden = !lyricsSettings.showProgressBar;
   previousButton.hidden = !lyricsSettings.showPreviousButton;
   pauseButton.hidden = !lyricsSettings.showPauseButton;
@@ -82,9 +94,7 @@ function applyLyricsSettings(next) {
   const coverSize = Math.max(80, Math.min(220,
     lyricsSettings.height - 16 - (progressRow.hidden ? 0 : 22) - (playbackControls.hidden ? 0 : 34)));
   document.documentElement.style.setProperty('--cover-size', `${coverSize}px`);
-  const showSquare = lyricsSettings.coverMode !== 'none';
-  coverBox.hidden = !showSquare && !lyricsSettings.showTrackInfo;
-  coverBox.classList.toggle('no-art', !showSquare);
+  coverBox.hidden = lyricsSettings.coverMode === 'none';
   // 영상 맞춤: cover면 정사각형을 세로 기준으로 가득 채우고 좌우가 잘린다 (iframe을 16:9로 넓혀 가운데 정렬)
   document.body.classList.toggle('video-cover', lyricsSettings.videoFit !== 'contain');
   sideEl.hidden = coverBox.hidden && progressRow.hidden && playbackControls.hidden;
@@ -369,6 +379,19 @@ previousButton.addEventListener('click', () => window.lyricsOverlay.control('pre
 pauseButton.addEventListener('click', () => window.lyricsOverlay.control('toggle-play'));
 nextButton.addEventListener('click', () => window.lyricsOverlay.control('next'));
 searchForm.addEventListener('submit', searchLyrics);
+
+// 마우스 히트박스: 상호작용 요소(.hit) 위에 커서가 있을 때만 창이 마우스를 받도록 main에 알린다.
+// 창은 평소 forward 모드로 마우스를 무시하므로 mouseenter/leave는 그대로 들어온다.
+let hitCount = 0;
+for (const el of document.querySelectorAll('.hit')) {
+  el.addEventListener('mouseenter', () => { hitCount += 1; window.lyricsOverlay.setHit(true); });
+  el.addEventListener('mouseleave', () => { hitCount = Math.max(0, hitCount - 1); if (hitCount === 0) window.lyricsOverlay.setHit(false); });
+}
+// 검색 패널이 열리는 동안은 통째로 받는다 (입력창 타이핑)
+const hitObserver = new MutationObserver(() => {
+  if (!searchPanel.hidden) { hitCount = 1; window.lyricsOverlay.setHit(true); }
+});
+hitObserver.observe(searchPanel, { attributes: true, attributeFilter: ['hidden'] });
 
 // 단축키로 볼륨을 바꿨을 때 새 값을 잠깐 띄운다 (게임 중에는 앱의 볼륨 슬라이더가 보이지 않는다)
 window.lyricsOverlay.onFlash((text) => flashMessage(text));

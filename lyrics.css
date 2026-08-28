@@ -7,6 +7,7 @@
   --lyrics-bg: rgba(24, 25, 31, 0.94);
   --lyrics-bg-2: rgba(24, 25, 31, 0.80);
   --lyrics-font-size: 16px;
+  --lyrics-font: "Pretendard", "Segoe UI", sans-serif;
   --cover-size: 166px;
   --ui-opacity: 1;
 }
@@ -21,7 +22,7 @@ html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 body {
   background: transparent;
   color: var(--text);
-  font-family: "Pretendard", "Segoe UI", sans-serif;
+  font-family: var(--lyrics-font);
   user-select: none;
 }
 
@@ -38,7 +39,6 @@ button {
   width: 100%;
   height: 100%;
   padding: 8px;
-  -webkit-app-region: drag;
 }
 
 /* 드래그로 창을 옮기는 동안에만 클릭(드래그) 히트박스 테두리를 보여준다 — 평소엔 완전히 투명해
@@ -112,6 +112,7 @@ body.locked #lyrics-volume-pop { display: none; }
   opacity: var(--ui-opacity);
 }
 
+/* 앨범/영상 박스가 창을 옮기는 손잡이다 (히트박스가 이 박스·재생바·컨트롤·버튼으로 제한되므로) */
 #lyrics-cover-box {
   position: relative;
   width: var(--cover-size);
@@ -120,9 +121,9 @@ body.locked #lyrics-volume-pop { display: none; }
   overflow: hidden;
   background: var(--lyrics-bg);
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: drag;
+  cursor: move;
 }
-
-#lyrics-cover-box.no-art { height: auto; }
 
 #lyrics-cover {
   display: block;
@@ -146,22 +147,25 @@ body.video-cover #lyrics-video {
 }
 #lyrics-video-shield { position: absolute; inset: 0; z-index: 1; -webkit-app-region: drag; }
 
+/* 곡 정보: 가사 위에 칩 한 줄로 (제목 · 아티스트) */
 #lyrics-track {
-  position: absolute;
-  z-index: 2;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 26px 10px 8px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
-  line-height: 1.25;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-bottom: 2px;
+  opacity: var(--ui-opacity);
 }
 
-#lyrics-cover-box.no-art #lyrics-track { position: static; padding: 9px 10px; background: none; }
+#lyrics-track .lyric-chip {
+  font-size: calc(var(--lyrics-font-size) * 0.72);
+  line-height: 1.5;
+  padding: 2px 9px;
+}
 
-#lyrics-title, #lyrics-artist { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-#lyrics-title { font-size: 13px; font-weight: 700; }
-#lyrics-artist { color: var(--muted); font-size: 11px; margin-top: 3px; }
+#lyrics-title { font-weight: 700; max-width: 70%; }
+#lyrics-artist { color: var(--muted); font-weight: 500; background: var(--lyrics-bg-2); }
+#lyrics-title:empty, #lyrics-artist:empty { display: none; }
 
 #lyrics-progress-row {
   display: flex;
