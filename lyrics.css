@@ -143,7 +143,10 @@ body.video-cover #lyrics-video {
   width: calc(var(--cover-size) * 16 / 9);
   transform: translateX(-50%);
 }
-#lyrics-video-shield { position: absolute; inset: 0; z-index: 1; -webkit-app-region: drag; }
+/* 막에 -webkit-app-region: drag를 두면 누르는 순간 OS 창 이동으로 넘어가 렌더러의 수동 드래그가 시작되지 않는다
+   (영상 모드에서만 드래그가 안 되던 원인). 막은 클릭을 삼키기만 하고, 이동은 박스의 pointerdown이 맡는다. */
+#lyrics-video-shield { position: absolute; inset: 0; z-index: 1; cursor: move; }
+#lyrics-video-wrap iframe { pointer-events: none; }
 
 /* 곡 정보: 가사 위에 칩 한 줄로 (제목 · 아티스트) */
 #lyrics-track {
