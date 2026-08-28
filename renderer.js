@@ -1301,7 +1301,6 @@ const lsToggleInputs = {
   showNextButton: document.getElementById('ls-next'),
   showVolumeButton: document.getElementById('ls-volume'),
   showTrackInfo: document.getElementById('ls-track-info'),
-  showStatus: document.getElementById('ls-status'),
   alwaysOnTop: document.getElementById('ls-topmost'),
   clickThrough: document.getElementById('ls-lock'),
 };

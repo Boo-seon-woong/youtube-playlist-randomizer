@@ -1104,29 +1104,20 @@ const LYRICS_SHORTCUTS = [
 // 키를 누르고 있으면 OS 자동 반복으로 콜백이 계속 들어오므로, 짧은 간격의 반복을 '누르고 있음'으로 본다.
 // 첫 입력은 반복이 오는지 260ms 기다렸다가 곡 이동으로 확정한다(그래서 단발 입력은 그만큼 늦게 반응).
 const holdState = new Map();
-let holdConfirmMs = 550; // 단발/꾹 판정 대기 — 첫 반복 간격을 관측하면 갱신
 
 function holdOrTap(key, direction) {
   const now = Date.now();
   const st = holdState.get(key) || { last: 0, held: false, timer: null, lastSeek: 0 };
   clearTimeout(st.timer);
-  // Windows 키 반복 지연은 기본 약 500ms(설정에 따라 250ms~1초) — 첫 반복이 오기 전에 곡 이동을 확정해 버리면
-  // "곡이 넘어간 뒤에 슬라이드가 시작"된다. 처음엔 550ms를 기다리되, 실제로 반복이 시작되는 간격을
-  // 한 번 관측하면 그 값(+60ms)으로 줄여 단발 입력의 지연을 최소화한다(반복 지연을 짧게 둔 PC일수록 빨라진다).
-  const wait = holdConfirmMs;
-  if (st.last && now - st.last < wait) {
-    if (!st.held) {
-      // 첫 반복이 도착: 이 PC의 키 반복 지연을 학습
-      const observed = now - st.first;
-      if (observed > 120) holdConfirmMs = Math.max(200, Math.min(700, observed + 60));
-    }
+  // 단발/꾹 판정 대기는 고정 200ms(사용자 결정). 키 반복 지연이 이보다 길면 꾹 누르기 시작 전에 곡 이동이
+  // 한 번 확정될 수 있으나, 단발 반응 속도를 우선한다.
+  const wait = 200;
+  if (st.last && now - st.last < 700) {
     st.held = true;
     if (now - st.lastSeek >= 100) { // 자동 반복은 초당 30회 안팎 — 100ms마다 2초씩 = 초당 20초
       st.lastSeek = now;
       sendControl('seek-by', direction * 2);
     }
-  } else {
-    st.first = now;
   }
   st.last = now;
   st.timer = setTimeout(() => {

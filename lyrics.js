@@ -37,7 +37,6 @@ const videoWrap = document.getElementById('lyrics-video-wrap');
 const title = document.getElementById('lyrics-title');
 const artist = document.getElementById('lyrics-artist');
 const linesEl = document.getElementById('lyrics-lines');
-const statusEl = document.getElementById('lyrics-status');
 const progressRow = document.getElementById('lyrics-progress-row');
 const progressTrack = document.getElementById('lyrics-progress-track');
 const elapsedEl = document.getElementById('lyrics-elapsed');
@@ -96,7 +95,6 @@ function applyLyricsSettings(next) {
     || (previousButton.hidden && pauseButton.hidden && nextButton.hidden && volumeButton.hidden);
   if (volumeButton.hidden || playbackControls.hidden) closeVolumePop();
   document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo;
-  statusEl.hidden = !lyricsSettings.showStatus;
   // 잠금(클릭 통과) 중에는 눌리지 않는 버튼을 아예 감춰 눌러도 되는 것처럼 보이지 않게 한다
   document.body.classList.toggle('locked', !!lyricsSettings.clickThrough);
   // 왼쪽 열: 사각형(앨범/영상)은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)
@@ -260,10 +258,10 @@ function render() {
   linesEl.replaceChildren();
   const index = currentIndex(progress);
   if (index < 0) {
-    linesEl.append(lineElement(null, 'current'));
-    statusEl.textContent = lyricData && lyricData.unavailable
-      ? '가사를 찾지 못했습니다.'
-      : lyricData ? '가사 시작 전' : (playback.status === 'idle' ? '' : '가사를 찾는 중…');
+    // 가사가 없거나 시작 전이면 안내 한 줄만 (별도 상태 문구는 두지 않는다)
+    const note = lyricData && lyricData.unavailable ? '가사를 찾지 못했습니다'
+      : lyricData ? null : (playback.status === 'idle' ? null : '가사를 찾는 중…');
+    linesEl.append(lineElement(note ? { text: note } : null, note ? 'current empty' : 'current'));
     return;
   }
   linesEl.append(
@@ -271,9 +269,6 @@ function render() {
     lineElement(lyricData.lines[index], 'current'),
     lineElement(lyricData.lines[index + 1], 'next'),
   );
-  const language = lyricData.language === 'ko' ? '한국어' : (lyricData.fallbackNotice || '원어');
-  const state = playback.status === 'paused' ? '일시정지' : '';
-  statusEl.textContent = lyricData.source ? [lyricData.source.toUpperCase(), language, state].filter(Boolean).join(' · ') : '';
 }
 
 function animate() {

@@ -120,7 +120,6 @@ body.locked #lyrics-volume-pop { display: none; }
   border-radius: 12px;
   overflow: hidden;
   background: var(--lyrics-bg);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
   cursor: move; /* 드래그는 렌더러가 pointerdown을 main에 알리고 main이 커서를 따라 창을 옮긴다 */
 }
 
@@ -153,17 +152,18 @@ body.video-cover #lyrics-video {
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  margin: 4px 0 2px;
+  margin: 2px 0 0;
   opacity: var(--ui-opacity);
 }
 
 #lyrics-track .lyric-chip {
   font-size: calc(var(--lyrics-font-size) * 0.72);
-  line-height: 1.5;
-  padding: 2px 9px;
+  line-height: 1.35;
+  padding: 1px 8px;
 }
 
-#lyrics-title { font-weight: 700; max-width: 70%; }
+/* 제목은 가사(현재 줄)보다 1pt 크고 볼드 */
+#lyrics-title { font-size: calc(var(--lyrics-font-size) + 1.333px); font-weight: 800; max-width: 70%; }
 #lyrics-artist { color: var(--muted); font-weight: 500; background: var(--lyrics-bg-2); }
 #lyrics-title:empty, #lyrics-artist:empty { display: none; }
 
@@ -251,11 +251,9 @@ body.video-cover #lyrics-video {
   justify-content: flex-start; /* 곡 정보는 맨 위에 고정, 가사만 남은 공간 가운데 */
   gap: 6px;
   overflow: hidden;
-  /* 창 높이를 넘치는 이전/다음 블록은 위아래로 서서히 사라지게 */
-  -webkit-mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent);
-  mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent);
 }
 
+/* 줄 간격과 칩 여백을 촘촘하게 — 한 화면에 더 많은 줄이 들어가도록 */
 #lyrics-lines {
   flex: 1 1 auto;
   min-height: 0;
@@ -263,7 +261,7 @@ body.video-cover #lyrics-video {
   flex-direction: column;
   justify-content: center;
   align-items: flex-start;
-  gap: 9px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -271,7 +269,7 @@ body.video-cover #lyrics-video {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  gap: 1px;
   max-width: 100%;
   transition: opacity 0.22s ease;
 }
@@ -279,8 +277,8 @@ body.video-cover #lyrics-video {
 .lyric-chip {
   display: block;
   max-width: 100%;
-  padding: 3px 10px;
-  border-radius: 6px;
+  padding: 1px 7px;
+  border-radius: 5px;
   background: var(--lyrics-bg);
   overflow: hidden;
   white-space: nowrap;
@@ -288,11 +286,12 @@ body.video-cover #lyrics-video {
   color: #fff;
   font-size: var(--lyrics-font-size);
   font-weight: 700;
-  line-height: 1.45;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
 }
 
 .lyric-block.previous .lyric-chip, .lyric-block.next .lyric-chip {
-  padding: 2px 8px;
+  padding: 1px 6px;
   background: var(--lyrics-bg-2);
   color: rgba(255, 255, 255, 0.64);
   font-size: calc(var(--lyrics-font-size) * 0.72);
@@ -301,18 +300,6 @@ body.video-cover #lyrics-video {
 
 .lyric-block.empty .lyric-chip { color: rgba(255, 255, 255, 0.34); }
 
-#lyrics-status {
-  display: inline-block;
-  align-self: flex-start;
-  opacity: var(--ui-opacity);
-  padding: 1px 8px;
-  border-radius: 5px;
-  background: var(--lyrics-bg-2);
-  color: var(--muted);
-  font-size: 10px;
-}
-
-#lyrics-status:empty { display: none; }
 
 /* ── 마우스를 올렸을 때만 보이는 동작 버튼 ── */
 
