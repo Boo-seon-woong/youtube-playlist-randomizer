@@ -380,7 +380,7 @@ fallbackView.addEventListener('dom-ready', () => {
   `).catch(() => {});
   // 앱 마스터 볼륨을 페이지에 전달 (주입 인터벌이 100ms 주기로 video.volume에 강제한다)
   // __appWantsPlay: 앱이 "지금 재생 중이어야 한다"고 보는 상태 — 주입 인터벌이 이걸 보고 재생을 밀어준다
-  fallbackView.executeJavaScript(`window.__appVolume = ${masterVolume}; window.__appWantsPlay = true; 0`).catch(() => {});
+  fallbackView.executeJavaScript(`window.__appVolume = ${effectiveVolume()}; window.__appWantsPlay = true; 0`).catch(() => {});
   // 영상 광고: 감지 즉시 무음 + 16배속 + 끝으로 점프, 스킵 버튼 자동 클릭,
   // 프리미엄 팝업/일시정지 확인창 자동 처리. 100ms 주기로 돌아 광고 노출 시간을 최소화한다.
   fallbackView.executeJavaScript(`
@@ -1300,6 +1300,7 @@ const lsToggleInputs = {
   showPauseButton: document.getElementById('ls-pause'),
   showNextButton: document.getElementById('ls-next'),
   showVolumeButton: document.getElementById('ls-volume'),
+  showLyrics: document.getElementById('ls-lyrics'),
   showTrackInfo: document.getElementById('ls-track-info'),
   alwaysOnTop: document.getElementById('ls-topmost'),
   clickThrough: document.getElementById('ls-lock'),
@@ -1403,19 +1404,25 @@ function paintVolumeUI() {
   soundFill.style.width = v + '%';
 }
 
+// 체감 볼륨 커브: 슬라이더 값(0~100)을 제곱 커브로 출력 볼륨에 매핑한다 — 1은 충분히 작고 100은 충분히 크게.
+// (선형이면 저볼륨 구간이 크게 들려 1과 100의 차이가 좁게 느껴진다. UI·저장값은 그대로 선형 0~100.)
+function effectiveVolume() {
+  return (masterVolume * masterVolume) / 100;
+}
+
 function applyVolume() {
+  const out = effectiveVolume();
   if (playerReady) {
     try {
-      player.setVolume(masterVolume);
-      // 임베드 플레이어는 볼륨 0에서 unMute()하면 최소 볼륨 5로 되살린다(실측) —
-      // 0에서만 명시적으로 음소거한다. 0.5 미만까지 mute하면 입력값이
-      // 0.00~0.49 구간에서 모두 무음이 되어 갑작스러운 임계값이 생긴다.
-      if (masterVolume === 0) player.mute();
+      player.setVolume(out);
+      // 임베드 플레이어는 볼륨 0에서 unMute()하면 최소 볼륨 5로 되살린다(실측) — IFrame API는 정수 볼륨이라
+      // 커브 출력이 0으로 반올림되는 구간(0.5 미만)은 mute()로 처리한다(어차피 들리지 않는 크기).
+      if (out < 0.5) player.mute();
       else player.unMute();
     } catch {}
   }
   if (fallbackActive) {
-    fallbackView.executeJavaScript(`window.__appVolume = ${masterVolume}; 0`).catch(() => {});
+    fallbackView.executeJavaScript(`window.__appVolume = ${effectiveVolume()}; 0`).catch(() => {});
   }
 }
 

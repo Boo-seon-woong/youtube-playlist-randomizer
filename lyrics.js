@@ -3,7 +3,7 @@ let lyricData = null;
 let lyricsSettings = {
   width: 760, height: 240, backgroundOpacity: 94, uiOpacity: 100, fontSize: 16,
   showProgressBar: true, showPlaybackControls: true,
-  showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true,
+  showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true, showLyrics: true,
   showTrackInfo: true, coverMode: 'art', videoFit: 'cover', fontFamily: 'default', showStatus: true, alwaysOnTop: true, clickThrough: false,
 };
 
@@ -94,7 +94,8 @@ function applyLyricsSettings(next) {
   playbackControls.hidden = !lyricsSettings.showPlaybackControls
     || (previousButton.hidden && pauseButton.hidden && nextButton.hidden && volumeButton.hidden);
   if (volumeButton.hidden || playbackControls.hidden) closeVolumePop();
-  document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo;
+  document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo || !lyricsSettings.showLyrics;
+  document.getElementById('lyrics-body').hidden = !lyricsSettings.showLyrics;
   // 잠금(클릭 통과) 중에는 눌리지 않는 버튼을 아예 감춰 눌러도 되는 것처럼 보이지 않게 한다
   document.body.classList.toggle('locked', !!lyricsSettings.clickThrough);
   // 왼쪽 열: 사각형(앨범/영상)은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)

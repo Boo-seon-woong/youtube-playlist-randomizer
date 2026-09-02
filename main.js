@@ -132,6 +132,7 @@ const DEFAULT_LYRICS_SETTINGS = {
   showPauseButton: true,
   showNextButton: true,
   showVolumeButton: true,
+  showLyrics: true, // 오른쪽 가사 영역 (끄면 왼쪽 사각형만 남는다)
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   videoFit: 'cover', // 영상 맞춤: 'cover'(상하 기준으로 채우고 좌우는 잘림) | 'contain'(전체가 보이도록)
@@ -169,6 +170,7 @@ function normalizeLyricsSettings(value) {
     showPauseButton: boolean('showPauseButton'),
     showNextButton: boolean('showNextButton'),
     showVolumeButton: boolean('showVolumeButton'),
+    showLyrics: boolean('showLyrics'),
     showTrackInfo: boolean('showTrackInfo'),
     coverMode,
     videoFit: VIDEO_FITS.includes(source.videoFit) ? source.videoFit : DEFAULT_LYRICS_SETTINGS.videoFit,

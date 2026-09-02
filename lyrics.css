@@ -151,6 +151,8 @@ body.video-cover #lyrics-video {
 /* 곡 정보: 가사 위에 칩 한 줄로 (제목 · 아티스트) */
 #lyrics-track {
   flex: 0 0 auto;
+  position: relative;
+  z-index: 1; /* 넘친 가사 줄이 제목을 가리지 않도록 항상 위에 */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -256,10 +258,12 @@ body.video-cover #lyrics-video {
   overflow: hidden;
 }
 
-/* 줄 간격과 칩 여백을 촘촘하게 — 한 화면에 더 많은 줄이 들어가도록 */
+/* 줄 간격과 칩 여백을 촘촘하게 — 한 화면에 더 많은 줄이 들어가도록.
+   가운데 정렬된 내용이 칸보다 길면 위아래로 넘치는데, overflow를 잘라 위의 곡 정보를 덮지 않게 한다 */
 #lyrics-lines {
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: center;
