@@ -1426,6 +1426,18 @@ function applyVolume() {
   }
 }
 
+// Alt+` 음소거 토글: 0으로 내리기 전 볼륨을 기억했다가 복원한다 (0에서 켜면 직전 볼륨, 없으면 50)
+let preMuteVolume = 0;
+
+function toggleMute() {
+  if (masterVolume > 0) {
+    preMuteVolume = masterVolume;
+    setMasterVolume(0, true);
+  } else {
+    setMasterVolume(preMuteVolume > 0 ? preMuteVolume : 50, true);
+  }
+}
+
 function setMasterVolume(v, save) {
   masterVolume = clampVolume(v);
   // IFrame API는 정수 볼륨만 지원하므로, 소수점 값을 선택하면 현재 곡부터
@@ -2464,6 +2476,7 @@ window.lyrics.onControl((action, value) => {
   else if (action === 'seek') seekToFraction(value);
   else if (action === 'seek-by') seekBySeconds(value);
   else if (action === 'volume-step') setMasterVolume(masterVolume + value, true); // 전역 단축키(Alt+1/Alt+2)
+  else if (action === 'mute-toggle') toggleMute(); // 전역 단축키(Alt+`)
   else if (action === 'volume') setMasterVolume(value, false); // 드래그 중 실시간 반영
   else if (action === 'volume-save') setMasterVolume(value, true); // 조작을 마쳤을 때 저장
 });

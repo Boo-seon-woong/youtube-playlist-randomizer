@@ -751,11 +751,25 @@ async function resolveAlsongCandidates(queries, targetDuration) {
   return rankLyricCandidates(resolved, queries, targetDuration);
 }
 
+// 채택된 후보들은 같은 곡의 중복 등록본이다 — 고른 가사의 제목이 원어라도, 그중 한글 제목 등록본이 있으면
+// 표기(곡명·아티스트)만 그쪽을 쓴다. 번역 모델 없이 "한국어 제목"을 얻는 가장 값싼 길.
+function preferKoreanLabel(chosen, accepted, queries) {
+  if (!chosen || hasHangul(chosen.title)) return chosen;
+  const ko = accepted.find((c) => hasHangul(c.title) && !/[\(\[]/.test(c.title.trim()[0] || ''));
+  if (ko) {
+    return { ...chosen, title: ko.title, artist: hasHangul(ko.artist) || !chosen.artist ? ko.artist || chosen.artist : chosen.artist };
+  }
+  // DB에 한글 등록본이 없으면 영상 제목의 한글 표기(괄호 병기·병렬 표기)라도 쓴다 — 같은 영상에서 나온 제목이라 안전
+  const fromVideo = (queries && queries.primaryTitles || []).find((t) => hasHangul(t));
+  if (fromVideo) return { ...chosen, title: fromVideo };
+  return chosen;
+}
+
 async function findLyricsForTrack(title, artist, targetDuration) {
   const queries = buildLyricQueries(title, artist);
   const alsong = (await resolveAlsongCandidates(queries, targetDuration)).filter((c) => c.match.accepted);
   const korean = alsong.find((candidate) => candidate.hasKorean);
-  if (korean) return korean;
+  if (korean) return preferKoreanLabel(korean, alsong, queries);
 
   // ALSong에 한글 가사가 없을 때만 LRCLIB 원어 가사로 내려간다. 여기서도 채택 기준을 통과한 것만.
   const lrclib = rankLyricCandidates(await fetchLrclibCandidates(queries), queries, targetDuration)
@@ -900,7 +914,8 @@ function updateLyricsState(data) {
   };
   if (pendingVolumeFlash && next.volume !== lyricsState.volume) {
     pendingVolumeFlash = false;
-    sendLyricsFlash(`🔊 볼륨 ${Math.round(next.volume)}`);
+    // 0은 음소거 표시로 — "볼륨 0"보다 상태가 분명하다 (Alt+' 토글)
+    sendLyricsFlash(next.volume === 0 ? '🔇 음소거' : `🔊 볼륨 ${Math.round(next.volume)}`);
   }
   const key = lyricStateKey(next);
   const keyChanged = key !== lyricsKey;
@@ -1080,6 +1095,12 @@ function toggleLyricsClickThrough() {
 // 새 값이 상태로 돌아오면 가사 창에 띄운다 — 게임 중에는 앱의 볼륨 슬라이더가 보이지 않기 때문.
 let pendingVolumeFlash = false;
 
+function toggleMuteHotkey() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  pendingVolumeFlash = true; // 새 볼륨(0 또는 복원값)을 가사 창에 잠깐 띄운다
+  mainWindow.webContents.send('lyrics:control', 'mute-toggle');
+}
+
 function stepMasterVolume(delta) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   pendingVolumeFlash = true;
@@ -1092,6 +1113,7 @@ function sendLyricsFlash(text) {
 }
 
 const LYRICS_SHORTCUTS = [
+  { accelerator: 'Alt+`', label: '음소거 토글', run: () => toggleMuteHotkey() },
   { accelerator: 'Alt+1', label: '볼륨 1 감소', run: () => stepMasterVolume(-1) },
   { accelerator: 'Alt+2', label: '볼륨 1 증가', run: () => stepMasterVolume(1) },
   { accelerator: 'Alt+3', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
@@ -1983,7 +2005,7 @@ app.whenReady().then(async () => {
   // 플로팅 창의 재생 컨트롤 → 메인 창. seek는 0~1 비율, volume은 0~100 값을 함께 넘긴다.
   ipcMain.on('lyrics:control', (_event, action, value) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (['previous', 'toggle-play', 'next', 'seek', 'seek-by', 'volume', 'volume-save', 'volume-step'].includes(action)) {
+    if (['previous', 'toggle-play', 'next', 'seek', 'seek-by', 'volume', 'volume-save', 'volume-step', 'mute-toggle'].includes(action)) {
       mainWindow.webContents.send('lyrics:control', action, Number(value));
     }
   });
