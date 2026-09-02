@@ -73,15 +73,13 @@ body.dragging #lyrics-shell::after { opacity: 1; }
   font-weight: 700;
   white-space: nowrap;
   pointer-events: none;
-  animation: lyrics-flash-fade 1.6s ease forwards;
+  opacity: 1;
+  transition: opacity 0.3s ease;
 }
 
-@keyframes lyrics-flash-fade {
-  0% { opacity: 0; }
-  12% { opacity: 1; }
-  75% { opacity: 1; }
-  100% { opacity: 0; }
-}
+/* 값이 빠르게 갱신되는 동안(Alt+1/2 꾹) 애니메이션을 재시작하면 시작점(투명)에 묶여 안 보인다 —
+   기본은 불투명, 사라질 때만 .fade 로 페이드아웃 */
+#lyrics-flash.fade { opacity: 0; }
 
 /* 잠금(클릭 통과) 모드: 창이 마우스 히트 테스트에서 빠져 아무것도 누를 수 없으므로,
    눌리는 것처럼 보이는 요소를 감춘다 */

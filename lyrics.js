@@ -65,11 +65,12 @@ function flashMessage(text) {
   const el = document.getElementById('lyrics-flash');
   el.textContent = text;
   el.hidden = false;
-  el.style.animation = 'none';
-  void el.offsetWidth; // 애니메이션 재시작
-  el.style.animation = '';
+  el.classList.remove('fade'); // 갱신 중에는 계속 또렷하게 — 페이드는 마지막 갱신 1.3초 뒤에만
   clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => { el.hidden = true; }, 1600);
+  flashTimer = setTimeout(() => {
+    el.classList.add('fade');
+    flashTimer = setTimeout(() => { el.hidden = true; el.classList.remove('fade'); }, 320);
+  }, 1300);
 }
 
 function applyLyricsSettings(next) {

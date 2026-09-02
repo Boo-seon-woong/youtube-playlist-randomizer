@@ -1109,7 +1109,7 @@ function toggleMuteHotkey() {
 }
 
 // Alt+1/2를 꾹 누르면 자동 반복 콜백마다 호출된다 — 반복 중에는 걸음을 키워 볼륨이 빠르게 슬라이드되게 한다
-// (첫 입력 ±1, 반복 ±2, 1.5초 이상 누르면 ±4). 발동 시점은 그대로: 첫 콜백부터 즉시 반응.
+// (첫 입력 ±1, 반복 ±4, 1.5초 이상 누르면 ±8). 발동 시점은 그대로: 첫 콜백부터 즉시 반응.
 let volStepLast = 0;
 let volStepHoldStart = 0;
 
@@ -1119,7 +1119,7 @@ function stepMasterVolume(delta) {
   const repeating = now - volStepLast < 250;
   if (!repeating) volStepHoldStart = now;
   volStepLast = now;
-  const step = !repeating ? 1 : now - volStepHoldStart > 1500 ? 4 : 2;
+  const step = !repeating ? 1 : now - volStepHoldStart > 1500 ? 8 : 4;
   pendingVolumeFlash = true;
   mainWindow.webContents.send('lyrics:control', 'volume-step', delta * step);
 }
