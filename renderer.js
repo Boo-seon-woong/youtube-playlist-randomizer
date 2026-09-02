@@ -365,7 +365,8 @@ fallbackView.addEventListener('dom-ready', () => {
     ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
     /* 광고 차단 감지 팝업("광고 차단 프로그램은 허용되지 않습니다")은 주입 스크립트가
        자동으로 닫고 재생을 재개한다 — 닫히기 전까지는 화면에서 숨김 */
-    tp-yt-paper-dialog:has(ytd-enforcement-message-view-renderer) { opacity: 0 !important; }
+    tp-yt-paper-dialog:has(ytd-enforcement-message-view-renderer),
+    tp-yt-paper-dialog:has([class*="enforcement"]), ytd-popup-container tp-yt-paper-dialog:has(#dismiss-button) { opacity: 0 !important; }
     tp-yt-iron-overlay-backdrop { display: none !important; }
     .ytp-fullscreen-button { display: none !important; } /* 전체화면은 앱 버튼(몰입 모드)으로만 */
     .ad-showing .html5-main-video { visibility: hidden !important; } /* 광고 영상은 스킵될 때까지 화면에서 숨김 */
@@ -485,10 +486,15 @@ fallbackView.addEventListener('dom-ready', () => {
         const cont = document.querySelector('yt-confirm-dialog-renderer #confirm-button button');
         if (cont) cont.click();
         // 광고 차단 감지 팝업: 재생을 멈추므로 닫기 버튼을 눌러 해제하고, 닫힌 직후 재생 재개
-        const enf = document.querySelector('ytd-enforcement-message-view-renderer');
-        if (enf) {
-          const dlg = enf.closest('tp-yt-paper-dialog') || enf;
-          const closeBtn = dlg.querySelector('#dismiss-button button, #close-button button, [aria-label*="닫기"], [aria-label*="Close"]');
+        // 마크업이 자주 바뀌므로 렌더러 이름이 아니라 팝업 텍스트("광고 차단"/"ad blocker")로 찾는다
+        let enfDialog = null;
+        for (const dlg of document.querySelectorAll('tp-yt-paper-dialog, ytd-popup-container dialog')) {
+          if (dlg.offsetParent === null && dlg.style.display === 'none') continue;
+          const text = dlg.textContent || '';
+          if (/광고 차단|ad ?block/i.test(text)) { enfDialog = dlg; break; }
+        }
+        if (enfDialog) {
+          const closeBtn = enfDialog.querySelector('#dismiss-button button, #close-button button, [aria-label*="닫기"], [aria-label*="Close"], yt-icon-button#close-button, #dismiss-button');
           if (closeBtn) closeBtn.click();
           window.__enfDismissedAt = Date.now();
         } else if (window.__enfDismissedAt && Date.now() - window.__enfDismissedAt < 5000) {

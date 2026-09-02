@@ -753,16 +753,23 @@ async function resolveAlsongCandidates(queries, targetDuration) {
 
 // 채택된 후보들은 같은 곡의 중복 등록본이다 — 고른 가사의 제목이 원어라도, 그중 한글 제목 등록본이 있으면
 // 표기(곡명·아티스트)만 그쪽을 쓴다. 번역 모델 없이 "한국어 제목"을 얻는 가장 값싼 길.
+// 표기용 제목 정리: DB 등록본 제목엔 "[가사/해석/발음]" 같은 꼬리표가 붙어 있는 경우가 많다 — 표기에서만 뗀다
+function cleanLyricLabel(title) {
+  const cleaned = stripFeat(stripTitleNoise(title));
+  return cleaned || String(title || '');
+}
+
 function preferKoreanLabel(chosen, accepted, queries) {
-  if (!chosen || hasHangul(chosen.title)) return chosen;
+  if (!chosen) return chosen;
+  if (hasHangul(chosen.title)) return { ...chosen, title: cleanLyricLabel(chosen.title) };
   const ko = accepted.find((c) => hasHangul(c.title) && !/[\(\[]/.test(c.title.trim()[0] || ''));
   if (ko) {
-    return { ...chosen, title: ko.title, artist: hasHangul(ko.artist) || !chosen.artist ? ko.artist || chosen.artist : chosen.artist };
+    return { ...chosen, title: cleanLyricLabel(ko.title), artist: hasHangul(ko.artist) || !chosen.artist ? ko.artist || chosen.artist : chosen.artist };
   }
   // DB에 한글 등록본이 없으면 영상 제목의 한글 표기(괄호 병기·병렬 표기)라도 쓴다 — 같은 영상에서 나온 제목이라 안전
   const fromVideo = (queries && queries.primaryTitles || []).find((t) => hasHangul(t));
   if (fromVideo) return { ...chosen, title: fromVideo };
-  return chosen;
+  return { ...chosen, title: cleanLyricLabel(chosen.title) };
 }
 
 async function findLyricsForTrack(title, artist, targetDuration) {

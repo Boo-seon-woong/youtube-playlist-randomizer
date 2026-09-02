@@ -233,10 +233,15 @@ function syncMiniVideo() {
 }
 
 function render() {
-  // 가사를 찾았으면 유튜브 제목 대신 가사 DB의 곡명·아티스트를 보여준다
+  // 가사를 찾았으면 유튜브 제목 대신 가사 DB의 곡명·아티스트를 보여준다.
+  // 단, 지금 표시 중인 유튜브 제목이 한글인데 DB 제목이 원어라면 한글 쪽을 유지한다
+  // (한글로 잘 뜨다가 가사가 매칭되는 순간 원어로 바뀌던 문제).
+  const ko = (t) => /[가-힣]/.test(String(t || ''));
   const matched = lyricData && !lyricData.unavailable && lyricData.title;
-  title.textContent = matched ? lyricData.title : (playback.title || '');
-  artist.textContent = matched ? (lyricData.artist || playback.artist || '') : (playback.artist || '');
+  const useDbTitle = matched && (ko(lyricData.title) || !ko(playback.title));
+  title.textContent = useDbTitle ? lyricData.title : (playback.title || '');
+  artist.textContent = matched && (ko(lyricData.artist) || !ko(playback.artist))
+    ? (lyricData.artist || playback.artist || '') : (playback.artist || '');
   if (cover.dataset.src !== (playback.coverUrl || '')) {
     cover.dataset.src = playback.coverUrl || '';
     cover.src = playback.coverUrl || '';
