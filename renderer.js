@@ -509,7 +509,13 @@ function onPlayerStateChange(event) {
   // 폴백 재생 중에는 iframe의 잔여 상태 변화(stopVideo 등)가 재생 바 표시를 덮어쓰지 않도록
   if (fallbackActive) return;
   const data = player.getVideoData();
-  if (data && data.title) setNowPlaying(data.video_id || queue[queueIndex], data.title, data.author || '');
+  if (data && data.title) {
+    // 임베드 플레이어의 getVideoData()는 원어 제목을 준다 — 재생목록 스크랩(hl=ko)의 한국어 현지화 제목이
+    // 캐시에 있으면 그쪽을 쓴다. 폴백 전환 후에만 한국어 제목으로 바뀌던(상호작용해야 번역되던) 원인.
+    const vid = data.video_id || queue[queueIndex];
+    const cached = titleCache.get(vid);
+    setNowPlaying(vid, (cached && cached.title) || data.title, (cached && cached.author) || data.author || '');
+  }
   const state = event.data === YT.PlayerState.PLAYING ? 'playing'
     : event.data === YT.PlayerState.PAUSED ? 'paused' : lyricsPublishedState.status;
   let progress = 0;
