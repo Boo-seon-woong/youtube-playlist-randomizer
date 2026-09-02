@@ -1416,10 +1416,13 @@ function paintVolumeUI() {
   soundFill.style.width = v + '%';
 }
 
-// 체감 볼륨 커브: 슬라이더 값(0~100)을 제곱 커브로 출력 볼륨에 매핑한다 — 1은 충분히 작고 100은 충분히 크게.
-// (선형이면 저볼륨 구간이 크게 들려 1과 100의 차이가 좁게 느껴진다. UI·저장값은 그대로 선형 0~100.)
+// 체감 볼륨 커브: 슬라이더 값(0~100)을 dB 선형(로그) 커브로 출력 진폭에 매핑한다 — 1은 충분히 작고
+// 100은 충분히 크게, 전 구간이 40dB에 고르게 퍼진다. 제곱 커브는 저볼륨이 0으로 반올림돼 1~7이
+// 통째로 무음이 되는 데드존을 만들었다(실측 신고). 이 커브는 1부터 바로 들린다(출력 ≥1).
+// UI·저장값은 그대로 선형 0~100.
 function effectiveVolume() {
-  return (masterVolume * masterVolume) / 100;
+  if (masterVolume <= 0) return 0;
+  return 100 * Math.pow(10, (masterVolume - 100) / 50);
 }
 
 function applyVolume() {
@@ -1427,8 +1430,7 @@ function applyVolume() {
   if (playerReady) {
     try {
       player.setVolume(out);
-      // 임베드 플레이어는 볼륨 0에서 unMute()하면 최소 볼륨 5로 되살린다(실측) — IFrame API는 정수 볼륨이라
-      // 커브 출력이 0으로 반올림되는 구간(0.5 미만)은 mute()로 처리한다(어차피 들리지 않는 크기).
+      // 임베드 플레이어는 볼륨 0에서 unMute()하면 최소 볼륨 5로 되살린다(실측) — 무음은 0에서만.
       if (out < 0.5) player.mute();
       else player.unMute();
     } catch {}
