@@ -384,9 +384,7 @@ window.lyricsOverlay.onData((next) => {
   render();
 });
 
-document.getElementById('lyrics-search').addEventListener('click', showSearch);
-document.getElementById('lyrics-retry').addEventListener('click', () => window.lyricsOverlay.retry());
-document.getElementById('lyrics-hide').addEventListener('click', () => window.lyricsOverlay.hide());
+// 탐색·새로고침·숨기기 버튼은 제거(가사 검색은 메인 창에서) — 설정 톱니만 남긴다
 document.getElementById('lyrics-search-close').addEventListener('click', hideSearch);
 document.getElementById('lyrics-settings').addEventListener('click', () => window.lyricsOverlay.openSettings());
 previousButton.addEventListener('click', () => window.lyricsOverlay.control('previous'));

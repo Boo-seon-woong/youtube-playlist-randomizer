@@ -314,6 +314,7 @@ body.video-cover #lyrics-video {
   position: absolute;
   top: 0;
   right: 0;
+  z-index: 3; /* 곡 정보(z-index 1) 위 — 제목 칩이 톱니를 덮어 클릭이 통과되던 문제 */
   display: flex;
   gap: 3px;
   opacity: 0;
