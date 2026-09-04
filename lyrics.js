@@ -3,7 +3,7 @@ let lyricData = null;
 let lyricsSettings = {
   width: 760, height: 240, backgroundOpacity: 94, uiOpacity: 100, fontSize: 16,
   showProgressBar: true, showPlaybackControls: true,
-  showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true, showLyrics: true,
+  showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true, showLyrics: true, machineTranslate: true,
   showTrackInfo: true, coverMode: 'art', videoFit: 'cover', fontFamily: 'default', showStatus: true, alwaysOnTop: true, clickThrough: false,
 };
 

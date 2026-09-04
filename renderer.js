@@ -1313,6 +1313,7 @@ const lsToggleInputs = {
   showNextButton: document.getElementById('ls-next'),
   showVolumeButton: document.getElementById('ls-volume'),
   showLyrics: document.getElementById('ls-lyrics'),
+  machineTranslate: document.getElementById('ls-machine-translate'),
   showTrackInfo: document.getElementById('ls-track-info'),
   alwaysOnTop: document.getElementById('ls-topmost'),
   clickThrough: document.getElementById('ls-lock'),

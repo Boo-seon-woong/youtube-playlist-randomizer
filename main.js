@@ -133,6 +133,7 @@ const DEFAULT_LYRICS_SETTINGS = {
   showNextButton: true,
   showVolumeButton: true,
   showLyrics: true, // 오른쪽 가사 영역 (끄면 왼쪽 사각형만 남는다)
+  machineTranslate: true, // 한국어 가사가 없을 때 동봉된 번역 모델로 기계 번역
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   videoFit: 'cover', // 영상 맞춤: 'cover'(상하 기준으로 채우고 좌우는 잘림) | 'contain'(전체가 보이도록)
@@ -171,6 +172,7 @@ function normalizeLyricsSettings(value) {
     showNextButton: boolean('showNextButton'),
     showVolumeButton: boolean('showVolumeButton'),
     showLyrics: boolean('showLyrics'),
+    machineTranslate: boolean('machineTranslate'),
     showTrackInfo: boolean('showTrackInfo'),
     coverMode,
     videoFit: VIDEO_FITS.includes(source.videoFit) ? source.videoFit : DEFAULT_LYRICS_SETTINGS.videoFit,
@@ -881,10 +883,90 @@ async function fetchVideoMusicInfo(videoId) {
   return info;
 }
 
+// ── 내장 기계 번역 (한국어 가사가 없는 곡 전용 폴백) ──
+// 동봉된 M2M100-418M(양자화, models/)을 transformers.js(WASM/N-API, 외부 요청 없음)로 돌린다.
+// 줄당 ~1.5초라 백그라운드로 진행하며 4줄마다 화면을 갱신하고, 곡별 결과는 userData/mt-cache에 저장한다.
+let translatorPromise = null;
+const mtInFlight = new Set();
+
+function getTranslator() {
+  if (!translatorPromise) {
+    translatorPromise = (async () => {
+      const { pipeline, env } = await import('@huggingface/transformers');
+      env.cacheDir = path.join(__dirname, 'models');
+      env.allowRemoteModels = false; // 동봉본만 사용 — 어떤 외부 다운로드도 하지 않는다
+      return pipeline('translation', 'Xenova/m2m100_418M', { dtype: 'q8' });
+    })();
+    translatorPromise.catch(() => { translatorPromise = null; }); // 로드 실패 시 다음에 재시도
+  }
+  return translatorPromise;
+}
+
+// 가사 전체에서 원어를 추정한다 (m2m100의 src_lang)
+function detectSourceLang(lines) {
+  const text = lines.map((line) => line.text).join(' ');
+  if (/[ぁ-んァ-ン]/.test(text)) return 'ja';
+  if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
+  if (/[а-яА-Я]/.test(text)) return 'ru';
+  return 'en';
+}
+
+function mtCachePath(data) {
+  const dir = path.join(app.getPath('userData'), 'mt-cache');
+  return { dir, file: path.join(dir, `${data.source || 'x'}-${String(data.id || 'x').replace(/[^\w-]/g, '_')}.json`) };
+}
+
+async function machineTranslateLyrics(key, data) {
+  if (mtInFlight.has(key)) return;
+  mtInFlight.add(key);
+  try {
+    const { dir, file } = mtCachePath(data);
+    let koLines = null;
+    try { koLines = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+    const publish = (lines) => {
+      const next = { ...data, lines, machineTranslated: true, fallbackNotice: '한글 번역 없음 · 기계 번역' };
+      lyricsCache.set(key, next);
+      if (key === lyricsKey) {
+        lyricsData = next;
+        sendLyricsToWindow();
+      }
+    };
+    if (!koLines) {
+      const translate = await getTranslator();
+      const src = detectSourceLang(data.lines);
+      koLines = [];
+      const merged = data.lines.map((line) => ({ ...line }));
+      for (let i = 0; i < data.lines.length; i++) {
+        const original = String(data.lines[i].text || '').replace(/\s*\n\s*/g, ' ').trim();
+        let ko = '';
+        if (original && !hasHangul(original)) {
+          try {
+            const out = await translate(original, { src_lang: src, tgt_lang: 'ko' });
+            ko = String((out && out[0] && out[0].translation_text) || '').trim();
+          } catch {}
+        }
+        koLines.push(ko);
+        if (ko) merged[i].text = `${data.lines[i].text}\n${ko}`;
+        // 곡이 바뀌었으면 나머지는 조용히 이어서 번역만 해 캐시에 남긴다 (화면 갱신 생략)
+        if ((i + 1) % 4 === 0 && key === lyricsKey) publish(merged.map((line) => ({ ...line })));
+      }
+      try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(koLines)); } catch {}
+      publish(merged);
+      return;
+    }
+    publish(data.lines.map((line, i) => (koLines[i] ? { ...line, text: `${line.text}\n${koLines[i]}` } : { ...line })));
+  } catch {} finally {
+    mtInFlight.delete(key);
+  }
+}
+
 async function loadLyricsForState(state, key) {
   if (lyricsLoadingKey === key) return;
   if (lyricsCache.has(key)) {
     lyricsData = lyricsCache.get(key);
+    if (!lyricsData.unavailable && lyricsData.lines.length > 0 && !lyricsData.hasKorean && !lyricsData.machineTranslated && lyricsSettings.machineTranslate) {
+      machineTranslateLyrics(key, lyricsData);
+    }
     sendLyricsToWindow();
     return;
   }
@@ -899,6 +981,10 @@ async function loadLyricsForState(state, key) {
     }
     const displayData = data || { unavailable: true, lines: [] };
     lyricsCache.set(key, displayData);
+    // 한국어 가사를 못 구한 곡은 동봉 모델로 기계 번역을 백그라운드에서 시작한다
+    if (!displayData.unavailable && displayData.lines.length > 0 && !displayData.hasKorean && lyricsSettings.machineTranslate) {
+      machineTranslateLyrics(key, displayData);
+    }
     if (requestId !== lyricsRequestId || key !== lyricsKey) return;
     lyricsData = displayData;
     sendLyricsToWindow();

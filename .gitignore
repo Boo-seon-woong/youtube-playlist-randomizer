@@ -3,3 +3,4 @@ dist/
 *.log
 CLAUDE.md
 *_example.png
+models/

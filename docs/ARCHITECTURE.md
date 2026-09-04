@@ -435,6 +435,13 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
 - **현지화 제목 우선**: 임베드 `getVideoData()`는 원어 제목을 주지만 재생목록 스크랩(hl=ko)의 `titleCache`엔
   한국어 현지화 제목이 있다 — 상태 변화 때도 캐시를 우선해, 폴백 전환/상호작용 후에야 한국어로 바뀌던
   불일치를 없앴다.
+- **내장 기계 번역**(`machineTranslateLyrics`): 한국어 가사를 못 찾은 곡에서만, 동봉된 M2M100-418M
+  (양자화 ONNX, `models/` 611MB)을 transformers.js로 돌려 각 줄 아래에 한국어를 병기한다(외부 요청 없음 —
+  `env.allowRemoteModels=false`). 원어는 가나/한자/키릴 감지로 추정(ja/zh/ru, 그 외 en). 줄당 ~1.5초라
+  백그라운드로 4줄마다 화면 갱신, 결과는 `userData/mt-cache/<source>-<id>.json`에 저장돼 재생마다 재번역하지
+  않는다. `machineTranslate` 설정(기본 켬)으로 끌 수 있다. 상태 표기는 "한글 번역 없음 · 기계 번역".
+  패키징: 의존성 트리(onnxruntime-node는 N-API라 Electron ABI 무관, sharp는 win32 프리빌트 강제 설치)와
+  models/가 함께 동봉된다 — 자세한 절차는 DEVELOPMENT.md.
 - **한국어 곡명 표기**(`preferKoreanLabel`): 고른 가사의 제목이 원어면, ① 채택된 같은 곡 후보 중 한글 제목
   등록본, ② 없으면 영상 제목의 한글 표기(괄호 병기 등) 순으로 표기만 바꾼다. 번역 모델 없이 가능한 범위 —
   영상 제목·DB 어디에도 한글 표기가 없는 곡(공식 원어 제목뿐)은 원어 그대로 남는다.

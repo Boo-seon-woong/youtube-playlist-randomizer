@@ -16,7 +16,16 @@ npm start        # 내부적으로 electron . --no-sandbox
 ```bash
 npm run package:win
 # → dist/YouTube Music Player-win32-x64/YouTube Music Player.exe
-rm -rf "dist/YouTube Music Player-win32-x64/resources/app/node_modules"   # 불필요한 devDependencies 제거
+# node_modules는 지우면 안 된다 — 런타임 의존성(@huggingface/transformers, 동봉 번역 모델용)이 들어있다.
+# electron-packager --prune이 devDependencies를 알아서 뺀다. 다른 플랫폼 바이너리만 정리:
+rm -rf "dist/YouTube Music Player-win32-x64/resources/app/node_modules/onnxruntime-node/bin/napi-v6/linux" \
+       "dist/YouTube Music Player-win32-x64/resources/app/node_modules/onnxruntime-node/bin/napi-v6/darwin" \
+       "dist/YouTube Music Player-win32-x64/resources/app/node_modules/@img/sharp-linux-x64" \
+       "dist/YouTube Music Player-win32-x64/resources/app/node_modules/@img/sharp-libvips-linux-x64"
+# 사전 준비(1회): sharp의 win32 바이너리 강제 설치 — npm install --no-save --force --os=win32 --cpu=x64 sharp
+# 번역 모델은 ./models/(gitignore, 611MB)에 동봉된다. 없으면:
+#   node --input-type=module -e "import {pipeline,env} from '@huggingface/transformers'; env.cacheDir='./models'; await pipeline('translation','Xenova/m2m100_418M',{dtype:'q8'})"
+# (env.allowRemoteModels 기본값이 true인 상태로 위를 실행하면 HuggingFace에서 받아 models/에 캐시된다)
 ```
 
 만들어진 폴더를 통째로 Windows 쪽에 복사하면 `YouTube Music Player.exe` 더블클릭으로 실행됩니다.

@@ -1,6 +1,6 @@
 {
   "name": "youtube-music-player",
-  "version": "1.27.6",
+  "version": "1.28.0",
   "description": "유튜브 재생목록 링크로 음악·영상을 재생하는 데스크톱 플레이어 (Electron)",
   "main": "main.js",
   "scripts": {
@@ -15,5 +15,8 @@
     "@electron/packager": "^18.4.4",
     "electron": "^41.7.1"
   },
-  "productName": "YouTube Music Player"
+  "productName": "YouTube Music Player",
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0"
+  }
 }
