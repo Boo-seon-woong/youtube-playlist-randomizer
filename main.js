@@ -885,17 +885,50 @@ async function fetchVideoMusicInfo(videoId) {
 
 // ── 내장 기계 번역 (한국어 가사가 없는 곡 전용 폴백) ──
 // 동봉된 M2M100-418M(양자화, models/)을 transformers.js(WASM/N-API, 외부 요청 없음)로 돌린다.
-// 줄당 ~1.5초라 백그라운드로 진행하며 4줄마다 화면을 갱신하고, 곡별 결과는 userData/mt-cache에 저장한다.
+// CPU 2스레드 제한이라 줄당 수 초 걸리므로 백그라운드로 진행하며 4줄마다 화면을 갱신하고, 곡별 결과는 userData/mt-cache에 저장한다.
 let translatorPromise = null;
 const mtInFlight = new Set();
+let mtActiveCount = 0;
+
+// 번역 추론이 도는 동안만 앱 프로세스 우선순위를 낮춰(BELOW_NORMAL) 게임 등 전면 앱이 CPU를 먼저 가져가게 한다
+function setMtLowPriority(active) {
+  mtActiveCount += active ? 1 : -1;
+  try {
+    const os = require('os');
+    if (active && mtActiveCount === 1) os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
+    else if (!active && mtActiveCount === 0) os.setPriority(os.constants.priority.PRIORITY_NORMAL);
+  } catch {}
+}
+
+// 번역기가 로드되면 모델이 600MB+ RAM을 계속 점유하므로, 마지막 번역 후 5분 유휴가 지나면 내려놓는다
+let translatorIdleTimer = null;
+function scheduleTranslatorUnload() {
+  clearTimeout(translatorIdleTimer);
+  translatorIdleTimer = setTimeout(async () => {
+    if (mtInFlight.size > 0 || !translatorPromise) return;
+    const pending = translatorPromise;
+    translatorPromise = null;
+    try { const translator = await pending; await translator.dispose(); } catch {}
+  }, 5 * 60 * 1000);
+}
 
 function getTranslator() {
+  clearTimeout(translatorIdleTimer);
   if (!translatorPromise) {
     translatorPromise = (async () => {
       const { pipeline, env } = await import('@huggingface/transformers');
       env.cacheDir = path.join(__dirname, 'models');
       env.allowRemoteModels = false; // 동봉본만 사용 — 어떤 외부 다운로드도 하지 않는다
-      return pipeline('translation', 'Xenova/m2m100_418M', { dtype: 'q8' });
+      return pipeline('translation', 'Xenova/m2m100_418M', {
+        dtype: 'q8',
+        // 게임 등 다른 앱의 프레임을 뺏지 않도록 추론을 CPU 2스레드로 제한하고,
+        // ORT 스레드풀의 유휴 busy-wait(스피닝)도 끈다 — 기본값은 전 코어 사용이었다
+        session_options: {
+          intraOpNumThreads: 2,
+          interOpNumThreads: 1,
+          extra: { session: { intra_op: { allow_spinning: '0' }, inter_op: { allow_spinning: '0' } } },
+        },
+      });
     })();
     translatorPromise.catch(() => { translatorPromise = null; }); // 로드 실패 시 다음에 재시도
   }
@@ -936,19 +969,26 @@ async function machineTranslateLyrics(key, data) {
       const src = detectSourceLang(data.lines);
       koLines = [];
       const merged = data.lines.map((line) => ({ ...line }));
-      for (let i = 0; i < data.lines.length; i++) {
-        const original = String(data.lines[i].text || '').replace(/\s*\n\s*/g, ' ').trim();
-        let ko = '';
-        if (original && !hasHangul(original)) {
-          try {
-            const out = await translate(original, { src_lang: src, tgt_lang: 'ko' });
-            ko = String((out && out[0] && out[0].translation_text) || '').trim();
-          } catch {}
+      setMtLowPriority(true);
+      try {
+        for (let i = 0; i < data.lines.length; i++) {
+          const original = String(data.lines[i].text || '').replace(/\s*\n\s*/g, ' ').trim();
+          let ko = '';
+          if (original && !hasHangul(original)) {
+            try {
+              const out = await translate(original, { src_lang: src, tgt_lang: 'ko' });
+              ko = String((out && out[0] && out[0].translation_text) || '').trim();
+            } catch {}
+            // 줄 사이 휴지 — 추론을 연속으로 몰아치지 않아 평균 CPU 점유를 낮춘다
+            await new Promise((resolve) => setTimeout(resolve, 150));
+          }
+          koLines.push(ko);
+          if (ko) merged[i].text = `${data.lines[i].text}\n${ko}`;
+          // 곡이 바뀌었으면 나머지는 조용히 이어서 번역만 해 캐시에 남긴다 (화면 갱신 생략)
+          if ((i + 1) % 4 === 0 && key === lyricsKey) publish(merged.map((line) => ({ ...line })));
         }
-        koLines.push(ko);
-        if (ko) merged[i].text = `${data.lines[i].text}\n${ko}`;
-        // 곡이 바뀌었으면 나머지는 조용히 이어서 번역만 해 캐시에 남긴다 (화면 갱신 생략)
-        if ((i + 1) % 4 === 0 && key === lyricsKey) publish(merged.map((line) => ({ ...line })));
+      } finally {
+        setMtLowPriority(false);
       }
       try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(koLines)); } catch {}
       publish(merged);
@@ -957,6 +997,7 @@ async function machineTranslateLyrics(key, data) {
     publish(data.lines.map((line, i) => (koLines[i] ? { ...line, text: `${line.text}\n${koLines[i]}` } : { ...line })));
   } catch {} finally {
     mtInFlight.delete(key);
+    if (mtInFlight.size === 0 && translatorPromise) scheduleTranslatorUnload();
   }
 }
 
