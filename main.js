@@ -884,55 +884,56 @@ async function fetchVideoMusicInfo(videoId) {
 }
 
 // ── 내장 기계 번역 (한국어 가사가 없는 곡 전용 폴백) ──
-// 동봉된 M2M100-418M(양자화, models/)을 transformers.js(WASM/N-API, 외부 요청 없음)로 돌린다.
-// CPU 2스레드 제한이라 줄당 수 초 걸리므로 백그라운드로 진행하며 4줄마다 화면을 갱신하고, 곡별 결과는 userData/mt-cache에 저장한다.
-let translatorPromise = null;
+// 동봉된 M2M100-418M(양자화, models/)을 별도 유틸리티 프로세스(mt-worker.js)에서 돌린다.
+// 메인 프로세스에서 돌리면 우선순위를 BELOW_NORMAL까지밖에 못 내려(UI·오디오 공유) 게임 프레임이
+// 30%+ 떨어졌다 — 워커는 IDLE 우선순위 + 1스레드라 전면 앱이 항상 CPU를 먼저 가져간다.
+// 줄당 수 초 걸리므로 백그라운드로 진행하며 4줄마다 화면을 갱신하고, 곡별 결과는 userData/mt-cache에 저장한다.
 const mtInFlight = new Set();
-let mtActiveCount = 0;
+let mtWorker = null;
+let mtWorkerIdleTimer = null;
+let mtJobSeq = 0;
+const mtJobs = new Map(); // id → { onLine(index, ko), resolve, reject }
 
-// 번역 추론이 도는 동안만 앱 프로세스 우선순위를 낮춰(BELOW_NORMAL) 게임 등 전면 앱이 CPU를 먼저 가져가게 한다
-function setMtLowPriority(active) {
-  mtActiveCount += active ? 1 : -1;
-  try {
-    const os = require('os');
-    if (active && mtActiveCount === 1) os.setPriority(os.constants.priority.PRIORITY_BELOW_NORMAL);
-    else if (!active && mtActiveCount === 0) os.setPriority(os.constants.priority.PRIORITY_NORMAL);
-  } catch {}
+function getMtWorker() {
+  clearTimeout(mtWorkerIdleTimer);
+  if (!mtWorker) {
+    const { utilityProcess } = require('electron');
+    mtWorker = utilityProcess.fork(path.join(__dirname, 'mt-worker.js'), [], { serviceName: 'lyrics-mt' });
+    mtWorker.on('message', (msg) => {
+      const job = msg && mtJobs.get(msg.id);
+      if (!job) return;
+      if (msg.type === 'line') job.onLine(msg.index, msg.ko);
+      else if (msg.type === 'done') {
+        mtJobs.delete(msg.id);
+        if (msg.error) job.reject(new Error(msg.error)); else job.resolve();
+      }
+    });
+    mtWorker.on('exit', () => {
+      mtWorker = null;
+      for (const job of mtJobs.values()) job.reject(new Error('mt worker exited'));
+      mtJobs.clear();
+    });
+  }
+  return mtWorker;
 }
 
-// 번역기가 로드되면 모델이 600MB+ RAM을 계속 점유하므로, 마지막 번역 후 5분 유휴가 지나면 내려놓는다
-let translatorIdleTimer = null;
-function scheduleTranslatorUnload() {
-  clearTimeout(translatorIdleTimer);
-  translatorIdleTimer = setTimeout(async () => {
-    if (mtInFlight.size > 0 || !translatorPromise) return;
-    const pending = translatorPromise;
-    translatorPromise = null;
-    try { const translator = await pending; await translator.dispose(); } catch {}
+// 워커가 살아 있는 동안 모델이 600MB+ RAM을 점유하므로, 마지막 번역 후 5분 유휴가 지나면 프로세스째 내린다
+function scheduleMtWorkerStop() {
+  clearTimeout(mtWorkerIdleTimer);
+  mtWorkerIdleTimer = setTimeout(() => {
+    if (mtInFlight.size > 0 || !mtWorker) return;
+    try { mtWorker.kill(); } catch {}
+    mtWorker = null;
   }, 5 * 60 * 1000);
 }
 
-function getTranslator() {
-  clearTimeout(translatorIdleTimer);
-  if (!translatorPromise) {
-    translatorPromise = (async () => {
-      const { pipeline, env } = await import('@huggingface/transformers');
-      env.cacheDir = path.join(__dirname, 'models');
-      env.allowRemoteModels = false; // 동봉본만 사용 — 어떤 외부 다운로드도 하지 않는다
-      return pipeline('translation', 'Xenova/m2m100_418M', {
-        dtype: 'q8',
-        // 게임 등 다른 앱의 프레임을 뺏지 않도록 추론을 CPU 2스레드로 제한하고,
-        // ORT 스레드풀의 유휴 busy-wait(스피닝)도 끈다 — 기본값은 전 코어 사용이었다
-        session_options: {
-          intraOpNumThreads: 2,
-          interOpNumThreads: 1,
-          extra: { session: { intra_op: { allow_spinning: '0' }, inter_op: { allow_spinning: '0' } } },
-        },
-      });
-    })();
-    translatorPromise.catch(() => { translatorPromise = null; }); // 로드 실패 시 다음에 재시도
-  }
-  return translatorPromise;
+// lines: 줄별 번역 원문(빈 문자열 = 생략), 줄마다 onLine(index, ko) 호출, 전체 완료 시 resolve
+function runMtJob(lines, src, onLine) {
+  return new Promise((resolve, reject) => {
+    const id = ++mtJobSeq;
+    mtJobs.set(id, { onLine, resolve, reject });
+    try { getMtWorker().postMessage({ id, lines, src }); } catch (err) { mtJobs.delete(id); reject(err); }
+  });
 }
 
 // 가사 전체에서 원어를 추정한다 (m2m100의 src_lang)
@@ -965,31 +966,20 @@ async function machineTranslateLyrics(key, data) {
       }
     };
     if (!koLines) {
-      const translate = await getTranslator();
       const src = detectSourceLang(data.lines);
-      koLines = [];
+      // 번역할 원문만 추려 워커에 넘긴다 (빈 문자열 = 한글이 있거나 빈 줄 → 생략)
+      const originals = data.lines.map((line) => {
+        const text = String(line.text || '').replace(/\s*\n\s*/g, ' ').trim();
+        return text && !hasHangul(text) ? text : '';
+      });
+      koLines = new Array(originals.length).fill('');
       const merged = data.lines.map((line) => ({ ...line }));
-      setMtLowPriority(true);
-      try {
-        for (let i = 0; i < data.lines.length; i++) {
-          const original = String(data.lines[i].text || '').replace(/\s*\n\s*/g, ' ').trim();
-          let ko = '';
-          if (original && !hasHangul(original)) {
-            try {
-              const out = await translate(original, { src_lang: src, tgt_lang: 'ko' });
-              ko = String((out && out[0] && out[0].translation_text) || '').trim();
-            } catch {}
-            // 줄 사이 휴지 — 추론을 연속으로 몰아치지 않아 평균 CPU 점유를 낮춘다
-            await new Promise((resolve) => setTimeout(resolve, 150));
-          }
-          koLines.push(ko);
-          if (ko) merged[i].text = `${data.lines[i].text}\n${ko}`;
-          // 곡이 바뀌었으면 나머지는 조용히 이어서 번역만 해 캐시에 남긴다 (화면 갱신 생략)
-          if ((i + 1) % 4 === 0 && key === lyricsKey) publish(merged.map((line) => ({ ...line })));
-        }
-      } finally {
-        setMtLowPriority(false);
-      }
+      await runMtJob(originals, src, (i, ko) => {
+        koLines[i] = ko;
+        if (ko) merged[i].text = `${data.lines[i].text}\n${ko}`;
+        // 곡이 바뀌었으면 나머지는 조용히 이어서 번역만 해 캐시에 남긴다 (화면 갱신 생략)
+        if ((i + 1) % 4 === 0 && key === lyricsKey) publish(merged.map((line) => ({ ...line })));
+      });
       try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(koLines)); } catch {}
       publish(merged);
       return;
@@ -997,7 +987,7 @@ async function machineTranslateLyrics(key, data) {
     publish(data.lines.map((line, i) => (koLines[i] ? { ...line, text: `${line.text}\n${koLines[i]}` } : { ...line })));
   } catch {} finally {
     mtInFlight.delete(key);
-    if (mtInFlight.size === 0 && translatorPromise) scheduleTranslatorUnload();
+    if (mtInFlight.size === 0 && mtWorker) scheduleMtWorkerStop();
   }
 }
 

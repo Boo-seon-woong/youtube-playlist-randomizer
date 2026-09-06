@@ -440,10 +440,14 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   `env.allowRemoteModels=false`). 원어는 가나/한자/키릴 감지로 추정(ja/zh/ru, 그 외 en). 백그라운드로
   4줄마다 화면 갱신, 결과는 `userData/mt-cache/<source>-<id>.json`에 저장돼 재생마다 재번역하지
   않는다. `machineTranslate` 설정(기본 켬)으로 끌 수 있다. 상태 표기는 "한글 번역 없음 · 기계 번역".
-  **경량화(게임 프레임 드랍 방지)**: ORT 세션은 `intraOpNumThreads:2`+스피닝 off로 CPU 2스레드에 묶고
-  (기본값은 전 코어), 추론이 도는 동안만 앱 프로세스 우선순위를 BELOW_NORMAL로 낮추며(`setMtLowPriority`),
-  줄 사이 150ms 휴지를 둔다(줄당 수 초로 느려지지만 폴백 기능이라 무방). 로드된 모델(600MB+ RAM)은
-  마지막 번역 후 5분 유휴가 지나면 `dispose()`로 내려놓는다(`scheduleTranslatorUnload`) — 다음 사용 때 재로드(~20초).
+  **경량화(게임 프레임 드랍 방지)**: 추론은 별도 유틸리티 프로세스 `mt-worker.js`에서 돈다
+  (`utilityProcess.fork`, main의 `getMtWorker`/`runMtJob` — 잡 `{id, lines[], src}` → 줄마다 `{type:'line'}`,
+  끝에 `{type:'done'}`). 메인 프로세스 안에서 BELOW_NORMAL+2스레드로 돌리는 1차 시도로는 게임 프레임이
+  30%+ 떨어졌다 — 워커는 시작 시 스스로 IDLE 우선순위(`os.setPriority(PRIORITY_LOW)`, Windows
+  IDLE_PRIORITY_CLASS)로 내려가 전면 앱이 항상 CPU를 먼저 가져가고, ORT 세션도 `intraOpNumThreads:1`+
+  스피닝 off로 1스레드에 묶으며(기본값은 전 코어) 줄 사이 100ms 휴지를 둔다(줄당 수 초로 느려지지만
+  폴백 기능이라 무방). 워커가 살아 있는 동안 모델이 600MB+ RAM을 점유하므로 마지막 번역 후 5분 유휴가
+  지나면 프로세스째 kill한다(`scheduleMtWorkerStop`) — 다음 사용 때 재기동+재로드(~20초).
   패키징: 의존성 트리(onnxruntime-node는 N-API라 Electron ABI 무관, sharp는 win32 프리빌트 강제 설치)와
   models/가 함께 동봉된다 — 자세한 절차는 DEVELOPMENT.md.
 - **한국어 곡명 표기**(`preferKoreanLabel`): 고른 가사의 제목이 원어면, ① 채택된 같은 곡 후보 중 한글 제목
