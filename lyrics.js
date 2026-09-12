@@ -95,8 +95,11 @@ function applyLyricsSettings(next) {
   playbackControls.hidden = !lyricsSettings.showPlaybackControls
     || (previousButton.hidden && pauseButton.hidden && nextButton.hidden && volumeButton.hidden);
   if (volumeButton.hidden || playbackControls.hidden) closeVolumePop();
-  document.getElementById('lyrics-track').hidden = !lyricsSettings.showTrackInfo || !lyricsSettings.showLyrics;
-  document.getElementById('lyrics-body').hidden = !lyricsSettings.showLyrics;
+  // 가사를 꺼도 곡 정보(제목·아티스트)는 남는다 — 둘 다 꺼졌을 때만 오른쪽 열 자체를 접는다
+  const trackEl = document.getElementById('lyrics-track');
+  trackEl.hidden = !lyricsSettings.showTrackInfo;
+  linesEl.hidden = !lyricsSettings.showLyrics;
+  document.getElementById('lyrics-body').hidden = trackEl.hidden && linesEl.hidden;
   // 잠금(클릭 통과) 중에는 눌리지 않는 버튼을 아예 감춰 눌러도 되는 것처럼 보이지 않게 한다
   document.body.classList.toggle('locked', !!lyricsSettings.clickThrough);
   // 왼쪽 열: 사각형(앨범/영상)은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)

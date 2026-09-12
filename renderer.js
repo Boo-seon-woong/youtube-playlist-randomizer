@@ -397,10 +397,22 @@ fallbackView.addEventListener('dom-ready', () => {
       // 호스트가 웹뷰 오디오를 통째로 막는다(console-message로 상태 변화만 알린다). 광고 감지의
       // 찰나 지연을 쫓기보다, 음악이 확실히 나오는 순간에만 여는 쪽이 단순하고 새지 않는다.
       window.__playReported = null;
+      // 앱 마스터 볼륨을 video에 즉시 반영한다. 100ms 인터벌에만 맡기면 유튜브가 자기 기억 볼륨(보통 100%)을
+      // 재생 시작 직후 복원하는 순간과 겹쳐 최대 100ms 동안 원래 볼륨이 새어 나온다(실측: 폴백 전환 시 큰 소리).
+      window.__applyVolume = () => {
+        const v = document.querySelector('video');
+        if (!v || typeof window.__appVolume !== 'number') return;
+        const target = Math.min(1, Math.max(0, window.__appVolume / 100));
+        if (Math.abs(v.volume - target) > 0.0005) v.volume = target;
+      };
+      // 유튜브가 볼륨을 바꾸는 즉시(같은 이벤트 턴에) 되돌린다 — 폴링 간격만큼의 누출을 없앤다
+      document.addEventListener('volumechange', window.__applyVolume, true);
       window.__reportPlaying = () => {
         const moviePlayer = document.querySelector('#movie_player');
         const v = document.querySelector('video');
         const ad = !!moviePlayer && (moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting'));
+        // 호스트가 웹뷰 음소거를 푸는 신호이므로, 소리를 열기 전에 볼륨부터 맞춘다
+        if (!ad) window.__applyVolume();
         const playing = !!v && !ad && !v.paused && v.readyState >= 2 && v.currentTime > 0.2;
         if (window.__playReported === playing) return;
         window.__playReported = playing;
@@ -450,10 +462,7 @@ fallbackView.addEventListener('dom-ready', () => {
           window.__adActive = false;
         }
         // 앱 마스터 볼륨 강제: 워치페이지(유튜브) 자체 볼륨 조작을 덮어써 앱 볼륨으로 통일
-        if (video && !adShowing && typeof window.__appVolume === 'number') {
-          const target = Math.min(1, Math.max(0, window.__appVolume / 100));
-          if (Math.abs(video.volume - target) > 0.0005) video.volume = target;
-        }
+        if (!adShowing) window.__applyVolume();
         // 창이 최소화되었거나 다른 창에 가려져 있으면 워치페이지가 자동재생을 시작하지 않는다
         // (실측: video.play()는 성공하지만 페이지 스스로는 시작하지 않아 다음 곡에서 재생이 멈춤).
         // 앱이 재생 중이어야 한다고 보는 동안, 아직 시작되지 않은(앞부분에서 멈춘) 영상만 직접 밀어준다
