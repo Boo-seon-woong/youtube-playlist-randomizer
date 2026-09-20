@@ -232,7 +232,19 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   워치페이지의 광고 요청 중 서비스 워커/워커에서 나가는 것들은 `webContentsId`가 비어 있어 그 조건에
   걸려 차단됐고, 그 결과 유튜브가 세션을 광고 차단으로 판정해 **닫을 수 없는 전면 차단 화면**
   ("서비스 약관을 위반하는 광고 차단 프로그램")으로 직접 재생을 통째로 막았다(2026-09-20 사용자 보고).
-  그런데 네트워크 범위만 고친 뒤에도 차단이 계속됐다(사용자 재보고) — 워치페이지는 **페이지 안에서의
+  **최종 방식은 요청 차단이 아니라 응답 프루닝이다(Brave·uBO와 같은 방식).** `adprune-preload.js`를
+  `will-attach-webview`로 폴백 웹뷰에 붙여(페이지와 같은 JS 월드가 필요해 `contextIsolation:false`,
+  `nodeIntegration`은 꺼둔 채) 플레이어가 응답을 읽기 **전에** `adPlacements`/`playerAds`/`adSlots`/
+  `adBreakHeartbeatParams`를 지운다. 최초 로드의 인라인 `var ytInitialPlayerResponse`는 전역에 접근자를
+  먼저 정의해 두면 `var` 선언이 기존 접근자를 덮지 않고 대입만 setter로 들어오는 성질을 이용해 잡고,
+  곡 전환의 `/youtubei/v1/player` XHR은 `JSON.parse`·`Response.prototype.json` 후킹으로 잡는다.
+  같은 코드(main.js의 `AD_PRUNE_SNIPPET`)를 `hideEmbedChrome`에서 임베드 프레임에도 주입한다 —
+  임베드의 최초 인라인 응답은 놓치지만 곡 전환은 전부 `loadVideoById` → XHR이라 실제 곡은 덮인다.
+  플레이어가 광고의 존재 자체를 모르므로 광고가 재생되지 않고 **기다릴 시간도 생기지 않으며**,
+  차단된 요청도 조작된 재생도 없어 유튜브가 감지할 거리가 없다. 그래서 광고 송출 도메인은
+  `AD_URL_PATTERNS`에서 **제거**했다(analytics·moat만 남음) — 그걸 막는 것이 바로 감지의 원인이다.
+  유튜브가 응답 구조를 바꾸면 조용히 무력화되어 광고가 다시 보이는 것이 이 방식의 유지비용이다.
+- **(경위) 네트워크 범위만 고친 뒤에도 차단이 계속됐다(사용자 재보고) — 워치페이지는 **페이지 안에서의
   광고 조작**도 함께 본다. 그래서 `__ymp_enforced:1`이 오면 앱은 회피를 강화하는 대신 **광고에 손대는 것을
   전부, 영구히 그만둔다**(`handleAdBlockEnforcement`): 메인의 `adBlockEnabled=false`, 광고 숨김 CSS 제거
   (`removeInsertedCSS(adCssKey)` — 이 때문에 광고 CSS를 레이아웃 CSS와 분리해 넣는다), `__adEvade=false`로

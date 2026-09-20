@@ -29,16 +29,13 @@ const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const LYRICS_BOUNDS_FILE = () => path.join(app.getPath('userData'), 'lyrics-window.json');
 const LYRICS_SETTINGS_FILE = () => path.join(app.getPath('userData'), 'lyrics-settings.json');
 
-// Block known ad/tracking domains so the embedded player stays ad-free.
+// 추적 도메인만 막는다. **광고 송출 도메인(doubleclick·googlesyndication 등)은 더 이상 막지 않는다** —
+// 요청 실패는 유튜브의 광고 차단 감지에 그대로 걸려 재생 자체가 막히기 때문이다. 광고는 대신
+// adprune-preload.js / AD_PRUNE_SNIPPET이 플레이어 응답에서 광고 데이터를 걷어내 없앤다.
 const AD_URL_PATTERNS = [
-  '*://*.doubleclick.net/*',
-  '*://*.googlesyndication.com/*',
-  '*://*.googleadservices.com/*',
   '*://*.google-analytics.com/*',
   '*://*.googletagmanager.com/*',
-  '*://*.googletagservices.com/*',
   '*://*.moatads.com/*',
-  '*://*.adservice.google.com/*',
 ];
 
 function loadPlaylists() {
@@ -1967,8 +1964,28 @@ function refreshEmbedChrome(wc) {
   } catch {}
 }
 
+const AD_PRUNE_SNIPPET = `(() => {
+  if (window.__ympAdPrune) return;
+  window.__ympAdPrune = true;
+  const AD_KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
+  const prune = (o) => {
+    if (!o || typeof o !== 'object') return o;
+    for (const k of AD_KEYS) { if (k in o) { try { delete o[k]; } catch (e) {} } }
+    if (o.playerResponse) prune(o.playerResponse);
+    return o;
+  };
+  const np = JSON.parse;
+  JSON.parse = function (t, r) { return prune(np.call(this, t, r)); };
+  if (window.Response && Response.prototype && Response.prototype.json) {
+    const nj = Response.prototype.json;
+    Response.prototype.json = function (...a) { return nj.apply(this, a).then(prune); };
+  }
+})()`;
+
 function hideEmbedChrome(frame, attempt = 0) {
   if (!frame || typeof frame.url !== 'string' || !/youtube(-nocookie)?\.com\//.test(frame.url)) return;
+  // 임베드 플레이어가 받는 광고 데이터를 걷어낸다 (곡 전환은 loadVideoById → XHR이라 여기서 잡힌다)
+  frame.executeJavaScript(AD_PRUNE_SNIPPET).catch(() => {});
   frame.executeJavaScript(`(() => {
     // ① 알려진 클래스는 CSS로 차단
     let s = document.getElementById('__ymp_no_chrome');
@@ -2037,6 +2054,14 @@ function createWindow(port) {
   // 렌더러의 몰입 모드(사이드바 숨김·해제 버튼)가 따라오도록 상태를 알린다
   win.on('enter-full-screen', () => win.webContents.send('window:fullscreen', true));
   win.on('leave-full-screen', () => win.webContents.send('window:fullscreen', false));
+  // 폴백 웹뷰(워치페이지)에 광고 프루닝 프리로드를 붙인다 — 요청을 막는 대신 플레이어 응답에서
+  // 광고 데이터를 걷어내는 방식이라 감지되지 않고 광고 대기 시간도 생기지 않는다.
+  // 전역(ytInitialPlayerResponse)과 JSON.parse를 가로채야 하므로 페이지와 같은 월드가 필요하다.
+  win.webContents.on('will-attach-webview', (_event, webPreferences) => {
+    webPreferences.preload = path.join(__dirname, 'adprune-preload.js');
+    webPreferences.contextIsolation = false;
+    webPreferences.nodeIntegration = false;
+  });
   win.loadURL(`http://127.0.0.1:${port}/`);
   win.on('closed', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.close();

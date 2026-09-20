@@ -21,7 +21,9 @@ let stallTimer = null; // 임베드가 버퍼링(state 3)에서 진행 없이 �
 let fallbackActive = false;
 let fallbackVideoId = '';   // 지금 워치페이지로 재생 중인 영상 id
 let fallbackEnforcedId = ''; // 광고 차단 감지로 이미 한 번 재시도한 영상 id
-let adEvasionEnabled = true; // 워치페이지에서 광고를 조작(무음·배속·점프·스킵 클릭)할지
+// 광고는 이제 플레이어 응답에서 광고 데이터를 걷어내는 방식(adprune-preload.js)으로 없앤다 —
+// 재생 중인 광고를 조작하는 구식 방식은 유튜브에 감지돼 재생 자체가 막히므로 기본값이 꺼짐이다.
+let adEvasionEnabled = false; // 워치페이지에서 광고를 조작(무음·배속·점프·스킵 클릭)할지
 let adEnforcementSeen = false; // 이 세션에서 광고 차단 감지 화면을 본 적이 있는가
 let adCssKey = '';           // 광고 숨김 CSS 키 (감지되면 removeInsertedCSS로 걷어낸다)
 let precisePlaybackActive = false; // 소수점 볼륨 선택 후 HTML5 video.volume 정밀 재생 사용
@@ -441,14 +443,18 @@ fallbackView.addEventListener('dom-ready', () => {
   // 광고 관련 CSS는 따로 넣어 둔다 — 유튜브가 광고 차단을 감지하면 이 스타일만 걷어내
   // 워치페이지를 평범한 브라우저처럼 되돌린다(removeInsertedCSS). 숨김·조작이 남아 있으면
   // 네트워크 차단을 꺼도 계속 감지돼 재생이 막힌다.
+  // 배너·프로모 숨김은 화면 정리용 코스메틱 필터라 항상 적용한다 (재생 동작을 건드리지 않는다)
+  fallbackView.insertCSS(`
+    #player-ads, #masthead-ad, ytd-ad-slot-renderer, .ytp-ad-overlay-container,
+    ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
+  `).catch(() => {});
+  // 아래는 '광고 강제 스킵'(구식 방식)을 켰을 때만 — 재생 중인 광고를 가리고 감지 팝업을 숨긴다
   if (adEvasionEnabled) {
     fallbackView.insertCSS(`
-      #player-ads, #masthead-ad, ytd-ad-slot-renderer, .ytp-ad-overlay-container,
-      ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
       tp-yt-paper-dialog:has(ytd-enforcement-message-view-renderer),
       tp-yt-paper-dialog:has([class*="enforcement"]), ytd-popup-container tp-yt-paper-dialog:has(#dismiss-button) { opacity: 0 !important; }
       tp-yt-iron-overlay-backdrop { display: none !important; }
-      .ad-showing .html5-main-video { visibility: hidden !important; } /* 광고 영상은 스킵될 때까지 화면에서 숨김 */
+      .ad-showing .html5-main-video { visibility: hidden !important; }
     `).then((key) => { adCssKey = key; }).catch(() => {});
   }
   // 앱 마스터 볼륨을 페이지에 전달 (주입 인터벌이 100ms 주기로 video.volume에 강제한다)
