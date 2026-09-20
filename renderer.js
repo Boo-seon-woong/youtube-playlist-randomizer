@@ -21,6 +21,9 @@ let stallTimer = null; // 임베드가 버퍼링(state 3)에서 진행 없이 �
 let fallbackActive = false;
 let fallbackVideoId = '';   // 지금 워치페이지로 재생 중인 영상 id
 let fallbackEnforcedId = ''; // 광고 차단 감지로 이미 한 번 재시도한 영상 id
+let adEvasionEnabled = true; // 워치페이지에서 광고를 조작(무음·배속·점프·스킵 클릭)할지
+let adEnforcementSeen = false; // 이 세션에서 광고 차단 감지 화면을 본 적이 있는가
+let adCssKey = '';           // 광고 숨김 CSS 키 (감지되면 removeInsertedCSS로 걷어낸다)
 let precisePlaybackActive = false; // 소수점 볼륨 선택 후 HTML5 video.volume 정밀 재생 사용
 let fallbackPollTimer = null;
 let skipPollTimer = null;
@@ -325,8 +328,31 @@ fallbackView.addEventListener('console-message', (e) => {
 // 감지를 피해 다니는 대신 광고 차단을 이 세션 동안 끄고 한 번만 다시 시도하고,
 // 그래도 막히면 큐가 그 곡에서 멈추지 않도록 다음 곡으로 넘긴다.
 function handleAdBlockEnforcement() {
-  window.winctl.disableAdBlock();
   const id = fallbackVideoId;
+  const first = !adEnforcementSeen;
+  if (first) {
+    // 회피를 강화하는 대신 **광고에 손대는 것을 전부 그만둔다** — 네트워크 차단(메인 창),
+    // 광고 숨김 CSS, 페이지 내 무음·16배속·끝점프·스킵 클릭까지. 이렇게 해야 유튜브가
+    // 감지할 거리가 없어져 재생이 다시 열린다. 사용자 귀는 호스트 오디오 게이트가 계속 막는다.
+    adEnforcementSeen = true;
+    adEvasionEnabled = false;
+    precisePlaybackActive = false; // 정밀 볼륨 때문에 멀쩡한 곡까지 워치페이지로 보내지 않는다
+    window.winctl.disableAdBlock();
+    paintAdBlockToggle();
+    saveSettings(); // 다음 실행부터는 아예 차단하지 않는다
+    if (adCssKey) {
+      fallbackView.removeInsertedCSS(adCssKey).catch(() => {});
+      adCssKey = '';
+    }
+    fallbackView.executeJavaScript('window.__adEvade = false; 0').catch(() => {});
+  }
+  // 임베드로 재생할 수 있는 곡이었다면(정밀 볼륨 때문에 워치페이지로 갔던 경우) 임베드로 되돌린다
+  if (!fallbackIds.has(id)) {
+    showToast('유튜브 광고 차단 감지 — 광고 차단을 끄고 임베드 재생으로 되돌립니다');
+    stopFallback();
+    playCurrent();
+    return;
+  }
   if (fallbackEnforcedId === id) {
     showToast('유튜브가 이 곡의 재생을 막았습니다 — 다음 곡으로 넘어갑니다');
     stopFallback();
@@ -334,7 +360,7 @@ function handleAdBlockEnforcement() {
     return;
   }
   fallbackEnforcedId = id;
-  showToast('유튜브 광고 차단 감지 — 차단을 끄고 다시 시도합니다');
+  showToast('유튜브 광고 차단 감지 — 광고 차단을 끄고 다시 시도합니다');
   try { fallbackView.reload(); } catch {}
 }
 
@@ -343,7 +369,7 @@ function handleAdBlockEnforcement() {
 // 입력을 보낸다. 클릭 직전 elementFromPoint로 그 자리가 여전히 스킵 버튼인지 재검증해
 // 좌표가 낡았을 때의 오클릭(영상 일시정지 등)을 방지한다.
 async function pollSkipClick() {
-  if (!fallbackActive) return;
+  if (!fallbackActive || !adEvasionEnabled) return; // 감지 이후에는 스킵 클릭도 보내지 않는다
   let rect = null;
   try {
     rect = await fallbackView.executeJavaScript(`(() => {
@@ -402,15 +428,7 @@ async function pollFallback(id) {
 fallbackView.addEventListener('dom-ready', () => {
   fallbackView.insertCSS(`
     #masthead-container, #secondary, #below, ytd-comments, tp-yt-app-drawer { display: none !important; }
-    #player-ads, #masthead-ad, ytd-ad-slot-renderer, .ytp-ad-overlay-container,
-    ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
-    /* 광고 차단 감지 팝업("광고 차단 프로그램은 허용되지 않습니다")은 주입 스크립트가
-       자동으로 닫고 재생을 재개한다 — 닫히기 전까지는 화면에서 숨김 */
-    tp-yt-paper-dialog:has(ytd-enforcement-message-view-renderer),
-    tp-yt-paper-dialog:has([class*="enforcement"]), ytd-popup-container tp-yt-paper-dialog:has(#dismiss-button) { opacity: 0 !important; }
-    tp-yt-iron-overlay-backdrop { display: none !important; }
     .ytp-fullscreen-button { display: none !important; } /* 전체화면은 앱 버튼(몰입 모드)으로만 */
-    .ad-showing .html5-main-video { visibility: hidden !important; } /* 광고 영상은 스킵될 때까지 화면에서 숨김 */
     /* 플레이어를 웹뷰 뷰포트 전체에 고정 — 페이지 배치 크기 때문에 몰입(전체화면) 시
        화면을 꽉 채우지 못하는 문제 해결. 크기 재계산은 주입 스크립트의 resize 디스패치가 유도 */
     #movie_player { position: fixed !important; top: 0 !important; left: 0 !important;
@@ -420,9 +438,22 @@ fallbackView.addEventListener('dom-ready', () => {
     ytd-watch-flexy #player { max-height: 100vh; }
     html, body { overflow: hidden !important; }
   `).catch(() => {});
+  // 광고 관련 CSS는 따로 넣어 둔다 — 유튜브가 광고 차단을 감지하면 이 스타일만 걷어내
+  // 워치페이지를 평범한 브라우저처럼 되돌린다(removeInsertedCSS). 숨김·조작이 남아 있으면
+  // 네트워크 차단을 꺼도 계속 감지돼 재생이 막힌다.
+  if (adEvasionEnabled) {
+    fallbackView.insertCSS(`
+      #player-ads, #masthead-ad, ytd-ad-slot-renderer, .ytp-ad-overlay-container,
+      ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
+      tp-yt-paper-dialog:has(ytd-enforcement-message-view-renderer),
+      tp-yt-paper-dialog:has([class*="enforcement"]), ytd-popup-container tp-yt-paper-dialog:has(#dismiss-button) { opacity: 0 !important; }
+      tp-yt-iron-overlay-backdrop { display: none !important; }
+      .ad-showing .html5-main-video { visibility: hidden !important; } /* 광고 영상은 스킵될 때까지 화면에서 숨김 */
+    `).then((key) => { adCssKey = key; }).catch(() => {});
+  }
   // 앱 마스터 볼륨을 페이지에 전달 (주입 인터벌이 100ms 주기로 video.volume에 강제한다)
   // __appWantsPlay: 앱이 "지금 재생 중이어야 한다"고 보는 상태 — 주입 인터벌이 이걸 보고 재생을 밀어준다
-  fallbackView.executeJavaScript(`window.__appVolume = ${effectiveVolume()}; window.__appWantsPlay = true; 0`).catch(() => {});
+  fallbackView.executeJavaScript(`window.__appVolume = ${effectiveVolume()}; window.__appWantsPlay = true; window.__adEvade = ${adEvasionEnabled}; 0`).catch(() => {});
   // 영상 광고: 감지 즉시 무음 + 16배속 + 끝으로 점프, 스킵 버튼 자동 클릭,
   // 프리미엄 팝업/일시정지 확인창 자동 처리. 100ms 주기로 돌아 광고 노출 시간을 최소화한다.
   fallbackView.executeJavaScript(`
@@ -463,7 +494,7 @@ fallbackView.addEventListener('dom-ready', () => {
         const moviePlayer = document.querySelector('#movie_player');
         const v = document.querySelector('video');
         window.__reportPlaying();
-        if (!moviePlayer || !v) return;
+        if (!moviePlayer || !v || window.__adEvade === false) return;
         const ad = moviePlayer.classList.contains('ad-showing') || moviePlayer.classList.contains('ad-interrupting');
         if (ad) {
           window.__adActive = true;
@@ -491,7 +522,10 @@ fallbackView.addEventListener('dom-ready', () => {
         const video = document.querySelector('video');
         const adShowing = !!document.querySelector('.ad-showing, .ad-interrupting');
         window.__reportPlaying();
-        if (adShowing && video) {
+        // __adEvade가 꺼지면(유튜브가 광고 차단을 감지한 뒤) 광고를 평범하게 재생시킨다 —
+        // 무음·배속·점프·스킵 클릭이 남아 있으면 계속 감지돼 재생 자체가 막힌다.
+        // 사용자 귀에 들어가는 소리는 호스트 오디오 게이트(setAudioMuted)가 계속 막아 준다.
+        if (adShowing && video && window.__adEvade !== false) {
           window.__adActive = true;
           if (!video.muted) video.muted = true;
           // duration을 모르는 광고(스트리밍형)도 배속으로 빨리 소진 — 스킵 카운트다운도 같이 줄어든다
@@ -515,11 +549,11 @@ fallbackView.addEventListener('dom-ready', () => {
         // 전면 스폰서 카드(인터스티셜)는 영상이 없어 배속/점프가 안 통하므로 버튼 클릭이 유일한 길.
         // 페이지 내 click()은 유튜브가 신뢰되지 않은 이벤트로 무시할 수 있어, 좌표를
         // __skipRect에 남겨 호스트가 네이티브 입력(sendInputEvent)으로도 클릭한다.
-        const cands = new Set(document.querySelectorAll(
+        const cands = new Set(window.__adEvade === false ? [] : document.querySelectorAll(
           '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, ' +
           '.ytp-ad-skip-button-slot button, .ytp-ad-skip-button-container button'
         ));
-        for (const b of document.querySelectorAll('#movie_player button, #movie_player [role="button"]')) {
+        for (const b of (window.__adEvade === false ? [] : document.querySelectorAll('#movie_player button, #movie_player [role="button"]'))) {
           const label = (b.textContent || '') + (b.getAttribute('aria-label') || '');
           if (label.includes('건너뛰기') || /skip ?ads?/i.test(label) || /^\\s*skip\\s*$/i.test(label)) cands.add(b);
         }
@@ -531,7 +565,8 @@ fallbackView.addEventListener('dom-ready', () => {
           }
           btn.click();
         }
-        // 닫기 버튼이 없는 전면 차단 화면(재생 자체가 막힘)은 호스트에 알려 광고 차단을 끄게 한다
+        // 광고 차단 감지 화면/팝업이 보이면 호스트에 알린다 — 호스트는 회피를 강화하는 대신
+        // 네트워크 차단과 페이지 내 광고 조작을 모두 끄고 평범한 재생으로 되돌린다
         if (!window.__enforcedReported) {
           const enf = document.querySelector('ytd-enforcement-message-view-renderer, yt-playability-error-supported-renderers');
           if (enf && (enf.textContent || '').match(/광고 차단|ad ?block/i)) {
@@ -546,7 +581,7 @@ fallbackView.addEventListener('dom-ready', () => {
         // 광고 차단 감지 팝업: 재생을 멈추므로 닫기 버튼을 눌러 해제하고, 닫힌 직후 재생 재개
         // 마크업이 자주 바뀌므로 렌더러 이름이 아니라 팝업 텍스트("광고 차단"/"ad blocker")로 찾는다
         let enfDialog = null;
-        for (const dlg of document.querySelectorAll('tp-yt-paper-dialog, ytd-popup-container dialog')) {
+        for (const dlg of (window.__adEvade === false ? [] : document.querySelectorAll('tp-yt-paper-dialog, ytd-popup-container dialog'))) {
           if (dlg.offsetParent === null && dlg.style.display === 'none') continue;
           const text = dlg.textContent || '';
           if (/광고 차단|ad ?block/i.test(text)) { enfDialog = dlg; break; }
@@ -1280,7 +1315,7 @@ lvScale.addEventListener('change', saveSettings);
 
 // settings.json은 테마 3색 + 마스터 볼륨 + 패널 레이아웃 + 가사 보기 글꼴/크기를 한 객체로 저장한다
 function saveSettings() {
-  window.uiSettings.save({ ...theme, volume: masterVolume, layout, lyricsView });
+  window.uiSettings.save({ ...theme, volume: masterVolume, layout, lyricsView, adEnforced: adEnforcementSeen });
 }
 
 function syncSettingsUI() {
@@ -1515,7 +1550,7 @@ function setMasterVolume(v, save) {
   masterVolume = clampVolume(v);
   // IFrame API는 정수 볼륨만 지원하므로, 소수점 값을 선택하면 현재 곡부터
   // HTML5 video.volume을 직접 제어하는 워치페이지 경로로 전환한다.
-  if (!Number.isInteger(masterVolume)) precisePlaybackActive = true;
+  if (!Number.isInteger(masterVolume) && !adEnforcementSeen) precisePlaybackActive = true;
   paintVolumeUI();
   if (precisePlaybackActive && !fallbackActive && queueIndex >= 0 && queue[queueIndex]) {
     startFallback(queue[queueIndex]);
@@ -2771,12 +2806,37 @@ document.getElementById('lo-prev').addEventListener('click', prevTrack);
 document.getElementById('lo-next').addEventListener('click', nextTrack);
 loPause.addEventListener('click', togglePlayback);
 
+const adBlockToggle = document.getElementById('ls-adblock');
+function paintAdBlockToggle() {
+  adBlockToggle.checked = adEvasionEnabled;
+}
+adBlockToggle.addEventListener('change', () => {
+  adEvasionEnabled = adBlockToggle.checked;
+  adEnforcementSeen = !adEvasionEnabled; // 끈 상태 = 감지 이후와 같은 취급 (재시작해도 유지)
+  if (adEvasionEnabled) {
+    showToast('광고 차단을 다시 켰습니다 — 유튜브가 감지하면 재생이 막힐 수 있습니다 (앱 재시작 후 적용)');
+  } else {
+    window.winctl.disableAdBlock();
+    fallbackView.executeJavaScript('window.__adEvade = false; 0').catch(() => {});
+    if (adCssKey) { fallbackView.removeInsertedCSS(adCssKey).catch(() => {}); adCssKey = ''; }
+  }
+  saveSettings();
+});
+
 (async () => {
   const saved = await window.uiSettings.load();
   if (saved && saved.accent && saved.base && saved.panel) applyTheme(saved);
   else syncSettingsUI();
   if (saved && saved.volume != null) masterVolume = clampVolume(saved.volume);
-  precisePlaybackActive = !Number.isInteger(masterVolume);
+  // 한 번 광고 차단 감지에 걸린 적이 있으면 다음 실행부터는 처음부터 차단·조작을 하지 않는다
+  // — 매 실행마다 다시 걸려 곡이 건너뛰어지는 일을 막는다
+  if (saved && saved.adEnforced) {
+    adEnforcementSeen = true;
+    adEvasionEnabled = false;
+    window.winctl.disableAdBlock();
+  }
+  paintAdBlockToggle();
+  precisePlaybackActive = !Number.isInteger(masterVolume) && !adEnforcementSeen;
   paintVolumeUI(); // 저장값이 없어도 슬라이더 채움 표시는 초기화 필요
   if (saved && saved.layout) layout = { ...DEFAULT_LAYOUT, ...saved.layout };
   applyLayout(); // 저장값이 없어도 핸들 버튼 아이콘은 그려야 한다
