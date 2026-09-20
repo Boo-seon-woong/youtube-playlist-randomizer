@@ -244,6 +244,12 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   차단된 요청도 조작된 재생도 없어 유튜브가 감지할 거리가 없다. 그래서 광고 송출 도메인은
   `AD_URL_PATTERNS`에서 **제거**했다(analytics·moat만 남음) — 그걸 막는 것이 바로 감지의 원인이다.
   유튜브가 응답 구조를 바꾸면 조용히 무력화되어 광고가 다시 보이는 것이 이 방식의 유지비용이다.
+  **감지 판정은 요소의 존재가 아니라 "보이는지"로 해야 한다.** `yt-playability-error-supported-renderers`는
+  아무 문제가 없어도 숨겨진 채 DOM에 상주한다(실제 워치페이지 측정: `enfInDom: true, enfVisible: false`).
+  존재만 보고 판단하던 첫 구현은 프루닝이 정상 동작하는 빌드에서도 멀쩡한 곡을 "차단됨"으로 오판해
+  건너뛰었다(사용자 보고). 지금은 ① 실제로 렌더링돼 있고(`getClientRects().length > 0 && offsetParent`)
+  ② 음악이 재생 중이 아니며(`__playReported !== true`) ③ 그 상태가 연속 2틱(약 200ms) 유지될 때만
+  확정한다. 오탐으로 저장된 설정을 되돌리기 위해 저장 키도 `adEnforced` → `adEnforcedV2`로 바꿨다.
 - **(경위) 네트워크 범위만 고친 뒤에도 차단이 계속됐다(사용자 재보고) — 워치페이지는 **페이지 안에서의
   광고 조작**도 함께 본다. 그래서 `__ymp_enforced:1`이 오면 앱은 회피를 강화하는 대신 **광고에 손대는 것을
   전부, 영구히 그만둔다**(`handleAdBlockEnforcement`): 메인의 `adBlockEnabled=false`, 광고 숨김 CSS 제거

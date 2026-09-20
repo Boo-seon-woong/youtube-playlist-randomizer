@@ -571,13 +571,22 @@ fallbackView.addEventListener('dom-ready', () => {
           }
           btn.click();
         }
-        // 광고 차단 감지 화면/팝업이 보이면 호스트에 알린다 — 호스트는 회피를 강화하는 대신
-        // 네트워크 차단과 페이지 내 광고 조작을 모두 끄고 평범한 재생으로 되돌린다
+        // 광고 차단 감지 화면이 **실제로 보이고** 재생도 안 되고 있을 때만 호스트에 알린다.
+        // yt-playability-error-supported-renderers는 아무 문제가 없어도 숨겨진 채 DOM에 상주한다
+        // (실측: enfInDom=true, enfVisible=false) — 존재만 보고 판단하면 멀쩡한 곡을 건너뛴다.
+        // 화면에 떠 있고, 음악이 재생 중이 아니며, 그 상태가 연속 2회(약 200ms) 유지될 때만 확정한다.
         if (!window.__enforcedReported) {
           const enf = document.querySelector('ytd-enforcement-message-view-renderer, yt-playability-error-supported-renderers');
-          if (enf && (enf.textContent || '').match(/광고 차단|ad ?block/i)) {
-            window.__enforcedReported = true;
-            console.log('__ymp_enforced:1');
+          const shown = !!(enf && enf.getClientRects().length > 0 && enf.offsetParent !== null
+            && (enf.textContent || '').match(/광고 차단|ad ?block/i));
+          if (shown && window.__playReported !== true) {
+            window.__enfStreak = (window.__enfStreak || 0) + 1;
+            if (window.__enfStreak >= 2) {
+              window.__enforcedReported = true;
+              console.log('__ymp_enforced:1');
+            }
+          } else {
+            window.__enfStreak = 0;
           }
         }
         const dismiss = document.querySelector('ytd-mealbar-promo-renderer #dismiss-button button, yt-mealbar-promo-renderer #dismiss-button button');
@@ -1321,7 +1330,7 @@ lvScale.addEventListener('change', saveSettings);
 
 // settings.json은 테마 3색 + 마스터 볼륨 + 패널 레이아웃 + 가사 보기 글꼴/크기를 한 객체로 저장한다
 function saveSettings() {
-  window.uiSettings.save({ ...theme, volume: masterVolume, layout, lyricsView, adEnforced: adEnforcementSeen });
+  window.uiSettings.save({ ...theme, volume: masterVolume, layout, lyricsView, adEnforcedV2: adEnforcementSeen });
 }
 
 function syncSettingsUI() {
@@ -2835,8 +2844,9 @@ adBlockToggle.addEventListener('change', () => {
   else syncSettingsUI();
   if (saved && saved.volume != null) masterVolume = clampVolume(saved.volume);
   // 한 번 광고 차단 감지에 걸린 적이 있으면 다음 실행부터는 처음부터 차단·조작을 하지 않는다
-  // — 매 실행마다 다시 걸려 곡이 건너뛰어지는 일을 막는다
-  if (saved && saved.adEnforced) {
+  // — 매 실행마다 다시 걸려 곡이 건너뛰어지는 일을 막는다.
+  // (v1.30.0까지의 `adEnforced`는 숨겨진 DOM 요소를 보고 오탐한 값이라 무시하고 키를 새로 뒀다)
+  if (saved && saved.adEnforcedV2) {
     adEnforcementSeen = true;
     adEvasionEnabled = false;
     window.winctl.disableAdBlock();
