@@ -19,6 +19,8 @@ const unplayableIds = new Set(); // 직접 재생조차 불가(삭제/비공개 
 let watchdogTimer = null;
 let stallTimer = null; // 임베드가 버퍼링(state 3)에서 진행 없이 멈춘 경우의 2차 워치독
 let fallbackActive = false;
+let fallbackVideoId = '';   // 지금 워치페이지로 재생 중인 영상 id
+let fallbackEnforcedId = ''; // 광고 차단 감지로 이미 한 번 재시도한 영상 id
 let precisePlaybackActive = false; // 소수점 볼륨 선택 후 HTML5 video.volume 정밀 재생 사용
 let fallbackPollTimer = null;
 let skipPollTimer = null;
@@ -165,35 +167,46 @@ function toggleImmersive() {
   else enterImmersive();
 }
 
-// 몰입 모드에서 마우스가 2.5초간 멈추면 해제 버튼을 투명하게. 마우스가 iframe/webview 위에
-// 있으면 DOM mousemove가 오지 않으므로, 커서 화면 좌표를 IPC로 폴링해 움직임을 감지한다.
+// 전체화면 해제(✕) 버튼은 크롬의 F11 전체화면처럼 **화면 맨 위에 커서를 붙였을 때만** 내려온다.
+// 마우스가 iframe/webview 위에 있으면 DOM mousemove가 오지 않으므로, 커서 화면 좌표를 IPC로
+// 폴링해서(창 상단 기준 y = pt.y - window.screenY) 위치를 판단한다.
+const FS_REVEAL_EDGE = 6; // 이 띠에 커서가 닿으면 내려온다 (화면 맨 위에 붙이는 동작)
+const FS_REVEAL_KEEP = 96; // 내려온 뒤에는 여기보다 아래로 내려가야 사라진다 — 버튼까지 갈 여유
 let cursorWatchTimer = null;
-let lastCursor = null;
-let lastCursorMove = 0;
+let fsRevealTimer = null;
+
+function setFsReveal(on) {
+  clearTimeout(fsRevealTimer);
+  fsExitBtn.classList.toggle('reveal', on);
+}
+
+function updateFsReveal(y) {
+  if (!document.body.classList.contains('immersive')) return;
+  if (y <= FS_REVEAL_EDGE) setFsReveal(true);
+  else if (fsExitBtn.classList.contains('reveal') && y > FS_REVEAL_KEEP) setFsReveal(false);
+}
 
 function startCursorWatch() {
-  lastCursor = null;
-  lastCursorMove = Date.now();
-  fsExitBtn.classList.remove('idle');
+  // 진입 직후엔 잠깐 보여 준다 — 해제 방법을 모른 채 갇히지 않도록 (2.5초 뒤 자동으로 올라감)
+  fsExitBtn.classList.add('reveal');
+  clearTimeout(fsRevealTimer);
+  fsRevealTimer = setTimeout(() => fsExitBtn.classList.remove('reveal'), 2500);
   clearInterval(cursorWatchTimer);
   cursorWatchTimer = setInterval(async () => {
     let pt = null;
     try { pt = await window.winctl.cursor(); } catch {}
-    if (!pt) return;
-    if (!lastCursor || pt.x !== lastCursor.x || pt.y !== lastCursor.y) {
-      lastCursor = pt;
-      lastCursorMove = Date.now();
-      fsExitBtn.classList.remove('idle');
-    } else if (Date.now() - lastCursorMove > 2500) {
-      fsExitBtn.classList.add('idle');
-    }
-  }, 500);
+    if (pt) updateFsReveal(pt.y - window.screenY);
+  }, 150);
 }
 
 function stopCursorWatch() {
   clearInterval(cursorWatchTimer);
-  fsExitBtn.classList.remove('idle');
+  clearTimeout(fsRevealTimer);
+  fsExitBtn.classList.remove('reveal');
 }
+
+// 앱 화면(iframe 밖) 위에서는 폴링을 기다리지 않고 즉시 반응한다
+document.addEventListener('mousemove', (e) => updateFsReveal(e.clientY));
 
 // 요소 전체화면(iframe/webview 소유)을 해제하고 몰입 모드(창 전체화면)로 흡수한다.
 // exitFullscreen 완료 후에 창 전체화면을 걸어야 한다 — 동시에 던지면 해제 완료 시점에
@@ -232,6 +245,12 @@ document.addEventListener('keydown', (e) => {
 });
 
 fsExitBtn.addEventListener('click', exitImmersive);
+// F11(기본 메뉴의 전체화면 토글)처럼 앱 버튼을 거치지 않은 전체화면 변화도 몰입 모드에 반영
+window.winctl.onFullScreen((flag) => {
+  if (flag === document.body.classList.contains('immersive')) return;
+  if (flag) enterImmersive();
+  else exitImmersive();
+});
 document.getElementById('fs-btn').addEventListener('click', toggleImmersive);
 // 직접 재생(webview) 화면에서 누른 f — main이 before-input-event로 가로채 전달
 window.winctl.onFsKey(() => toggleImmersive());
@@ -241,6 +260,7 @@ window.winctl.onFsKey(() => toggleImmersive());
 function startFallback(id) {
   absorbElementFullscreen();
   fallbackActive = true;
+  fallbackVideoId = id;
   fallbackStall = 0;
   clearTimeout(watchdogTimer);
   clearTimeout(stallTimer);
@@ -287,6 +307,10 @@ function fallbackAdGate(muted) {
 
 fallbackView.addEventListener('console-message', (e) => {
   const msg = String(e.message || '');
+  if (msg.startsWith('__ymp_enforced:')) {
+    handleAdBlockEnforcement();
+    return;
+  }
   if (!msg.startsWith('__ymp_playing:')) return;
   const playing = msg.endsWith('1');
   if (!playing) {
@@ -296,6 +320,23 @@ fallbackView.addEventListener('console-message', (e) => {
   clearTimeout(adGateTimer);
   adGateTimer = setTimeout(() => { try { fallbackView.setAudioMuted(false); } catch {} }, 250);
 });
+
+// 유튜브가 "서비스 약관을 위반하는 광고 차단 프로그램" 화면을 띄우면 재생이 통째로 막힌다.
+// 감지를 피해 다니는 대신 광고 차단을 이 세션 동안 끄고 한 번만 다시 시도하고,
+// 그래도 막히면 큐가 그 곡에서 멈추지 않도록 다음 곡으로 넘긴다.
+function handleAdBlockEnforcement() {
+  window.winctl.disableAdBlock();
+  const id = fallbackVideoId;
+  if (fallbackEnforcedId === id) {
+    showToast('유튜브가 이 곡의 재생을 막았습니다 — 다음 곡으로 넘어갑니다');
+    stopFallback();
+    nextTrack();
+    return;
+  }
+  fallbackEnforcedId = id;
+  showToast('유튜브 광고 차단 감지 — 차단을 끄고 다시 시도합니다');
+  try { fallbackView.reload(); } catch {}
+}
 
 // 광고 스킵 버튼 네이티브 클릭: 주입 스크립트의 click()이 신뢰되지 않은 이벤트라 무시되는
 // 경우를 대비해, 주입 스크립트가 남긴 버튼 좌표(__skipRect)를 소비해 main이 실제 마우스
@@ -489,6 +530,14 @@ fallbackView.addEventListener('dom-ready', () => {
             window.__skipRect = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
           }
           btn.click();
+        }
+        // 닫기 버튼이 없는 전면 차단 화면(재생 자체가 막힘)은 호스트에 알려 광고 차단을 끄게 한다
+        if (!window.__enforcedReported) {
+          const enf = document.querySelector('ytd-enforcement-message-view-renderer, yt-playability-error-supported-renderers');
+          if (enf && (enf.textContent || '').match(/광고 차단|ad ?block/i)) {
+            window.__enforcedReported = true;
+            console.log('__ymp_enforced:1');
+          }
         }
         const dismiss = document.querySelector('ytd-mealbar-promo-renderer #dismiss-button button, yt-mealbar-promo-renderer #dismiss-button button');
         if (dismiss) dismiss.click();

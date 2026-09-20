@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('winctl', {
   setFullScreen: (flag) => ipcRenderer.send('window:set-fullscreen', flag),
   cursor: () => ipcRenderer.invoke('window:cursor'),
   onFsKey: (callback) => ipcRenderer.on('window:fs-key', () => callback()),
+  onFullScreen: (callback) => ipcRenderer.on('window:fullscreen', (_event, flag) => callback(!!flag)),
+  disableAdBlock: () => ipcRenderer.send('adblock:disable'),
 });
 
 contextBridge.exposeInMainWorld('lyrics', {

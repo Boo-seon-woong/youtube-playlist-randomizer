@@ -2375,37 +2375,44 @@ body.immersive #content {
   border-radius: 0;
 }
 
+/* 전체화면 해제(✕): 크롬의 F11 전체화면처럼 평소엔 화면 위로 숨어 있다가,
+   커서를 화면 맨 위에 붙이면 내려온다 (renderer가 커서 위치로 .reveal 토글) */
 #fs-exit-btn {
   display: none;
   position: fixed;
-  top: 14px;
-  right: 14px;
+  top: 0;
+  right: 16px;
   z-index: 10;
-  padding: 10px 18px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
-  background: rgba(18, 18, 18, 0.75);
+  background: rgba(18, 18, 18, 0.82);
   color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  line-height: 1;
   font-family: inherit;
   cursor: pointer;
-  opacity: 0.4;
-  transition: opacity 0.2s;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-140%);
+  transition: transform 0.18s ease, opacity 0.18s ease, background 0.15s;
 }
 
 #fs-exit-btn:hover {
-  opacity: 1;
+  background: rgba(40, 40, 40, 0.95);
 }
 
 body.immersive #fs-exit-btn {
-  display: block;
+  display: flex;
 }
 
-/* 몰입 모드에서 마우스가 멈추면 해제 버튼을 감춘다 (renderer가 커서 폴링으로 .idle 토글) */
-body.immersive #fs-exit-btn.idle {
-  opacity: 0;
-  pointer-events: none;
+body.immersive #fs-exit-btn.reveal {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(14px);
 }
 
 /* ── 토스트: 곡 추가/로그인 결과 등 짧은 확인 메시지 ── */

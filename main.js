@@ -2033,6 +2033,10 @@ function createWindow(port) {
     if (isMainFrame) return;
     try { hideEmbedChrome(webFrameMain.fromId(frameProcessId, frameRoutingId)); } catch {}
   });
+  // F11(기본 메뉴의 전체화면 토글) 등 앱 버튼을 거치지 않은 경로로 전체화면이 바뀌어도
+  // 렌더러의 몰입 모드(사이드바 숨김·해제 버튼)가 따라오도록 상태를 알린다
+  win.on('enter-full-screen', () => win.webContents.send('window:fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('window:fullscreen', false));
   win.loadURL(`http://127.0.0.1:${port}/`);
   win.on('closed', () => {
     if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.close();
@@ -2042,19 +2046,24 @@ function createWindow(port) {
 }
 
 let webviewWC = null; // 폴백 웹뷰의 webContents (창에 하나뿐)
+let adBlockEnabled = true; // 유튜브가 광고 차단을 감지하면 false로 내려간다 (adblock:disable)
 
 app.whenReady().then(async () => {
   const port = await startServer();
   lyricsServerPort = port;
   lyricsSettings = loadLyricsSettings();
-  // 광고/추적 도메인 차단 — 단, 폴백(워치페이지) 웹뷰의 요청은 예외.
-  // 웹뷰에서까지 광고 요청을 차단하면 유튜브가 광고 차단으로 감지해
-  // "광고 차단 프로그램은 YouTube에서 허용되지 않습니다" 팝업으로 재생을 막는다.
-  // 웹뷰의 광고는 주입 스크립트가 무음·16배속·자동 스킵으로 처리하므로 요청은 통과시킨다.
+  // 광고/추적 도메인 차단 — **메인 창(앱 UI + 임베드 플레이어)에서 나온 요청만** 막는다.
+  // 폴백(워치페이지) 웹뷰까지 막으면 유튜브가 광고 차단으로 감지해 "서비스 약관을 위반하는
+  // 광고 차단 프로그램" 화면으로 재생을 통째로 막는다. 예전에는 "웹뷰가 아니면 차단"이라는
+  // 반대 조건이었는데, 워치페이지의 광고 요청 중 서비스 워커/워커에서 나가는 것들은
+  // details.webContentsId가 비어 있어 그 조건에 걸려 결국 차단됐다 — 감지의 직접 원인.
+  // 그래서 화이트리스트가 아니라 **메인 창 id와 일치할 때만** 취소하도록 뒤집었다.
   session.defaultSession.webRequest.onBeforeRequest(
     { urls: AD_URL_PATTERNS },
     (details, callback) => callback({
-      cancel: !(webviewWC && !webviewWC.isDestroyed() && details.webContentsId === webviewWC.id),
+      cancel: adBlockEnabled
+        && !!mainWindow && !mainWindow.isDestroyed()
+        && details.webContentsId === mainWindow.webContents.id,
     })
   );
 
@@ -2176,6 +2185,9 @@ app.whenReady().then(async () => {
     }
     return data;
   });
+  // 유튜브가 광고 차단을 감지하면(워치페이지의 차단 화면) 이 세션에서는 차단을 통째로 끈다 —
+  // 감지를 피해 다니는 대신 차단을 그만두는 쪽이 재생을 되살리는 확실한 길이다.
+  ipcMain.on('adblock:disable', () => { adBlockEnabled = false; });
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.setFullScreen(!!flag);
