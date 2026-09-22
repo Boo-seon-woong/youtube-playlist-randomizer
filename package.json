@@ -1,11 +1,11 @@
 {
   "name": "youtube-music-player",
-  "version": "1.30.1",
+  "version": "1.30.2",
   "description": "유튜브 재생목록 링크로 음악·영상을 재생하는 데스크톱 플레이어 (Electron)",
   "main": "main.js",
   "scripts": {
     "start": "electron . --no-sandbox",
-    "package:win": "electron-packager . \"YouTube Music Player\" --platform=win32 --arch=x64 --out=dist --overwrite --ignore=\"^/docs($|/)\" --ignore=\"^/dist($|/)\" --ignore=\"^/CLAUDE\\.md$\" --ignore=\"^/\\.gitignore$\" --ignore=\"_example\\.png$\""
+    "package:win": "electron-packager . \"YouTube Music Player\" --platform=win32 --arch=x64 --out=dist --overwrite --ignore=\"^/docs($|/)\" --ignore=\"^/dist($|/)\" --ignore=\"^/current_problem($|/)\" --ignore=\"^/test($|/)\" --ignore=\"^/CLAUDE\\.md$\" --ignore=\"^/\\.gitignore$\" --ignore=\"_example\\.png$\""
   },
   "keywords": [],
   "author": "Boo <boosunung@gmail.com>",

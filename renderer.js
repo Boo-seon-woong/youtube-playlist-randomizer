@@ -21,6 +21,8 @@ let stallTimer = null; // 임베드가 버퍼링(state 3)에서 진행 없이 �
 let fallbackActive = false;
 let fallbackVideoId = '';   // 지금 워치페이지로 재생 중인 영상 id
 let fallbackEnforcedId = ''; // 광고 차단 감지로 이미 한 번 재시도한 영상 id
+const guestFallbackIds = new Set(); // 로그인 세션에서 차단되어 게스트로 재시도한 곡
+const GUEST_PLAYBACK_PARTITION = 'guest-playback'; // 메모리 전용, 계정 쿠키와 분리
 // 광고는 이제 플레이어 응답에서 광고 데이터를 걷어내는 방식(adprune-preload.js)으로 없앤다 —
 // 재생 중인 광고를 조작하는 구식 방식은 유튜브에 감지돼 재생 자체가 막히므로 기본값이 꺼짐이다.
 let adEvasionEnabled = false; // 워치페이지에서 광고를 조작(무음·배속·점프·스킵 클릭)할지
@@ -38,7 +40,7 @@ const listEl = document.getElementById('playlist-list');
 const queueList = document.getElementById('queue-list');
 const queueCount = document.getElementById('queue-count');
 const placeholder = document.getElementById('player-placeholder');
-const fallbackView = document.getElementById('fallback-view');
+let fallbackView = document.getElementById('fallback-view');
 const npThumb = document.getElementById('np-thumb');
 const npTitle = document.getElementById('np-title');
 const npArtist = document.getElementById('np-artist');
@@ -262,8 +264,26 @@ window.winctl.onFsKey(() => toggleImmersive());
 
 // ── 폴백 재생: 임베드가 차단된 곡을 앱 내장 브라우저 뷰(유튜브 워치페이지)로 재생 ──
 
+function selectFallbackSession(guest) {
+  const partition = guest ? GUEST_PLAYBACK_PARTITION : '';
+  if ((fallbackView.getAttribute('partition') || '') === partition) return;
+  // Electron의 partition은 첫 탐색 이후 변경할 수 없으므로 웹뷰를 새로 만든다.
+  const view = document.createElement('webview');
+  view.id = 'fallback-view';
+  if (partition) view.setAttribute('partition', partition);
+  view.setAttribute('src', 'about:blank');
+  view.addEventListener('console-message', onFallbackConsoleMessage);
+  view.addEventListener('dom-ready', onFallbackReady);
+  clearTimeout(adGateTimer);
+  adCssKey = '';
+  const previous = fallbackView;
+  fallbackView = view;
+  previous.replaceWith(view);
+}
+
 function startFallback(id) {
   absorbElementFullscreen();
+  selectFallbackSession(guestFallbackIds.has(id));
   fallbackActive = true;
   fallbackVideoId = id;
   fallbackStall = 0;
@@ -310,7 +330,8 @@ function fallbackAdGate(muted) {
   try { fallbackView.setAudioMuted(muted); } catch {}
 }
 
-fallbackView.addEventListener('console-message', (e) => {
+function onFallbackConsoleMessage(e) {
+  if (e.currentTarget !== fallbackView) return;
   const msg = String(e.message || '');
   if (msg.startsWith('__ymp_enforced:')) {
     handleAdBlockEnforcement();
@@ -324,13 +345,22 @@ fallbackView.addEventListener('console-message', (e) => {
   }
   clearTimeout(adGateTimer);
   adGateTimer = setTimeout(() => { try { fallbackView.setAudioMuted(false); } catch {} }, 250);
-});
+}
+fallbackView.addEventListener('console-message', onFallbackConsoleMessage);
 
 // 유튜브가 "서비스 약관을 위반하는 광고 차단 프로그램" 화면을 띄우면 재생이 통째로 막힌다.
 // 감지를 피해 다니는 대신 광고 차단을 이 세션 동안 끄고 한 번만 다시 시도하고,
 // 그래도 막히면 큐가 그 곡에서 멈추지 않도록 다음 곡으로 넘긴다.
 function handleAdBlockEnforcement() {
+  if (!fallbackActive) return;
   const id = fallbackVideoId;
+  if (fallbackView.getAttribute('partition') !== GUEST_PLAYBACK_PARTITION) {
+    guestFallbackIds.add(id);
+    fallbackEnforcedId = '';
+    showToast('로그인 세션에서 재생이 제한되어 이 곡을 게스트로 다시 재생합니다');
+    startFallback(id);
+    return;
+  }
   const first = !adEnforcementSeen;
   if (first) {
     // 회피를 강화하는 대신 **광고에 손대는 것을 전부 그만둔다** — 네트워크 차단(메인 창),
@@ -391,12 +421,15 @@ async function pollSkipClick() {
 // 종료/이탈 감지: 영상이 끝났거나 유튜브 자동재생으로 다른 영상에 넘어가면 다음 곡으로
 async function pollFallback(id) {
   if (!fallbackActive || queue[queueIndex] !== id) return;
+  const view = fallbackView;
   let st = null;
   try {
     st = await fallbackView.executeJavaScript(
       "(() => { const v = document.querySelector('video'); const m = location.href.match(/[?&]v=([\\w-]{11})/); return { vid: m ? m[1] : null, ended: v ? v.ended : false, paused: v ? v.paused : true, t: v ? v.currentTime : 0, d: v ? v.duration || 0 : 0, ad: !!document.querySelector('.ad-showing') }; })()"
     );
   } catch {}
+  // 세션 교체 전에 시작한 비동기 폴링 결과로 새 웹뷰의 곡을 넘기지 않는다.
+  if (view !== fallbackView || !fallbackActive || queue[queueIndex] !== id) return;
   if (!st || (st.t === 0 && !st.d && !st.ad)) {
     // 워치페이지에서도 재생 시작 실패(삭제/비공개 등) → 10초 후 포기하고 스킵
     if (++fallbackStall >= 10) {
@@ -427,7 +460,8 @@ async function pollFallback(id) {
 }
 
 // 워치페이지의 페이지 요소(헤더/댓글/추천)와 광고 배너를 숨기고, 광고 자동 스킵을 주입
-fallbackView.addEventListener('dom-ready', () => {
+function onFallbackReady(e) {
+  if (e.currentTarget !== fallbackView) return;
   fallbackView.insertCSS(`
     #masthead-container, #secondary, #below, ytd-comments, tp-yt-app-drawer { display: none !important; }
     .ytp-fullscreen-button { display: none !important; } /* 전체화면은 앱 버튼(몰입 모드)으로만 */
@@ -613,7 +647,8 @@ fallbackView.addEventListener('dom-ready', () => {
     }
     0;
   `).catch(() => {});
-});
+}
+fallbackView.addEventListener('dom-ready', onFallbackReady);
 
 function onPlayerStateChange(event) {
   if (event.data === YT.PlayerState.ENDED) {
