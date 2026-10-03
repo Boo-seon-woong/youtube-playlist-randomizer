@@ -45,7 +45,8 @@
   사용자 PC `mt-cache`에 "나 나 나 …" 수백 번 반복 같은 고장 출력 다수(그래서 "제대로 되는 걸 본 적 없다").
   후보 시험(`test/lyrics-eval/llm-test.js`): Gemma 3 270M q4(483MB RSS) — 엉뚱한 번역 + 덧붙임,
   Qwen2.5 0.5B int8(1.46GB, 줄당 3~4초) — 가사와 무관한 문장 생성, Qwen3 0.6B int8(1.69GB, 줄당 5.4초) —
-  thinking이 꺼지지 않아 번역 대신 추론 출력. **셋 다 탈락 — 아직 교체 모델 없음.**
+  thinking이 꺼지지 않아 번역 대신 추론 출력 — 범용 소형 LLM은 탈락. **이후 번역 전용 2025~26 모델을 제대로 찾아
+  Tencent Hy-MT2-1.8B(IQ4_XS, node-llama-cpp)로 교체 완료** — 근거·실측은 ARCHITECTURE.md "번역 모델 교체" 절.
 
 ## 남은 일 (순서대로)
 
@@ -56,7 +57,7 @@
    필요하면 기준선: `node run-playlists.js old --module ./old-lyrics-search.js --old-fallback --step 3`.
 2. 판정에서 나온 실패 유형별로 `lyrics-search.js` 수정 → 같은 곡들로 재측정(회귀 확인).
    알송이 계속 느리면 검색어 조합 탐색(`fetchAlsongCandidates`, 현재 순차)을 2개씩 동시에 하는 것도 검토.
-3. 번역 모델 후속 후보: NLLB-200-distilled-600M(2022, 품질은 M2M100보다 낫다고 알려짐 — 크기·속도 실측 필요),
+3. (완료 — Hy-MT2로 교체. 아래는 당시 메모) 번역 모델 후속 후보: NLLB-200-distilled-600M(2022, 품질은 M2M100보다 낫다고 알려짐 — 크기·속도 실측 필요),
    Opus-MT 피벗(ja→en→ko, Marian ~300MB×2), Qwen3 0.6B는 chat 템플릿에서 thinking을 확실히 끈 뒤 재시험
    (`tokenizer.apply_chat_template(..., { enable_thinking: false })` 직접 호출). 조건: 지금보다 작고(디스크 < 600MB,
    RAM < 1.7GB) 번역이 더 자연스러울 것. 못 찾으면 현 모델 + 반복 방지로 유지.

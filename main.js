@@ -342,12 +342,12 @@ function scheduleMtWorkerStop() {
 }
 
 // lines: 줄별 번역 원문(빈 문자열 = 생략), 줄마다 onLine(index, ko) 호출, 전체 완료 시 resolve
-function runMtJob(lines, src, onLine, onStart) {
+function runMtJob(lines, src, onLine, onStart, order) {
   return new Promise((resolve, reject) => {
     const id = ++mtJobSeq;
     if (onStart) onStart(id);
     mtJobs.set(id, { onLine, resolve, reject });
-    try { getMtWorker().postMessage({ id, lines, src }); } catch (err) { mtJobs.delete(id); reject(err); }
+    try { getMtWorker().postMessage({ id, lines, src, order }); } catch (err) { mtJobs.delete(id); reject(err); }
   });
 }
 
@@ -454,10 +454,17 @@ async function augmentForeignLyrics(key, data) {
     publish();
     if (plan.tr && !koDone) {
       const sources = originals.map((t) => (t && !hasHangul(t) && !isVocalization(t) ? t : ''));
+      // 지금 재생 중인 줄부터 번역한다(줄당 약 2초라 처음부터 하면 곡 중간에 켰을 때 한참 기다린다)
+      let start = 0;
+      if (!base.plain && key === lyricsKey) {
+        const now = (lyricsState.progress || 0) + 1500;
+        base.lines.forEach((line, i) => { if (line.time <= now) start = i; });
+      }
+      const order = [...Array(n).keys()].slice(start).concat([...Array(start).keys()]);
       await runMtJob(sources, plan.lang, (i, text) => {
         ko[i] = text;
         if (text && key === lyricsKey) publish(); // 한 줄 될 때마다 바로 보인다 (곡이 바뀌었으면 캐시만 채운다)
-      }, (jobId) => mtJobOfKey.set(key, jobId));
+      }, (jobId) => mtJobOfKey.set(key, jobId), order);
       if ((augmentGen.get(key) || 0) !== gen) return; // 도중에 취소됨 — 덜 된 번역은 캐시하지 않는다
       mtJobOfKey.delete(key);
       cache.ko = ko;

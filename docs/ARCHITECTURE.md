@@ -779,3 +779,20 @@ disable-backgrounding-occluded-windows / disable-features=IntensiveWakeUpThrottl
   곡당 수 밀리초. 기계 번역은 Windows 설치본 실측으로 로드 3.2초·줄당 0.5~1초·RSS 1.7GB이고, 사용자 PC 캐시에서
   "나 나 나 …" 수백 번 반복 같은 고장 출력이 확인돼 생성 시 `repetition_penalty 1.3`·`no_repeat_ngram_size 3`·
   길이 상한을 걸고 후처리로 반복을 줄이며, 의성어 줄은 번역하지 않는다. 캐시는 `mt-cache-v2`(`{pron, ko}`).
+
+## 번역 모델 교체: M2M100-418M → Tencent Hy-MT2-1.8B (2026-10-04)
+
+- **엔진**: transformers.js(ONNX) → **node-llama-cpp**(llama.cpp, GGUF). `mt-worker.js`가 `import('node-llama-cpp')`로
+  `models/Hy-MT2-1.8B-IQ4_XS.gguf`(986MB)를 연다 — `getLlama({ gpu: false, build: 'never' })`: GPU는 게임과 다투지 않게 끄고,
+  사용자 PC에서 컴파일하지 않도록 미리 빌드된 바이너리(@node-llama-cpp/win-x64, 30MB)만 쓴다. 2스레드, IDLE 우선순위 그대로.
+  프롬프트는 모델 공식 형식("Translate the following text into Korean. Note that you should only output the translated
+  result without any additional explanation:"), 온도 0, 줄마다 `sequence.clearHistory()`로 독립 번역.
+- **고른 근거(같은 일본어 가사 8줄, 실측)**: M2M100(2020) — Windows RSS 1.7GB, "당신의 목소리가 들릴 수 있습니다",
+  사용자 PC 캐시에 반복 고장 다수. 범용 소형 LLM(Gemma3-270M, Qwen2.5-0.5B, Qwen3-0.6B)은 번역 대신 지어내거나
+  추론을 출력해 탈락. 번역 전용 2025~26 모델: LMT-60-0.6B(993MB RSS, 들쭉날쭉), Hy-MT2-1.8B IQ2_M(오타), Q3_K_S(느리고
+  어색), Q4_0(RSS 2.1GB) → **IQ4_XS**가 품질 최상("꿈이라면 얼마나 좋았을까요?", "강해질 수 있는 이유를 알게 되었어.
+  나를 데리고 계속 가자."). Windows 패키징본 실측: 로드 1.2초, 줄당 약 1.3초(2스레드), RSS 1.2GB.
+  텐센트의 1.25비트판(440MB, 1.5배 빠름)은 llama.cpp 전용 STQ 커널(PR #22836)이 정식 배포판에 없어 현재 로드 실패 —
+  node-llama-cpp가 그 커널을 포함하면 교체 후보 1순위.
+- **속도 보완**: 같은 원문 줄(후렴 반복)은 한 번만 번역(워커 `memo`), 지금 재생 중인 줄부터 번역(main이 `order` 전달).
+- 의존성에서 `@huggingface/transformers`(onnxruntime·sharp 포함 ~300MB)를 뺐다 — 패키지 총량은 비슷(1.5GB).
