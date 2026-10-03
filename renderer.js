@@ -118,7 +118,11 @@ window.onYouTubeIframeAPIReady = () => {
     //   중앙 플레이어는 마우스 상호작용도 차단해 두었으므로 그 컨트롤은 어차피 쓸 수 없다.
     playerVars: { rel: 0, fs: 0, controls: 0, disablekb: 1, iv_load_policy: 3, modestbranding: 1 },
     events: {
-      onReady: () => {
+      onReady: async () => {
+        // 첫 곡을 틀기 전에 임베드 프레임에 오디오 가드(볼륨 상한)가 심겼는지 확인한다 —
+        // 가드 없이 재생이 시작되면 유튜브의 저장 볼륨으로 잠깐 소리가 날 수 있다
+        try { audioGuardOk = await window.winctl.audioGuard(); } catch { audioGuardOk = false; }
+        if (audioGuardOk) precisePlaybackActive = false;
         playerReady = true;
         applyVolume(); // 저장된 마스터 볼륨을 임베드 플레이어에 반영
         if (pendingPlay) {
@@ -1365,7 +1369,7 @@ lvScale.addEventListener('change', saveSettings);
 
 // settings.json은 테마 3색 + 마스터 볼륨 + 패널 레이아웃 + 가사 보기 글꼴/크기를 한 객체로 저장한다
 function saveSettings() {
-  window.uiSettings.save({ ...theme, volume: masterVolume, layout, lyricsView, adEnforcedV2: adEnforcementSeen });
+  window.uiSettings.save({ ...theme, volume: masterVolume, layout, lyricsView, adEnforcedV2: adEnforcementSeen, eq: eqState });
 }
 
 function syncSettingsUI() {
@@ -1569,13 +1573,25 @@ function effectiveVolume() {
   return 100 * Math.pow(10, (masterVolume - 100) / 50);
 }
 
+// 오디오 가드(audio-guard.js)에 현재 볼륨 상한·EQ를 보낸다 — main이 모든 유튜브 프레임에 즉시 뿌린다.
+// 가드는 유튜브가 영상 요소에 쓰는 볼륨을 쓰는 순간 이 상한으로 잘라 내므로, 곡 전환 때 유튜브가
+// 자기 저장 볼륨(보통 100%)을 복원해도 소리가 새지 않는다.
+let audioGuardOk = false; // 임베드 프레임에 가드가 심긴 것을 확인했는가 (player onReady에서 확인)
+
+function pushAudio() {
+  try { window.winctl.setAudio({ cap: effectiveVolume() / 100, eq: { enabled: eqState.enabled, gains: eqState.gains } }); } catch {}
+}
+
 function applyVolume() {
   const out = effectiveVolume();
+  pushAudio(); // 먼저 상한부터 — 볼륨을 내릴 때 유튜브에 전달되기 전에 이미 잘려 있게
   if (playerReady) {
     try {
-      player.setVolume(out);
+      // 가드가 있으면 유튜브에는 올림값을 주고 가드가 정확한 상한(소수점까지)으로 자른다.
+      // 가드가 없으면 예전처럼 반올림값 — 이때 올림을 쓰면 저볼륨에서 최대 2배가 될 수 있다.
+      player.setVolume(audioGuardOk ? Math.min(100, Math.ceil(out)) : out);
       // 임베드 플레이어는 볼륨 0에서 unMute()하면 최소 볼륨 5로 되살린다(실측) — 무음은 0에서만.
-      if (out < 0.5) player.mute();
+      if (out < 0.5 && !(audioGuardOk && out > 0)) player.mute();
       else player.unMute();
     } catch {}
   }
@@ -1600,7 +1616,7 @@ function setMasterVolume(v, save) {
   masterVolume = clampVolume(v);
   // IFrame API는 정수 볼륨만 지원하므로, 소수점 값을 선택하면 현재 곡부터
   // HTML5 video.volume을 직접 제어하는 워치페이지 경로로 전환한다.
-  if (!Number.isInteger(masterVolume) && !adEnforcementSeen) precisePlaybackActive = true;
+  if (!Number.isInteger(masterVolume) && !adEnforcementSeen && !audioGuardOk) precisePlaybackActive = true;
   paintVolumeUI();
   if (precisePlaybackActive && !fallbackActive && queueIndex >= 0 && queue[queueIndex]) {
     startFallback(queue[queueIndex]);
@@ -1623,8 +1639,168 @@ soundVolInput.addEventListener('change', () => {
 
 function openSoundPanel() {
   paintVolumeUI();
+  paintEq();
   soundBackdrop.hidden = false;
 }
+
+// ── 이퀄라이저: 6밴드(60/150/400/1k/2.4k/15kHz, ±12dB). 실제 처리는 audio-guard.js가 유튜브 프레임 안에서 한다 ──
+const EQ_PRESETS = [
+  { id: 'flat', name: '평탄', gains: [0, 0, 0, 0, 0, 0] },
+  { id: 'bass-boost', name: '베이스 부스트', gains: [6, 4, 0, 0, 0, 0] },
+  { id: 'bass-cut', name: '베이스 감소', gains: [-6, -4, 0, 0, 0, 0] },
+  { id: 'treble-boost', name: '고음 부스트', gains: [0, 0, 0, 2, 4, 6] },
+  { id: 'treble-cut', name: '고음 감소', gains: [0, 0, 0, -2, -4, -6] },
+  { id: 'vocal', name: '보컬 강조', gains: [-2, -1, 2, 4, 3, 0] },
+  { id: 'electronic', name: '일렉트로닉', gains: [4, 2, -2, 1.5, 0.5, 4] },
+  { id: 'hiphop', name: '힙합', gains: [5, 4, 0, -1, 1, 3] },
+  { id: 'rock', name: '록', gains: [4, 2, -1, 1, 3, 4] },
+  { id: 'pop', name: '팝', gains: [-1, 1, 3, 3, 1, -1] },
+  { id: 'jazz', name: '재즈', gains: [3, 2, 0, 1, 2, 3] },
+  { id: 'classical', name: '클래식', gains: [4, 3, -1, 0, 2, 4] },
+  { id: 'acoustic', name: '어쿠스틱', gains: [3, 2, 1, 2, 2, 2] },
+];
+let eqState = { enabled: false, preset: 'flat', gains: [0, 0, 0, 0, 0, 0] };
+
+function loadEqState(saved) {
+  const gains = Array.from({ length: 6 }, (_, i) => {
+    const g = Number(Array.isArray(saved.gains) ? saved.gains[i] : 0);
+    return Number.isFinite(g) ? Math.max(-12, Math.min(12, g)) : 0;
+  });
+  eqState = { enabled: !!saved.enabled, preset: String(saved.preset || 'custom'), gains };
+}
+
+const eqEnabled = document.getElementById('eq-enabled');
+const eqPreset = document.getElementById('eq-preset');
+const eqBody = document.getElementById('eq-body');
+const eqGrid = document.getElementById('eq-grid');
+const eqArea = document.getElementById('eq-area');
+const eqLine = document.getElementById('eq-line');
+const eqPoints = document.getElementById('eq-points');
+const eqSvg = document.getElementById('eq-graph');
+// 그래프 좌표 (viewBox 560×210): 왼쪽은 ±12dB 눈금 자리
+const EQ_G = { left: 56, right: 544, top: 14, bottom: 196 };
+const eqX = (i) => EQ_G.left + (i + 0.5) * ((EQ_G.right - EQ_G.left) / 6);
+const eqY = (g) => (EQ_G.top + EQ_G.bottom) / 2 - (g / 12) * ((EQ_G.bottom - EQ_G.top) / 2);
+
+for (const p of [...EQ_PRESETS, { id: 'custom', name: '사용자 지정' }]) {
+  const opt = document.createElement('option');
+  opt.value = p.id;
+  opt.textContent = p.name;
+  eqPreset.append(opt);
+}
+
+(function drawEqGrid() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const line = (x1, y1, x2, y2) => {
+    const l = document.createElementNS(ns, 'line');
+    l.setAttribute('x1', x1); l.setAttribute('y1', y1); l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+    eqGrid.append(l);
+  };
+  for (let i = 0; i < 6; i++) line(eqX(i), EQ_G.top, eqX(i), EQ_G.bottom);
+  line(EQ_G.left, eqY(0), EQ_G.right, eqY(0));
+  for (const [label, g] of [['+12dB', 12], ['-12dB', -12]]) {
+    const t = document.createElementNS(ns, 'text');
+    t.setAttribute('x', 0);
+    t.setAttribute('y', eqY(g) + 4);
+    t.textContent = label;
+    eqGrid.append(t);
+  }
+  for (let i = 0; i < 6; i++) {
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('r', 6);
+    c.dataset.band = String(i);
+    eqPoints.append(c);
+  }
+})();
+
+// 6개 점을 지나는 매끈한 곡선 (Catmull-Rom → 3차 베지어)
+function eqCurvePath(pts) {
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += ` C ${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${p2[0]} ${p2[1]}`;
+  }
+  return d;
+}
+
+function paintEq() {
+  eqEnabled.checked = eqState.enabled;
+  eqBody.classList.toggle('off', !eqState.enabled);
+  eqPreset.value = EQ_PRESETS.some((p) => p.id === eqState.preset) ? eqState.preset : 'custom';
+  const pts = eqState.gains.map((g, i) => [eqX(i), eqY(g)]);
+  const curve = eqCurvePath(pts);
+  eqLine.setAttribute('d', curve);
+  eqArea.setAttribute('d', `${curve} L ${pts[5][0]} ${EQ_G.bottom} L ${pts[0][0]} ${EQ_G.bottom} Z`);
+  [...eqPoints.children].forEach((c, i) => {
+    c.setAttribute('cx', pts[i][0]);
+    c.setAttribute('cy', pts[i][1]);
+    c.setAttribute('aria-label', `${document.querySelectorAll('#eq-labels span')[i].textContent} ${eqState.gains[i] > 0 ? '+' : ''}${eqState.gains[i]}dB`);
+  });
+}
+
+// 드래그 중에는 50ms마다만 프레임에 보낸다 (프레임 주입 IPC를 과하게 쏘지 않도록)
+let eqPushTimer = null;
+function pushEqSoon() {
+  if (eqPushTimer) return;
+  eqPushTimer = setTimeout(() => { eqPushTimer = null; pushAudio(); }, 50);
+}
+
+eqEnabled.addEventListener('change', () => {
+  eqState = { ...eqState, enabled: eqEnabled.checked };
+  paintEq();
+  pushAudio();
+  saveSettings();
+});
+
+eqPreset.addEventListener('change', () => {
+  const p = EQ_PRESETS.find((x) => x.id === eqPreset.value);
+  if (!p) return; // '사용자 지정'은 고르는 항목이 아니라 표시용
+  eqState = { ...eqState, enabled: true, preset: p.id, gains: [...p.gains] };
+  paintEq();
+  pushAudio();
+  saveSettings();
+});
+
+document.getElementById('eq-reset').addEventListener('click', () => {
+  eqState = { ...eqState, preset: 'flat', gains: [0, 0, 0, 0, 0, 0] };
+  paintEq();
+  pushAudio();
+  saveSettings();
+});
+
+// 점을 위아래로 끌어 밴드 조절 (0.5dB 단위). 끄여 있던 EQ는 조작하는 순간 켠다.
+let eqDrag = -1;
+eqPoints.addEventListener('pointerdown', (e) => {
+  const band = Number(e.target && e.target.dataset && e.target.dataset.band);
+  if (!Number.isInteger(band)) return;
+  e.preventDefault();
+  eqDrag = band;
+  e.target.classList.add('dragging');
+  try { eqSvg.setPointerCapture(e.pointerId); } catch {}
+});
+eqSvg.addEventListener('pointermove', (e) => {
+  if (eqDrag < 0) return;
+  const rect = eqSvg.getBoundingClientRect();
+  const y = ((e.clientY - rect.top) / rect.height) * 210; // viewBox 좌표로
+  const mid = (EQ_G.top + EQ_G.bottom) / 2;
+  const g = Math.round((((mid - y) / ((EQ_G.bottom - EQ_G.top) / 2)) * 12) * 2) / 2;
+  const gains = [...eqState.gains];
+  gains[eqDrag] = Math.max(-12, Math.min(12, g));
+  eqState = { ...eqState, enabled: true, preset: 'custom', gains };
+  paintEq();
+  pushEqSoon();
+});
+const endEqDrag = () => {
+  if (eqDrag < 0) return;
+  eqDrag = -1;
+  for (const c of eqPoints.children) c.classList.remove('dragging');
+  pushAudio();
+  saveSettings();
+};
+eqSvg.addEventListener('pointerup', endEqDrag);
+eqSvg.addEventListener('pointercancel', endEqDrag);
 
 function closeSoundPanel() {
   soundBackdrop.hidden = true;
@@ -2691,6 +2867,12 @@ let lyricsViewOn = false;
 let lyricsViewData = null; // { lines: [{time, text}], source, language, unavailable }
 let lyricsViewIndex = -2;
 let lyricsViewTimer = null;
+let lyricsViewOffset = 0; // 곡별 가사 싱크 보정(ms) — 플로팅 창과 같은 값 (main이 Alt+A/D로 바꾼다)
+window.lyricsOverlay.onOffset((ms) => {
+  lyricsViewOffset = Number(ms) || 0;
+  if (lyricsViewOn) tickLyricsView(true);
+});
+window.lyricsOverlay.getOffset().then((ms) => { lyricsViewOffset = Number(ms) || 0; }).catch(() => {});
 
 function lyricsProgressNow() {
   const s = lyricsPublishedState;
@@ -2745,7 +2927,7 @@ function tickLyricsView(force) {
   const lines = lyricsViewData.lines;
   let index = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].time <= progress + 225) index = i;
+    if (lines[i].time <= progress + 225 + lyricsViewOffset) index = i; // 곡별 싱크 보정(Alt+A/D)
     else break;
   }
   if (index === lyricsViewIndex && !force) return;
@@ -2878,6 +3060,8 @@ adBlockToggle.addEventListener('change', () => {
   if (saved && saved.accent && saved.base && saved.panel) applyTheme(saved);
   else syncSettingsUI();
   if (saved && saved.volume != null) masterVolume = clampVolume(saved.volume);
+  if (saved && saved.eq) loadEqState(saved.eq);
+  pushAudio(); // 영상이 뜨기 전에 가드 상태를 먼저 맞춰 둔다
   // 한 번 광고 차단 감지에 걸린 적이 있으면 다음 실행부터는 처음부터 차단·조작을 하지 않는다
   // — 매 실행마다 다시 걸려 곡이 건너뛰어지는 일을 막는다.
   // (v1.30.0까지의 `adEnforced`는 숨겨진 DOM 요소를 보고 오탐한 값이라 무시하고 키를 새로 뒀다)

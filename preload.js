@@ -31,6 +31,9 @@ contextBridge.exposeInMainWorld('winctl', {
   onFsKey: (callback) => ipcRenderer.on('window:fs-key', () => callback()),
   onFullScreen: (callback) => ipcRenderer.on('window:fullscreen', (_event, flag) => callback(!!flag)),
   disableAdBlock: () => ipcRenderer.send('adblock:disable'),
+  // 오디오 가드: 볼륨 상한·이퀄라이저 상태를 모든 유튜브 프레임에 뿌리고, 임베드에 가드가 심겼는지 확인
+  setAudio: (state) => ipcRenderer.send('audio:set', state),
+  audioGuard: () => ipcRenderer.invoke('audio:guard'),
 });
 
 contextBridge.exposeInMainWorld('lyrics', {
@@ -84,6 +87,16 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   },
   onDragging: (callback) => ipcRenderer.on('lyrics:dragging', (_event, flag) => callback(flag)),
   onFlash: (callback) => ipcRenderer.on('lyrics:flash', (_event, text) => callback(text)),
+  // 곡별 가사 싱크 보정(ms) — Alt+A/D
+  onOffset: (callback) => ipcRenderer.on('lyrics:offset', (_event, ms) => callback(ms)),
+  getOffset: () => ipcRenderer.invoke('lyrics:offset:get'),
+  // 플로팅 창 레이아웃 프리셋
+  presets: {
+    list: () => ipcRenderer.invoke('lyrics:presets:list'),
+    save: (name) => ipcRenderer.invoke('lyrics:presets:save', name),
+    apply: (name) => ipcRenderer.invoke('lyrics:presets:apply', name),
+    remove: (name) => ipcRenderer.invoke('lyrics:presets:delete', name),
+  },
 });
 
 contextBridge.exposeInMainWorld('fallbackctl', {

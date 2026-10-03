@@ -37,6 +37,9 @@ const videoWrap = document.getElementById('lyrics-video-wrap');
 const title = document.getElementById('lyrics-title');
 const artist = document.getElementById('lyrics-artist');
 const linesEl = document.getElementById('lyrics-lines');
+const footEl = document.getElementById('lyrics-foot');
+const gripEl = document.getElementById('lyrics-grip');
+const trackRow = document.getElementById('lyrics-track');
 const progressRow = document.getElementById('lyrics-progress-row');
 const progressTrack = document.getElementById('lyrics-progress-track');
 const elapsedEl = document.getElementById('lyrics-elapsed');
@@ -78,7 +81,7 @@ function applyLyricsSettings(next) {
   lyricsSettings = { ...lyricsSettings, ...(next || {}) };
   if (lyricsSettings.clickThrough !== wasLocked) hitSent = null; // main이 히트 상태를 새로 잡았으니 다시 보낸다
   if (lockStateKnown && lyricsSettings.clickThrough !== wasLocked) {
-    flashMessage(lyricsSettings.clickThrough ? '🔒 클릭 통과 ON · 게임으로 복귀' : '🔓 클릭 통과 OFF · 가사 창 조작');
+    flashMessage(lyricsSettings.clickThrough ? '🔒 클릭 비활성화' : '🔓 클릭 활성화 · ⠿ 손잡이나 곡 정보를 끌어 이동');
   }
   lockStateKnown = true;
   const opacity = Math.max(0, Math.min(100, Number(lyricsSettings.backgroundOpacity) || 0)) / 100;
@@ -95,11 +98,19 @@ function applyLyricsSettings(next) {
   playbackControls.hidden = !lyricsSettings.showPlaybackControls
     || (previousButton.hidden && pauseButton.hidden && nextButton.hidden && volumeButton.hidden);
   if (volumeButton.hidden || playbackControls.hidden) closeVolumePop();
-  // 가사를 꺼도 곡 정보(제목·아티스트)는 남는다 — 둘 다 꺼졌을 때만 오른쪽 열 자체를 접는다
+  // 왼쪽 사각형을 끄면 한 열로 쌓는다: 재생바·컨트롤을 가사 아래 줄로 옮겨, 재생바는 좌하단·제목은
+  // 우상단에 따로 떨어지던 배치를 없앤다. 사각형을 다시 켜면 왼쪽 열로 되돌린다.
+  const stacked = lyricsSettings.coverMode === 'none';
+  document.body.classList.toggle('stacked', stacked);
+  if (stacked) footEl.append(progressRow, playbackControls, volumePop);
+  else sideEl.append(progressRow, playbackControls, volumePop); // coverBox 뒤로 원래 순서대로
+  // 가사를 꺼도 곡 정보(제목·아티스트)는 남는다 — 남은 요소는 세로 가운데로 모은다(no-lines)
   const trackEl = document.getElementById('lyrics-track');
   trackEl.hidden = !lyricsSettings.showTrackInfo;
   linesEl.hidden = !lyricsSettings.showLyrics;
-  document.getElementById('lyrics-body').hidden = trackEl.hidden && linesEl.hidden;
+  document.body.classList.toggle('no-lines', linesEl.hidden);
+  const footEmpty = !stacked || (progressRow.hidden && playbackControls.hidden);
+  document.getElementById('lyrics-body').hidden = trackEl.hidden && linesEl.hidden && footEmpty;
   // 잠금(클릭 통과) 중에는 눌리지 않는 버튼을 아예 감춰 눌러도 되는 것처럼 보이지 않게 한다
   document.body.classList.toggle('locked', !!lyricsSettings.clickThrough);
   // 왼쪽 열: 사각형(앨범/영상)은 창 높이에서 여백·재생바·컨트롤 높이를 뺀 크기 (예시 디자인처럼 세로를 꽉 채움)
@@ -109,7 +120,8 @@ function applyLyricsSettings(next) {
   coverBox.hidden = lyricsSettings.coverMode === 'none';
   // 영상 맞춤: cover면 정사각형을 세로 기준으로 가득 채우고 좌우가 잘린다 (iframe을 16:9로 넓혀 가운데 정렬)
   document.body.classList.toggle('video-cover', lyricsSettings.videoFit !== 'contain');
-  sideEl.hidden = coverBox.hidden && progressRow.hidden && playbackControls.hidden;
+  sideEl.hidden = stacked || (coverBox.hidden && progressRow.hidden && playbackControls.hidden);
+  linesKey = ''; // 줄 수(글씨 크기·창 높이)가 바뀌었을 수 있으니 가사 줄을 다시 그린다
   ensureMiniVideo();
   render();
 }
@@ -125,11 +137,14 @@ function currentProgress() {
   return Math.min(playback.duration || Infinity, playback.progress + performance.now() - receivedAt);
 }
 
+// 곡별 가사 싱크 보정(ms, Alt+A/D) — 양수면 가사가 그만큼 빨리 넘어간다
+let lyricsOffset = 0;
+
 function currentIndex(progress) {
   if (!lyricData || !lyricData.lines || lyricData.lines.length === 0) return -1;
   let index = -1;
   for (let i = 0; i < lyricData.lines.length; i += 1) {
-    if (lyricData.lines[i].time <= progress + 225) index = i;
+    if (lyricData.lines[i].time <= progress + 225 + lyricsOffset) index = i;
     else break;
   }
   return index;
@@ -265,20 +280,64 @@ function render() {
     volumeValue.textContent = String(Math.round(playback.volume));
   }
 
+  renderLines(currentIndex(progress));
+}
+
+// 가사 줄: 예전엔 이전·현재·다음 3블록 고정이라 창을 키우고 글씨를 줄여도 3줄뿐이었다.
+// 이제 줄 영역 높이에 들어가는 만큼 현재 줄 위아래로 대칭으로 채운다(대칭이라 현재 줄이 가운데에 온다).
+// 매 프레임 DOM을 새로 만들던 것도 고쳐, 현재 줄·줄 수·가사가 바뀔 때만 다시 그린다(CPU 절약).
+let linesKey = '';
+let lyricDataVersion = 0;
+
+function linesPerSide() {
+  const h = linesEl.clientHeight;
+  if (!h) return 1;
+  const fs = Number(lyricsSettings.fontSize) || 16;
+  const lines = (lyricData && lyricData.lines) || [];
+  // 한 블록에 줄이 여럿(원문·발음·번역)인 곡이 있으니 평균 줄 수로 블록 높이를 어림한다
+  let chips = 1;
+  if (lines.length) chips = lines.reduce((n, l) => n + String(l.text).split('\n').length, 0) / lines.length;
+  const sideBlock = chips * (fs * 0.72 * 1.28 + 3) + 4;
+  const currentBlock = chips * (fs * 1.28 + 3) + 4;
+  return Math.max(1, Math.min(20, Math.floor((h - currentBlock) / 2 / sideBlock)));
+}
+
+function renderLines(index) {
+  const hasLines = !!(lyricData && lyricData.lines && lyricData.lines.length);
+  const k = hasLines ? linesPerSide() : 0;
+  const note = !hasLines ? (lyricData && lyricData.unavailable ? '가사를 찾지 못했습니다'
+    : lyricData ? null : (playback.status === 'idle' ? null : '가사를 찾는 중…')) : null;
+  const key = `${lyricDataVersion}|${index}|${k}|${note}`;
+  if (key === linesKey) return;
+  linesKey = key;
   linesEl.replaceChildren();
-  const index = currentIndex(progress);
-  if (index < 0) {
-    // 가사가 없거나 시작 전이면 안내 한 줄만 (별도 상태 문구는 두지 않는다)
-    const note = lyricData && lyricData.unavailable ? '가사를 찾지 못했습니다'
-      : lyricData ? null : (playback.status === 'idle' ? null : '가사를 찾는 중…');
+  if (!hasLines) {
+    // 가사가 없으면 안내 한 줄만 (별도 상태 문구는 두지 않는다)
     linesEl.append(lineElement(note ? { text: note } : null, note ? 'current empty' : 'current'));
     return;
   }
-  linesEl.append(
-    lineElement(lyricData.lines[index - 1], 'previous'),
-    lineElement(lyricData.lines[index], 'current'),
-    lineElement(lyricData.lines[index + 1], 'next'),
-  );
+  const lines = lyricData.lines;
+  for (let d = -k; d <= k; d += 1) {
+    const i = index + d;
+    if (d === 0) {
+      // 첫 줄 시작 전(전주)에는 ♪를 가운데 두고 다가올 줄을 아래에 보여 준다
+      linesEl.append(lineElement(index >= 0 ? lines[index] : null, 'current'));
+      continue;
+    }
+    if (i < 0 || i >= lines.length) {
+      // 범위 밖은 보이지 않는 자리 채움 — 위아래 줄 수를 맞춰 현재 줄을 가운데에 고정한다
+      const pad = lineElement({ text: ' ' }, d < 0 ? 'previous pad' : 'next pad'); // 옆 줄과 같은 높이
+      linesEl.append(pad);
+      continue;
+    }
+    const el = lineElement(lines[i], d < 0 ? 'previous' : 'next');
+    const dist = Math.abs(d);
+    if (dist > 1) {
+      el.classList.add('far');
+      el.style.setProperty('--far', String(Math.max(0.28, 1 - (dist - 1) * 0.16)));
+    }
+    linesEl.append(el);
+  }
 }
 
 function animate() {
@@ -385,8 +444,17 @@ window.lyricsOverlay.onState((next) => {
 
 window.lyricsOverlay.onData((next) => {
   lyricData = next;
+  lyricDataVersion += 1;
   render();
 });
+
+window.lyricsOverlay.onOffset((ms) => {
+  lyricsOffset = Number(ms) || 0;
+  render();
+});
+window.lyricsOverlay.getOffset().then((ms) => { lyricsOffset = Number(ms) || 0; }).catch(() => {});
+// 창 크기가 바뀌면 들어가는 줄 수도 바뀐다
+window.addEventListener('resize', () => { linesKey = ''; });
 
 // 탐색·새로고침·숨기기 버튼은 제거(가사 검색은 메인 창에서) — 설정 톱니만 남긴다
 document.getElementById('lyrics-search-close').addEventListener('click', hideSearch);
@@ -397,22 +465,25 @@ nextButton.addEventListener('click', () => window.lyricsOverlay.control('next'))
 searchForm.addEventListener('submit', searchLyrics);
 
 // 창 이동: 앨범/영상 박스를 누르는 동안 main이 커서를 따라 창을 옮긴다 (-webkit-app-region은 히트박스 모드와 충돌)
-coverBox.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0) return;
-  e.preventDefault();
-  try { coverBox.setPointerCapture(e.pointerId); } catch {}
-  draggingWindow = true;
-  sendHit(true); // 히트 알림이 아직 안 갔더라도 드래그 동안은 확실히 받게
-  window.lyricsOverlay.drag(true);
-});
+// 왼쪽 사각형을 꺼도 잡을 곳이 있도록 톱니 옆 ⠿ 손잡이와 곡 정보 칩도 손잡이로 쓴다
 const endDrag = () => {
   if (!draggingWindow) return;
   draggingWindow = false;
   window.lyricsOverlay.drag(false);
   if (hitCount === 0) sendHit(false); // 드래그 중 밖으로 나갔던 커서 상태를 정리
 };
-coverBox.addEventListener('pointerup', endDrag);
-coverBox.addEventListener('pointercancel', endDrag);
+for (const handle of [coverBox, gripEl, trackRow]) {
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+    draggingWindow = true;
+    sendHit(true); // 히트 알림이 아직 안 갔더라도 드래그 동안은 확실히 받게
+    window.lyricsOverlay.drag(true);
+  });
+  handle.addEventListener('pointerup', endDrag);
+  handle.addEventListener('pointercancel', endDrag);
+}
 window.addEventListener('blur', endDrag);
 
 // 3) 메인 앱 테마 색 적용 (재생바·볼륨 슬라이더·컨트롤 hover)

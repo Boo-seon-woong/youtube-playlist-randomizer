@@ -35,13 +35,16 @@
         </div>
       </div>
       <div id="lyrics-body">
-        <div id="lyrics-track">
+        <div id="lyrics-track" class="hit" title="드래그하여 창 이동">
           <span id="lyrics-title" class="lyric-chip"></span>
           <span id="lyrics-artist" class="lyric-chip"></span>
         </div>
         <div id="lyrics-lines"></div>
+        <!-- 왼쪽 사각형을 끄면 재생바·컨트롤이 여기로 옮겨 온다 (가사 아래 한 줄) -->
+        <div id="lyrics-foot"></div>
       </div>
       <div id="lyrics-actions" class="hit">
+        <button id="lyrics-grip" title="드래그하여 창 이동" aria-label="창 이동"><svg viewBox="0 0 24 24"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg></button>
         <button id="lyrics-settings" title="가사 창 설정 (디자인 설정에서 조절)" aria-label="가사 창 설정"><svg viewBox="0 0 24 24"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="m19.4 15 .1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a2 2 0 1 1-4 0V19a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 4.8 12a1.7 1.7 0 0 0-1.2-1.7h-.2a2 2 0 1 1 0-4h.2A1.7 1.7 0 0 0 4.8 3.4l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10.5 0h.2a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21.6 7h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.2 2.9Z" transform="translate(-1 1.5) scale(.92)"/></svg></button>
       </div>
     </section>

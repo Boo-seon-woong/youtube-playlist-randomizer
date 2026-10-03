@@ -28,6 +28,8 @@ const TITLE_CACHE_FILE = () => path.join(app.getPath('userData'), 'titles.json')
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json'); // 디자인 설정 (테마 색)
 const LYRICS_BOUNDS_FILE = () => path.join(app.getPath('userData'), 'lyrics-window.json');
 const LYRICS_SETTINGS_FILE = () => path.join(app.getPath('userData'), 'lyrics-settings.json');
+const LYRICS_OFFSETS_FILE = () => path.join(app.getPath('userData'), 'lyrics-offsets.json'); // 곡별 가사 싱크 보정
+const LYRICS_PRESETS_FILE = () => path.join(app.getPath('userData'), 'lyrics-presets.json'); // 플로팅 창 레이아웃 프리셋
 
 // 추적 도메인만 막는다. **광고 송출 도메인(doubleclick·googlesyndication 등)은 더 이상 막지 않는다** —
 // 요청 실패는 유튜브의 광고 차단 감지에 그대로 걸려 재생 자체가 막히기 때문이다. 광고는 대신
@@ -1045,6 +1047,7 @@ function updateLyricsState(data) {
     lyricsKey = key;
     lyricsData = lyricsCache.has(key) ? lyricsCache.get(key) : null;
     sendLyricsToWindow();
+    sendLyricsOffset();
   }
   sendLyricsToWindow();
   if (next.status !== 'idle' && next.title && next.duration > 0 && !lyricsCache.has(key)) {
@@ -1152,7 +1155,7 @@ function showLyricsSettingsWindow() {
   // 플로팅 창 옆에 띄운다 (화면 밖으로 나가면 작업 영역 안으로 당긴다)
   const area = screen.getPrimaryDisplay().workArea;
   const width = 440;
-  const height = 720;
+  const height = Math.min(820, area.height); // 레이아웃 프리셋 섹션 추가분 — 작은 화면에선 작업 영역에 맞추고 카드가 스크롤된다
   let x = area.x + Math.round((area.width - width) / 2);
   let y = area.y + Math.round((area.height - height) / 2);
   if (lyricsWindow && !lyricsWindow.isDestroyed()) {
@@ -1243,16 +1246,112 @@ function sendLyricsFlash(text) {
   lyricsWindow.webContents.send('lyrics:flash', text);
 }
 
+// ── 가사 싱크 보정: 곡(영상 id)마다 따로 저장. Alt+A = 가사를 빠르게(+), Alt+D = 늦게(−) ──
+const LYRICS_OFFSET_STEP = 250;
+let lyricsOffsets = {};
+let lyricsOffsetsWriteTimer = null;
+
+function loadLyricsOffsets() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LYRICS_OFFSETS_FILE(), 'utf8'));
+    lyricsOffsets = raw && typeof raw === 'object' ? raw : {};
+  } catch { lyricsOffsets = {}; }
+}
+
+function currentLyricsOffset() {
+  const ms = Number(lyricsOffsets[lyricsState.id]);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function sendLyricsOffset() {
+  const ms = currentLyricsOffset();
+  for (const win of [lyricsWindow, mainWindow]) {
+    if (win && !win.isDestroyed() && !win.webContents.isLoading()) win.webContents.send('lyrics:offset', ms);
+  }
+}
+
+function adjustLyricsOffset(delta) {
+  if (!lyricsState.id) { sendLyricsFlash('재생 중인 곡이 없습니다'); return; }
+  const next = Math.max(-10000, Math.min(10000, currentLyricsOffset() + delta));
+  if (next === 0) delete lyricsOffsets[lyricsState.id];
+  else lyricsOffsets[lyricsState.id] = next;
+  clearTimeout(lyricsOffsetsWriteTimer);
+  lyricsOffsetsWriteTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(LYRICS_OFFSETS_FILE()), { recursive: true });
+      fs.writeFileSync(LYRICS_OFFSETS_FILE(), JSON.stringify(lyricsOffsets));
+    } catch {}
+  }, 500);
+  sendLyricsOffset();
+  const sec = (Math.abs(next) / 1000).toFixed(2).replace(/\.?0+$/, '');
+  sendLyricsFlash(next === 0 ? '🎵 가사 싱크 원래대로'
+    : next > 0 ? `⏩ 가사 ${sec}초 빠르게` : `⏪ 가사 ${sec}초 늦게`);
+}
+
+// ── 플로팅 창 레이아웃 프리셋: 크기·모양·표시 항목만 저장한다 (항상 위·클릭 비활성화 같은 동작 설정은 제외) ──
+const LYRICS_PRESET_KEYS = [
+  'width', 'height', 'backgroundOpacity', 'uiOpacity', 'fontSize', 'fontFamily', 'coverMode', 'videoFit',
+  'showLyrics', 'showTrackInfo', 'showProgressBar', 'showPlaybackControls',
+  'showPreviousButton', 'showPauseButton', 'showNextButton', 'showVolumeButton',
+];
+const LYRICS_PRESET_MAX = 10;
+let lyricsPresets = [];
+
+function loadLyricsPresets() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LYRICS_PRESETS_FILE(), 'utf8'));
+    lyricsPresets = Array.isArray(raw) ? raw.filter((p) => p && typeof p.name === 'string' && p.settings).slice(0, LYRICS_PRESET_MAX) : [];
+  } catch { lyricsPresets = []; }
+}
+
+function writeLyricsPresets() {
+  try {
+    fs.mkdirSync(path.dirname(LYRICS_PRESETS_FILE()), { recursive: true });
+    fs.writeFileSync(LYRICS_PRESETS_FILE(), JSON.stringify(lyricsPresets, null, 2));
+  } catch {}
+}
+
+const presetNames = () => lyricsPresets.map((p) => p.name);
+
+function saveLyricsPreset(name) {
+  const clean = String(name || '').trim().slice(0, 30);
+  if (!clean) return { ok: false, error: '이름을 입력하세요', names: presetNames() };
+  const settings = {};
+  for (const key of LYRICS_PRESET_KEYS) settings[key] = lyricsSettings[key];
+  const i = lyricsPresets.findIndex((p) => p.name === clean);
+  if (i >= 0) lyricsPresets[i] = { name: clean, settings }; // 같은 이름은 덮어쓴다
+  else if (lyricsPresets.length >= LYRICS_PRESET_MAX) return { ok: false, error: `프리셋은 최대 ${LYRICS_PRESET_MAX}개까지 저장됩니다`, names: presetNames() };
+  else lyricsPresets.push({ name: clean, settings });
+  writeLyricsPresets();
+  return { ok: true, names: presetNames() };
+}
+
+function applyLyricsPreset(name) {
+  const preset = lyricsPresets.find((p) => p.name === name);
+  if (!preset) return null;
+  const patch = {};
+  for (const key of LYRICS_PRESET_KEYS) if (preset.settings[key] != null) patch[key] = preset.settings[key];
+  return updateLyricsSettings(patch);
+}
+
+function deleteLyricsPreset(name) {
+  lyricsPresets = lyricsPresets.filter((p) => p.name !== name);
+  writeLyricsPresets();
+  return presetNames();
+}
+
 const LYRICS_SHORTCUTS = [
   { accelerator: 'Alt+`', label: '음소거 토글', run: () => toggleMuteHotkey() },
   { accelerator: 'Alt+1', label: '볼륨 1 감소', run: () => stepMasterVolume(-1) },
   { accelerator: 'Alt+2', label: '볼륨 1 증가', run: () => stepMasterVolume(1) },
   { accelerator: 'Alt+3', label: '가사 창 표시/숨기기', run: () => toggleLyricsWindow() },
-  { accelerator: 'Alt+4', label: '클릭 통과 켜기/끄기(조작 주체 전환)', run: toggleLyricsClickThrough },
+  { accelerator: 'Alt+4', label: '가사 창 클릭 활성화/비활성화', run: toggleLyricsClickThrough },
   { accelerator: 'Alt+5', label: '가사 창 다시 맨 위로(가리기 해제)', run: () => keepLyricsOnTop() },
   { accelerator: 'Alt+Q', label: '이전 곡 (Alt+W 누른 채 Q 꾹: 되감기)', run: () => trackOrScrub('Alt+Q', -1) },
   { accelerator: 'Alt+W', label: '재생/일시정지', run: () => playToggleOrChord() },
   { accelerator: 'Alt+E', label: '다음 곡 (Alt+W 누른 채 E 꾹: 빨리 감기)', run: () => trackOrScrub('Alt+E', 1) },
+  { accelerator: 'Alt+A', label: '가사 싱크 빠르게 (0.25초)', run: () => adjustLyricsOffset(LYRICS_OFFSET_STEP) },
+  { accelerator: 'Alt+D', label: '가사 싱크 늦게 (0.25초)', run: () => adjustLyricsOffset(-LYRICS_OFFSET_STEP) },
 ];
 
 // Alt+Q/E는 즉시 이전/다음 곡(판정 대기 없음). 되감기/빨리 감기는 Alt+W를 누른 채 Q/E를 꾹 누르는 코드.
@@ -1959,10 +2058,91 @@ const EMBED_CHROME_CSS = `
 
 function refreshEmbedChrome(wc) {
   if (!wc || wc.isDestroyed()) return;
+  // 곡마다 불린다 — 임베드 iframe이 그 사이 새로 로드됐어도 가드를 다시 심어 둔다(이미 있으면 무시됨).
+  // 가사 창(음소거 미러)은 소리가 없으므로 메인 창일 때만.
+  const isMain = mainWindow && !mainWindow.isDestroyed() && wc === mainWindow.webContents;
   try {
-    for (const frame of wc.mainFrame.framesInSubtree) hideEmbedChrome(frame);
+    for (const frame of wc.mainFrame.framesInSubtree) {
+      if (isMain) installAudioGuard(frame);
+      hideEmbedChrome(frame);
+    }
   } catch {}
 }
+
+// ── 오디오 가드: 볼륨 상한(누출 차단) + 이퀄라이저 — audio-guard.js 참고 ──
+// 앱 볼륨은 렌더러가 소유하지만, 실제 소리가 나는 곳은 유튜브 프레임(임베드 iframe·직접 재생 웹뷰)이다.
+// main이 현재 상태를 들고 있다가 그런 프레임이 뜰 때마다 가드를 심고, 바뀔 때마다 모든 프레임에 뿌린다.
+const AUDIO_GUARD_CODE = fs.readFileSync(path.join(__dirname, 'audio-guard.js'), 'utf8');
+const EQ_BANDS = 6;
+
+// 렌더러의 체감 볼륨 커브와 같은 식 (effectiveVolume): 0~100 → 진폭 0~1 (40dB 구간 dB 선형)
+function volumeToCap(volume) {
+  const v = Number(volume);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return Math.min(1, Math.pow(10, (Math.min(100, v) - 100) / 50));
+}
+
+function normalizeEq(eq) {
+  const src = eq && typeof eq === 'object' ? eq : {};
+  const gains = Array.from({ length: EQ_BANDS }, (_, i) => {
+    const g = Number(Array.isArray(src.gains) ? src.gains[i] : 0);
+    return Number.isFinite(g) ? Math.max(-12, Math.min(12, g)) : 0;
+  });
+  return { enabled: !!src.enabled, gains };
+}
+
+// 시작 시 settings.json에서 복원 — 렌더러가 상태를 보내기 전에 뜬 프레임도 올바른 상한을 갖게
+let audioState = { cap: 0, eq: normalizeEq(null) };
+function loadInitialAudioState() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE(), 'utf8'));
+    audioState = { cap: saved.volume != null ? volumeToCap(saved.volume) : 1, eq: normalizeEq(saved.eq) };
+  } catch {
+    audioState = { cap: 1, eq: normalizeEq(null) }; // 설정 파일이 없으면 렌더러 기본 볼륨(100)과 같게
+  }
+}
+
+function isYoutubeFrame(frame) {
+  return !!frame && typeof frame.url === 'string' && /youtube(-nocookie)?\.com\//.test(frame.url);
+}
+
+function installAudioGuard(frame) {
+  if (!isYoutubeFrame(frame)) return Promise.resolve(false);
+  const code = `window.__ympAudioInit = ${JSON.stringify(audioState)};\n${AUDIO_GUARD_CODE}\n`
+    + `window.__ympSetAudio && window.__ympSetAudio(${JSON.stringify(audioState)}); !!window.__ympAudio`;
+  return frame.executeJavaScript(code).then((ok) => !!ok).catch(() => false);
+}
+
+// 소리가 날 수 있는 모든 유튜브 프레임 — 메인 창의 임베드 + 직접 재생 웹뷰
+function audioFrames() {
+  const frames = [];
+  for (const wc of [mainWindow && mainWindow.webContents, webviewWC]) {
+    if (!wc || wc.isDestroyed()) continue;
+    try { for (const f of wc.mainFrame.framesInSubtree) if (isYoutubeFrame(f)) frames.push(f); } catch {}
+  }
+  return frames;
+}
+
+function pushAudioState() {
+  const code = `window.__ympSetAudio && window.__ympSetAudio(${JSON.stringify(audioState)}); 0`;
+  for (const f of audioFrames()) f.executeJavaScript(code).catch(() => {});
+}
+
+// 직접 재생 웹뷰용 프리로드: 광고 프루닝 + 오디오 가드를 페이지 스크립트보다 먼저 실행한다.
+// 웹뷰는 샌드박스라 프리로드에서 로컬 파일을 require할 수 없으므로 두 파일을 하나로 합쳐 userData에 쓴다.
+// 초기 상태는 동기 IPC로 받아 둔다 — 첫 영상이 재생되기 전에 상한이 걸려 있어야 한다.
+function buildWebviewPreload() {
+  const file = path.join(app.getPath('userData'), 'webview-preload.js');
+  const body = [
+    "try { window.__ympAudioInit = require('electron').ipcRenderer.sendSync('audio:state'); } catch (e) {}",
+    fs.readFileSync(path.join(__dirname, 'adprune-preload.js'), 'utf8'),
+    AUDIO_GUARD_CODE,
+  ].join('\n;\n');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, body);
+  return file;
+}
+let webviewPreloadPath = null;
 
 const AD_PRUNE_SNIPPET = `(() => {
   if (window.__ympAdPrune) return;
@@ -2048,7 +2228,10 @@ function createWindow(port) {
   // 임베드 iframe이 뜨거나 다시 로드될 때마다 유튜브 자체 UI를 숨기는 CSS를 심는다
   win.webContents.on('did-frame-finish-load', (_event, isMainFrame, frameProcessId, frameRoutingId) => {
     if (isMainFrame) return;
-    try { hideEmbedChrome(webFrameMain.fromId(frameProcessId, frameRoutingId)); } catch {}
+    let frame = null;
+    try { frame = webFrameMain.fromId(frameProcessId, frameRoutingId); } catch {}
+    installAudioGuard(frame); // 볼륨 상한·EQ — 소리가 나는 임베드에만 (가사 창 미러는 음소거라 제외)
+    try { hideEmbedChrome(frame); } catch {}
   });
   // F11(기본 메뉴의 전체화면 토글) 등 앱 버튼을 거치지 않은 경로로 전체화면이 바뀌어도
   // 렌더러의 몰입 모드(사이드바 숨김·해제 버튼)가 따라오도록 상태를 알린다
@@ -2058,7 +2241,10 @@ function createWindow(port) {
   // 광고 데이터를 걷어내는 방식이라 감지되지 않고 광고 대기 시간도 생기지 않는다.
   // 전역(ytInitialPlayerResponse)과 JSON.parse를 가로채야 하므로 페이지와 같은 월드가 필요하다.
   win.webContents.on('will-attach-webview', (_event, webPreferences) => {
-    webPreferences.preload = path.join(__dirname, 'adprune-preload.js');
+    if (!webviewPreloadPath) {
+      try { webviewPreloadPath = buildWebviewPreload(); } catch { webviewPreloadPath = path.join(__dirname, 'adprune-preload.js'); }
+    }
+    webPreferences.preload = webviewPreloadPath;
     webPreferences.contextIsolation = false;
     webPreferences.nodeIntegration = false;
   });
@@ -2077,6 +2263,9 @@ app.whenReady().then(async () => {
   const port = await startServer();
   lyricsServerPort = port;
   lyricsSettings = loadLyricsSettings();
+  loadInitialAudioState();
+  loadLyricsOffsets();
+  loadLyricsPresets();
   // 광고/추적 도메인 차단 — **메인 창(앱 UI + 임베드 플레이어)에서 나온 요청만** 막는다.
   // 폴백(워치페이지) 웹뷰까지 막으면 유튜브가 광고 차단으로 감지해 "서비스 약관을 위반하는
   // 광고 차단 프로그램" 화면으로 재생을 통째로 막는다. 예전에는 "웹뷰가 아니면 차단"이라는
@@ -2148,6 +2337,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('lyrics:settings:save', (_event, settings) => updateLyricsSettings(settings));
   ipcMain.handle('lyrics:settings:reset', () => updateLyricsSettings(DEFAULT_LYRICS_SETTINGS));
   ipcMain.handle('lyrics:data:get', () => lyricsData);
+  ipcMain.handle('lyrics:offset:get', () => currentLyricsOffset());
+  ipcMain.handle('lyrics:presets:list', () => presetNames());
+  ipcMain.handle('lyrics:presets:save', (_event, name) => saveLyricsPreset(name));
+  ipcMain.handle('lyrics:presets:apply', (_event, name) => applyLyricsPreset(name));
+  ipcMain.handle('lyrics:presets:delete', (_event, name) => deleteLyricsPreset(name));
   ipcMain.handle('lyrics:shortcuts', () => lyricsShortcutStatus);
   ipcMain.handle('app:version', () => app.getVersion());
   // 곡이 바뀔 때마다(임베드 프레임이 새로 준비될 수 있으므로) 유튜브 UI 숨김 CSS를 다시 심는다
@@ -2213,6 +2407,28 @@ app.whenReady().then(async () => {
   // 유튜브가 광고 차단을 감지하면(워치페이지의 차단 화면) 이 세션에서는 차단을 통째로 끈다 —
   // 감지를 피해 다니는 대신 차단을 그만두는 쪽이 재생을 되살리는 확실한 길이다.
   ipcMain.on('adblock:disable', () => { adBlockEnabled = false; });
+  // 오디오 상태: 렌더러가 볼륨·EQ를 바꿀 때마다 보낸다 → 모든 유튜브 프레임에 즉시 반영
+  ipcMain.on('audio:set', (_event, state) => {
+    const next = state && typeof state === 'object' ? state : {};
+    audioState = {
+      cap: Number.isFinite(Number(next.cap)) ? Math.min(1, Math.max(0, Number(next.cap))) : audioState.cap,
+      eq: next.eq ? normalizeEq(next.eq) : audioState.eq,
+    };
+    pushAudioState();
+  });
+  // 직접 재생 웹뷰 프리로드가 첫 재생 전에 동기로 받아 간다
+  ipcMain.on('audio:state', (event) => { event.returnValue = audioState; });
+  // 렌더러가 임베드 재생을 시작하기 전에 가드가 실제로 심겼는지 확인한다 (심긴 프레임이 하나라도 있으면 true)
+  ipcMain.handle('audio:guard', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    let ok = false;
+    try {
+      for (const f of mainWindow.webContents.mainFrame.framesInSubtree) {
+        if (isYoutubeFrame(f) && await installAudioGuard(f)) ok = true;
+      }
+    } catch {}
+    return ok;
+  });
   ipcMain.on('window:set-fullscreen', (event, flag) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) win.setFullScreen(!!flag);

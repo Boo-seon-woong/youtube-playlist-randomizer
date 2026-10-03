@@ -709,3 +709,33 @@ disable-backgrounding-occluded-windows / disable-features=IntensiveWakeUpThrottl
   재생 방향을 암시), 플랫·무그라데이션. Python PIL로 4096px에 그려 LANCZOS 다운스케일 →
   `icon.png`(256) + `icon.ico`(16~256 멀티사이즈 PNG 엔트리). 상단 바의 브랜드 마크는 같은
   사운드바 모티프의 인라인 SVG로, 색은 테마 포인트 색(`--accent`)을 따른다.
+
+## 오디오 가드 · 이퀄라이저 · 플로팅 가사 배치 (2026-10-04)
+
+- **볼륨 누출 원천 차단 (`audio-guard.js`)**: 앱 볼륨 1에서도 곡이 바뀔 때 순간적으로 100% 소리가 났다(사용자 보고, 청력 위험).
+  유튜브가 영상 시작 때 자기 저장 볼륨을 복원하는데, 앱의 모든 보정(`setVolume`, 100ms 인터벌, `volumechange` —
+  이 이벤트도 큐에 들어가는 비동기다)은 이미 소리가 난 **뒤**에 돈다. 그래서 영상 요소의 `volume` setter 자체를
+  가로채 `min(요청값, cap)`만 실제로 적용한다 — 쓰는 순간 동기적으로 잘리므로 틈이 없다. getter는 요청값을 돌려줘
+  유튜브가 계속 다시 쓰려 들지 않게 하고, `play()` 직전에도 상한을 걸어 기본 볼륨 1.0인 새 요소를 막는다.
+  주입 위치: 메인 창 임베드 iframe(`did-frame-finish-load`·곡마다 `refreshEmbedChrome`에서 `webFrameMain.executeJavaScript`),
+  직접 재생 웹뷰(`buildWebviewPreload`가 광고 프루닝과 합쳐 `userData/webview-preload.js`로 써 둔 프리로드 —
+  샌드박스라 로컬 파일 require가 안 되기 때문. 초기 상한은 `sendSync('audio:state')`로 페이지 스크립트보다 먼저 받는다).
+  렌더러는 `onReady`에서 `audio:guard`로 임베드에 가드가 심긴 것을 확인한 뒤에야 재생을 허용하고, 가드가 있으면
+  임베드에 올림값을 줘 가드가 소수점까지 정확한 상한으로 자르게 한다 — 그래서 정밀 볼륨 때문에 곡을 워치페이지로
+  보낼 필요가 없어졌다(`precisePlaybackActive` 꺼짐). 가드가 없으면 예전 반올림 경로 그대로.
+- **이퀄라이저**: 같은 가드 안에서 EQ가 켜졌을 때만 AudioContext(`latencyHint: 'playback'`)를 만들고 요소를
+  6개 BiquadFilter(60Hz 로우셸프, 150/400/1k/2.4kHz 피킹 Q1, 15kHz 하이셸프, ±12dB) → 프리앰프로 통과시킨다.
+  **실측(Electron 41): Web Audio로 연결된 요소에도 `volume`·`muted`가 그래프 입력에 그대로 곱해진다** — 그래서
+  EQ는 볼륨 상한 뒤에 오고, 프리앰프를 6개 필터 합성 응답의 최대치만큼(`getFrequencyResponse`) 낮춰 부스트해도
+  설정 볼륨을 넘지 않는다(+12dB @ 상한 0.05 → 0.047 측정). 꺼져 있으면 컨텍스트를 아예 만들지 않고, 재생이 멈추면
+  suspend해 오디오 스레드 유휴 비용도 없앤다. UI는 사운드 세팅 모달(스위치·사전 설정 12종·끌어 조절하는 곡선·재설정),
+  상태는 settings.json의 `eq`.
+- **플로팅 가사 배치**: 왼쪽 사각형을 끄면 `body.stacked` — 재생바·컨트롤을 `#lyrics-foot`(가사 아래)로 옮겨
+  [곡 정보][가사][재생바·컨트롤] 한 열로 쌓는다(재생바는 좌하단·제목은 우상단에 떨어지던 배치 해소). 가사를 끄면
+  `body.no-lines`로 남은 요소를 세로 가운데로 모은다. 창 이동 손잡이는 사각형 외에 톱니 옆 ⠿와 곡 정보 칩.
+  레이아웃 프리셋: 크기·모양·표시 항목만 이름 붙여 최대 10개(`lyrics-presets.json`, 설정 팝업에서 저장/적용/삭제).
+- **가사 줄 수 자동**: 3블록 고정을 없애고 줄 영역 높이에 들어가는 만큼 현재 줄 위아래로 대칭으로 채운다
+  (범위 밖은 보이지 않는 자리 채움으로 현재 줄을 가운데에 고정, 멀수록 옅게). 매 프레임 DOM을 다시 만들던 것도
+  현재 줄·줄 수·가사가 바뀔 때만 다시 그리도록 고쳤다. 실측: 760×240/16px → 7줄, 760×520/12px → 22줄.
+- **가사 싱크 보정 (Alt+A/D)**: 곡(영상 id)별로 ±250ms씩, `lyrics-offsets.json`에 저장. 플로팅 창과 메인 창 가사 보기
+  모두 현재 줄을 고를 때 `progress + 225 + offset`을 쓴다. Alt+A = 가사 빠르게, Alt+D = 늦게.

@@ -16,6 +16,20 @@
     </header>
 
     <section>
+      <h2>레이아웃 프리셋</h2>
+      <div class="preset-row">
+        <select id="preset-list" aria-label="저장된 프리셋"></select>
+        <button id="preset-apply" type="button">적용</button>
+        <button id="preset-delete" type="button" class="ghost">삭제</button>
+      </div>
+      <div class="preset-row">
+        <input id="preset-name" type="text" maxlength="30" placeholder="새 프리셋 이름" />
+        <button id="preset-save" type="button">현재 배치 저장</button>
+      </div>
+      <p class="hint" id="preset-status">크기·모양·표시 항목을 묶어 최대 10개까지 저장합니다. 같은 이름이면 덮어씁니다.</p>
+    </section>
+
+    <section>
       <h2>크기</h2>
       <label class="row"><span>가로 <output id="v-width"></output></span><input type="range" id="s-width" data-key="width" min="360" max="1400" step="1" /></label>
       <label class="row"><span>세로 <output id="v-height"></output></span><input type="range" id="s-height" data-key="height" min="150" max="700" step="1" /></label>
@@ -64,10 +78,10 @@
         <label><input type="checkbox" data-key="showNextButton" /> 다음 곡 버튼</label>
         <label><input type="checkbox" data-key="showVolumeButton" /> 볼륨 버튼</label>
         <label><input type="checkbox" data-key="alwaysOnTop" /> 항상 위에 표시</label>
-        <label><input type="checkbox" data-key="clickThrough" /> 클릭 통과 (잠금)</label>
+        <label><input type="checkbox" data-key="clickThrough" /> 클릭 비활성화 (아래 창으로 통과)</label>
         <label><input type="checkbox" data-key="machineTranslate" /> 기계 번역 (한국어 가사 없을 때)</label>
       </div>
-      <p class="hint">단축키 — Alt+` 음소거, Alt+1/2 볼륨, Alt+3 창 표시, Alt+4 클릭 통과, Alt+5 맨 위로, Alt+Q/W/E 이전·재생/정지·다음 (W 누른 채 Q/E 꾹: 되감기/빨리 감기)</p>
+      <p class="hint">단축키 — Alt+` 음소거, Alt+1/2 볼륨, Alt+3 창 표시, Alt+4 클릭 활성화/비활성화, Alt+5 맨 위로, Alt+Q/W/E 이전·재생/정지·다음 (W 누른 채 Q/E 꾹: 되감기/빨리 감기), Alt+A/D 가사 싱크 빠르게/늦게 (곡마다 저장)</p>
     </section>
 
     <button id="ls-reset">기본값으로 되돌리기</button>

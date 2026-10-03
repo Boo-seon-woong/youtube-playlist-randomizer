@@ -16,7 +16,7 @@ button, input, select { font: inherit; }
 button { border: 0; color: inherit; cursor: pointer; }
 
 #ls-card {
-  height: 100%;
+  height: calc(100% - 16px); /* 바깥 여백(8px×2)을 빼야 아래가 잘리지 않는다 */
   margin: 8px;
   padding: 16px 18px 18px;
   border-radius: 16px;
@@ -25,8 +25,11 @@ button { border: 0; color: inherit; cursor: pointer; }
   display: flex;
   flex-direction: column;
   gap: 14px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto; /* 프리셋 섹션이 늘어 창보다 길어지면 스크롤 */
 }
+#ls-card::-webkit-scrollbar { width: 6px; }
+#ls-card::-webkit-scrollbar-thumb { border-radius: 3px; background: rgba(255, 255, 255, 0.18); }
 
 #ls-head { display: flex; align-items: flex-start; justify-content: space-between; -webkit-app-region: drag; }
 #ls-head h1 { margin: 0; font-size: 16px; }
@@ -61,3 +64,17 @@ section h2 { margin: 0; font-size: 11px; font-weight: 700; color: var(--muted); 
   background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.86); font-size: 12px; font-weight: 700;
 }
 #ls-reset:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* 레이아웃 프리셋 */
+.preset-row { display: flex; gap: 6px; }
+.preset-row select, .preset-row input {
+  flex: 1; min-width: 0; height: 28px; padding: 0 8px; border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14); background: var(--bg-2); color: #fff; outline: none; font-size: 12px;
+}
+.preset-row input:focus { border-color: var(--accent); }
+.preset-row button {
+  height: 28px; padding: 0 12px; border-radius: 7px; background: var(--accent); color: #07140b;
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.preset-row button.ghost { background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.86); }
+.preset-row button:disabled { opacity: 0.4; cursor: default; }

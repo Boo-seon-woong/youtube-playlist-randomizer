@@ -392,3 +392,32 @@ body.video-cover #lyrics-video {
 .lyrics-result-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
 .lyrics-result-artist { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 10px; }
 .lyrics-result-source { color: var(--accent); font-size: 10px; }
+
+/* ── 창 이동 손잡이: 톱니 옆. 왼쪽 사각형을 꺼도 잡을 곳이 있도록 (곡 정보 칩도 손잡이) ── */
+#lyrics-grip { cursor: move; }
+#lyrics-grip svg { fill: currentColor; stroke: none; }
+#lyrics-track { cursor: move; }
+
+/* ── 표시 조합별 배치 ──
+   stacked: 왼쪽 사각형이 꺼짐 → 한 열로 쌓는다 [곡 정보] [가사] [재생바+컨트롤]. 재생바만 좌하단에,
+   제목만 우상단에 떨어져 있던 기형 배치를 없앤다.
+   no-lines: 가사가 꺼짐 → 남은 요소(곡 정보·하단 줄)를 세로 가운데로 모은다. */
+#lyrics-foot {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  opacity: var(--ui-opacity);
+}
+#lyrics-foot:empty { display: none; }
+#lyrics-foot #lyrics-progress-row { flex: 1 1 auto; min-width: 120px; }
+#lyrics-foot #lyrics-playback-controls { flex: 0 0 auto; }
+#lyrics-foot #lyrics-volume-pop { left: auto; right: 0; width: 220px; bottom: 32px; }
+body.no-lines #lyrics-body { justify-content: center; }
+body.stacked.no-lines #lyrics-foot { max-width: 420px; }
+
+/* 가사 줄 수는 창 높이에 맞춰 늘어난다 — 먼 줄일수록 옅게 (lyrics.js가 --far로 거리 전달) */
+.lyric-block.far { opacity: var(--far, 0.6); }
+.lyric-block.pad { visibility: hidden; }

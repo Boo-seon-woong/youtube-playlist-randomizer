@@ -1377,7 +1377,10 @@ body.seeking #progress-fill::after {
 
 #settings-panel,
 #sound-panel {
-  width: 400px;
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--panel-active);
   border-radius: 12px;
@@ -2437,4 +2440,127 @@ body.immersive #fs-exit-btn.reveal {
 #toast.show {
   opacity: 1;
   transform: translateX(-50%);
+}
+
+
+/* ── 이퀄라이저 (사운드 세팅) — 스포티파이 EQ처럼: 스위치 · 사전 설정 · 끌어 조절하는 곡선 ── */
+#eq-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--panel-active);
+}
+
+#eq-head .settings-label { margin: 0; }
+
+.eq-switch { position: relative; width: 42px; height: 24px; cursor: pointer; }
+.eq-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+.eq-switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--panel-active);
+  transition: background 0.15s;
+}
+.eq-switch span::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.15s;
+}
+.eq-switch input:checked + span { background: var(--accent); }
+.eq-switch input:checked + span::after { transform: translateX(18px); }
+
+#eq-body {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 60%, #000);
+  transition: opacity 0.15s;
+}
+
+#eq-body.off { opacity: 0.45; }
+
+#eq-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-sub);
+}
+
+#eq-toolbar label { display: flex; align-items: center; gap: 10px; }
+
+#eq-preset {
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--panel-active);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#eq-reset {
+  padding: 6px 14px;
+  border: 1px solid color-mix(in srgb, var(--text) 45%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#eq-reset:hover { border-color: var(--text); }
+
+/* #sound-panel svg의 아이콘용 stroke 규칙이 그래프의 면·글자에 테두리를 두르지 않도록 되돌린다 */
+#sound-panel #eq-graph { stroke: none; fill: none; }
+#eq-area { stroke: none; }
+#eq-grid text { stroke: none; }
+
+#eq-graph {
+  display: block;
+  width: 100%;
+  height: 190px;
+  margin-top: 10px;
+  touch-action: none;
+}
+
+#eq-grid line { stroke: color-mix(in srgb, var(--text-dim) 32%, transparent); stroke-width: 1; }
+#eq-grid text { fill: var(--text-sub); font-size: 12px; font-weight: 700; }
+
+#eq-points circle {
+  fill: #fff;
+  stroke: color-mix(in srgb, var(--accent) 70%, #000);
+  stroke-width: 1.5;
+  cursor: ns-resize;
+}
+
+#eq-points circle:hover, #eq-points circle.dragging { r: 8; }
+
+#eq-labels {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  margin: 2px 0 0 calc(100% * 56 / 560);
+  margin-right: calc(100% * 16 / 560);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-sub);
+  text-align: center;
+}
+
+#eq-note {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
 }
