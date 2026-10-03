@@ -819,3 +819,7 @@ disable-backgrounding-occluded-windows / disable-features=IntensiveWakeUpThrottl
   `pron+web…`. 곡 전환(`updateLyricsState`) 때 캐시된 가사의 `augmented`가 지금 모드와 다르면 다시 붙인다 — 예전엔 캐시에
   있는 곡은 이 경로를 안 타서 미리 찾은 외국어 곡에 발음이 안 붙고, 반쯤 된 번역이 그대로 남았다. `baseLyrics`는 원본으로
   돌릴 때 `augmented`도 지운다(남기면 '원어만'으로 돌린 곡이 그 모드로 돌아왔을 때 보강을 건너뛴다).
+- **'번역 결과' 표시**(사용자 요청: 찾은 한글 가사가 아니라 번역이면 제목 옆에 표시): main이 번역 줄이 하나라도 붙으면
+  `machineTranslated: true` + `translatedBy: 'web'|'model'`을 싣는다. 플로팅 창은 제목·가수 칩 옆 하늘색 칩
+  `#lyrics-tr-badge`, 메인 창 가사 보기는 몰입 모드면 왼쪽 아래 곡 정보 제목 옆(`#lo-tr-badge`, 영상 위라 어두운 바탕),
+  평소엔 하단 재생 바 제목 아래(`#np-tr-badge`, 가사 보기를 연 동안만). 툴팁에 웹 번역/내장 모델 구분.

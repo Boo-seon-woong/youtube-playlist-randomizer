@@ -432,3 +432,4 @@ body.plain-lyrics #lyrics-lines { justify-content: flex-start; }
   font-weight: 600;
 }
 #lyrics-plain-badge { color: #ffd36b; font-weight: 700; background: var(--lyrics-bg-2); }
+#lyrics-tr-badge { color: #8fd3ff; font-weight: 700; background: var(--lyrics-bg-2); }

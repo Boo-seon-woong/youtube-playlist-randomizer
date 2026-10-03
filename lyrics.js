@@ -36,6 +36,7 @@ const cover = document.getElementById('lyrics-cover');
 const videoWrap = document.getElementById('lyrics-video-wrap');
 const title = document.getElementById('lyrics-title');
 const artist = document.getElementById('lyrics-artist');
+const trBadge = document.getElementById('lyrics-tr-badge');
 const linesEl = document.getElementById('lyrics-lines');
 const footEl = document.getElementById('lyrics-foot');
 const gripEl = document.getElementById('lyrics-grip');
@@ -251,6 +252,12 @@ function syncMiniVideo() {
   }
 }
 
+function translatedTip(data) {
+  if (!data || !data.machineTranslated) return '';
+  return data.translatedBy === 'web' ? '한글 가사를 찾지 못해 웹 번역(Bing·구글)으로 옮긴 가사입니다'
+    : '한글 가사를 찾지 못해 내장 모델로 번역한 가사입니다';
+}
+
 function render() {
   // 가사를 찾았으면 유튜브 제목 대신 가사 DB의 곡명·아티스트를 보여준다.
   // 단, 지금 표시 중인 유튜브 제목이 한글인데 DB 제목이 원어라면 한글 쪽을 유지한다
@@ -261,6 +268,9 @@ function render() {
   title.textContent = useDbTitle ? lyricData.title : (playback.title || '');
   artist.textContent = matched && (ko(lyricData.artist) || !ko(playback.artist))
     ? (lyricData.artist || playback.artist || '') : (playback.artist || '');
+  // 한글 가사를 못 찾아 번역으로 채운 경우 — 찾은 가사로 오해하지 않게 제목 옆에 표시
+  trBadge.hidden = !(lyricData && lyricData.machineTranslated);
+  trBadge.title = translatedTip(lyricData);
   if (cover.dataset.src !== (playback.coverUrl || '')) {
     cover.dataset.src = playback.coverUrl || '';
     cover.src = playback.coverUrl || '';

@@ -2898,6 +2898,8 @@ const lyricsViewBtn = document.getElementById('lyrics-view-btn');
 const loThumb = document.getElementById('lo-thumb');
 const loTitle = document.getElementById('lo-title');
 const loArtist = document.getElementById('lo-artist');
+const loTrBadge = document.getElementById('lo-tr-badge');
+const npTrBadge = document.getElementById('np-tr-badge');
 const loPause = document.getElementById('lo-pause');
 const loTime = document.getElementById('lo-time');
 let lyricsViewOn = false;
@@ -3007,11 +3009,25 @@ function tickLyricsView(force) {
   lyricsViewList.style.transform = `translateY(${Math.round(y)}px)`;
 }
 
+// 한글 가사를 못 찾아 번역으로 채운 가사면 가사 보기에서 제목 옆에 '번역 결과'를 단다
+// (몰입 모드는 왼쪽 아래 곡 정보의 제목 옆, 평소엔 하단 재생 바 제목 아래 — 가사 보기를 연 동안만)
+function updateTranslatedBadges() {
+  const d = lyricsViewData;
+  const on = !!(d && d.machineTranslated);
+  const tip = !on ? '' : d.translatedBy === 'web' ? '한글 가사를 찾지 못해 웹 번역(Bing·구글)으로 옮긴 가사입니다'
+    : '한글 가사를 찾지 못해 내장 모델로 번역한 가사입니다';
+  loTrBadge.hidden = !on;
+  loTrBadge.title = tip;
+  npTrBadge.hidden = !(on && lyricsViewOn);
+  npTrBadge.title = tip;
+}
+
 function setLyricsView(flag) {
   lyricsViewOn = flag;
   lyricsViewEl.hidden = !flag;
   lyricsViewBtn.classList.toggle('active', flag);
   clearInterval(lyricsViewTimer);
+  updateTranslatedBadges();
   if (!flag) return;
   renderLyricsView();
   lyricsViewTimer = setInterval(() => tickLyricsView(false), 100);
@@ -3093,10 +3109,12 @@ document.getElementById('lyrics-search-form').addEventListener('submit', async (
 new ResizeObserver(() => { if (lyricsViewOn) tickLyricsView(true); }).observe(lyricsViewport);
 window.lyricsOverlay.onData((data) => {
   lyricsViewData = data;
+  updateTranslatedBadges();
   if (lyricsViewOn) renderLyricsView();
 });
 window.lyrics.getData().then((data) => {
   lyricsViewData = data;
+  updateTranslatedBadges();
   if (lyricsViewOn) renderLyricsView();
 }).catch(() => {});
 document.getElementById('lo-prev').addEventListener('click', prevTrack);

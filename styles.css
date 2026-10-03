@@ -1247,6 +1247,18 @@ input {
   margin-right: 6px;
 }
 
+/* 한글 가사를 못 찾아 번역으로 채운 가사 — 가사 보기가 열려 있을 때 제목 옆에 표시 */
+.tr-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 15px;
+  color: #8fd3ff;
+  background: rgba(143, 211, 255, 0.14);
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-right: 6px;
+}
+
 #controls-center {
   display: flex;
   flex-direction: column;
@@ -1894,7 +1906,26 @@ body.immersive #lyrics-overlay-info {
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.8);
 }
 
+#lo-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 영상 위에 떠 있으므로 어두운 바탕으로 대비를 확보한다 */
+#lo-title-row .tr-badge {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  margin-right: 0;
+  padding: 0 7px;
+  background: rgba(0, 0, 0, 0.62);
+  text-shadow: none;
+}
+
 #lo-title {
+  min-width: 0;
   font-size: 22px;
   font-weight: 700;
   color: #fff;

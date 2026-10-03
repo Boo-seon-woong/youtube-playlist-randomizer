@@ -453,7 +453,9 @@ async function augmentForeignLyrics(key, data) {
       });
       const next = {
         ...base, lines, baseLines: base.lines, augmented: final ? plan.mode : `${plan.mode}…`,
-        machineTranslated: !!translating,
+        // 한글 줄이 찾은 가사가 아니라 번역이면 가사 창·가사 보기에서 제목 옆에 '번역 결과'로 표시한다
+        machineTranslated: !!(ko && ko.some(Boolean)),
+        translatedBy: plan.web ? 'web' : 'model',
         fallbackNotice: webFailed ? '한글 가사 없음 · 웹 번역 실패' : plan.web ? '한글 가사 없음 · 웹 번역'
           : plan.tr ? '한글 가사 없음 · 기계 번역' : '한글 가사 없음 · 발음 표기',
       };
