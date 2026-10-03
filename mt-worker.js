@@ -26,7 +26,11 @@ function getTranslator() {
       // 2스레드: 프로세스가 IDLE 우선순위라 게임이 CPU를 쓰면 이쪽이 밀린다
       const context = await model.createContext({ contextSize: 512, threads: 2 });
       const sequence = context.getSequence();
-      return async (text) => {
+      // 생성 슬롯(시퀀스)은 하나뿐이라 번역은 반드시 한 번에 하나씩 — 잡 두 개가 겹쳐 같은 시퀀스를 쓰면
+      // 서로의 문맥을 지우고 끼어들어 두 곡의 번역이 모두 뒤섞였다(실측: "불한 미소에 불", "먹고기들도 각자")
+      let busy = Promise.resolve();
+      const exclusive = (fn) => { const run = busy.then(fn, fn); busy = run.catch(() => {}); return run; };
+      return (text) => exclusive(async () => {
         await sequence.clearHistory(); // 줄마다 독립 — 앞 줄 문맥이 번역을 끌고 가지 않게
         const session = new LlamaChatSession({ contextSequence: sequence, autoDisposeSequence: false });
         try {
@@ -38,7 +42,7 @@ function getTranslator() {
         } finally {
           session.dispose({ disposeSequence: false });
         }
-      };
+      });
     })();
     translatorPromise.catch(() => { translatorPromise = null; }); // 로드 실패 시 다음 잡에서 재시도
   }

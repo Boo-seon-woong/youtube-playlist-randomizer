@@ -454,7 +454,10 @@ async function augmentForeignLyrics(key, data) {
     publish();
     if (plan.tr && !koDone) {
       const sources = originals.map((t) => (t && !hasHangul(t) && !isVocalization(t) ? t : ''));
-      // 지금 재생 중인 줄부터 번역한다(줄당 약 2초라 처음부터 하면 곡 중간에 켰을 때 한참 기다린다)
+      // 다른 곡의 번역이 아직 돌고 있으면 취소한다 — 번역기는 한 번에 한 줄만 처리하므로 지금 곡이 밀리지 않게
+      // (이전 곡은 다시 틀 때 처음부터 다시 번역한다; 완성된 곡만 캐시된다)
+      for (const otherKey of [...mtJobOfKey.keys()]) if (otherKey !== key) cancelForeignWork(otherKey);
+      // 지금 재생 중인 줄부터 번역한다(줄당 1~2초라 처음부터 하면 곡 중간에 켰을 때 한참 기다린다)
       let start = 0;
       if (!base.plain && key === lyricsKey) {
         const now = (lyricsState.progress || 0) + 1500;
