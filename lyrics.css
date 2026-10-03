@@ -421,3 +421,14 @@ body.stacked.no-lines #lyrics-foot { max-width: 420px; }
 /* 가사 줄 수는 창 높이에 맞춰 늘어난다 — 먼 줄일수록 옅게 (lyrics.js가 --far로 거리 전달) */
 .lyric-block.far { opacity: var(--far, 0.6); }
 .lyric-block.pad { visibility: hidden; }
+
+/* 싱크 없는 가사(본문만): 현재 줄 강조 없이 위에서부터 나열하고 Alt+Z/X로 넘긴다 */
+body.plain-lyrics #lyrics-lines { justify-content: flex-start; }
+.lyric-block.plain .lyric-chip {
+  padding: 1px 6px;
+  background: var(--lyrics-bg-2);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: calc(var(--lyrics-font-size) * 0.86);
+  font-weight: 600;
+}
+#lyrics-plain-badge { color: #ffd36b; font-weight: 700; background: var(--lyrics-bg-2); }

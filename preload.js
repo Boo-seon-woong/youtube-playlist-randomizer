@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('winctl', {
 
 contextBridge.exposeInMainWorld('lyrics', {
   update: (state) => ipcRenderer.send('lyrics:update', state),
+  prefetch: (info) => ipcRenderer.send('lyrics:prefetch', info), // 다음 곡 가사 미리 찾기
   getData: () => ipcRenderer.invoke('lyrics:data:get'),
   setTheme: (theme) => ipcRenderer.send('app:theme', theme),
   onControl: (callback) => {
@@ -89,6 +90,7 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   onFlash: (callback) => ipcRenderer.on('lyrics:flash', (_event, text) => callback(text)),
   // 곡별 가사 싱크 보정(ms) — Alt+A/D
   onOffset: (callback) => ipcRenderer.on('lyrics:offset', (_event, ms) => callback(ms)),
+  onScroll: (callback) => ipcRenderer.on('lyrics:scroll', (_event, delta) => callback(delta)), // Alt+Z/X
   getOffset: () => ipcRenderer.invoke('lyrics:offset:get'),
   // 플로팅 창 레이아웃 프리셋
   presets: {

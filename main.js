@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
+const { hasHangul, buildLyricQueries, resolveLyricCandidate, findLyricsForTrack, searchAllLyrics, lyricFailureCount } = require('./lyrics-search');
 
 // WSLg의 GPU 합성 버그로 영상이 창 밖에 그려지거나 검게 나오는 문제 방지 (Windows 네이티브에서는 불필요)
 if (process.platform === 'linux') app.disableHardwareAcceleration();
@@ -117,7 +118,6 @@ async function fetchTitles(ids) {
 // ── 가사: ALSong 우선, LRCLIB 보조 ──
 // YouTube IFrame API는 Spotify/YouTube Music처럼 가사 데이터를 제공하지 않으므로
 // 현재 곡의 제목·아티스트로 외부 가사 DB를 조회하고, 재생 시간은 renderer가 전달한다.
-const ALSong_ENC_DATA = '8456ec35caba5c981e705b0c5d76e4593e020ae5e3d469c75d1c6714b6b1244c0732f1f19cc32ee5123ef7de574fc8bc6d3b6bd38dd3c097f5a4a1aa1b438fea0e413baf8136d2d7d02bfcdcb2da4990df2f28675a3bd621f8234afa84fb4ee9caa8f853a5b06f884ea086fd3ed3b4c6e14f1efac5a4edbf6f6cb475445390b0';
 
 const DEFAULT_LYRICS_SETTINGS = {
   width: 760,
@@ -132,7 +132,10 @@ const DEFAULT_LYRICS_SETTINGS = {
   showNextButton: true,
   showVolumeButton: true,
   showLyrics: true, // 오른쪽 가사 영역 (끄면 왼쪽 사각형만 남는다)
-  machineTranslate: true, // 한국어 가사가 없을 때 동봉된 번역 모델로 기계 번역
+  machineTranslate: true, // (구버전 키 — foreignMode로 대체)
+  // 한국어 가사가 없는 외국어 가사의 보조 줄: 'pron'(원어+한글 발음) | 'pron+tr'(+기계 번역) | 'tr'(원어+번역) | 'off'(원어만)
+  // 발음은 일본어만(사전 기반, 즉시), 번역은 무겁고(1.7GB RAM) 품질이 거칠어 기본은 발음만. 영어는 둘 다 하지 않는다.
+  foreignMode: 'pron',
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   videoFit: 'cover', // 영상 맞춤: 'cover'(상하 기준으로 채우고 좌우는 잘림) | 'contain'(전체가 보이도록)
@@ -142,6 +145,7 @@ const DEFAULT_LYRICS_SETTINGS = {
   clickThrough: false, // 잠금 모드: 창을 눌러도 아래 프로그램(게임 등)으로 클릭이 지나간다
 };
 const COVER_MODES = ['none', 'art', 'video'];
+const FOREIGN_MODES = ['pron', 'pron+tr', 'tr', 'off'];
 const VIDEO_FITS = ['cover', 'contain'];
 // 가사 글꼴 후보 — 웹폰트(Google Fonts)라 오프라인이면 시스템 글꼴로 대체된다
 const LYRIC_FONTS = ['default', 'noto-sans', 'noto-serif', 'nanum-myeongjo', 'gowun-batang', 'gowun-dodum', 'ibm-plex'];
@@ -172,6 +176,7 @@ function normalizeLyricsSettings(value) {
     showVolumeButton: boolean('showVolumeButton'),
     showLyrics: boolean('showLyrics'),
     machineTranslate: boolean('machineTranslate'),
+    foreignMode: FOREIGN_MODES.includes(source.foreignMode) ? source.foreignMode : DEFAULT_LYRICS_SETTINGS.foreignMode,
     showTrackInfo: boolean('showTrackInfo'),
     coverMode,
     videoFit: VIDEO_FITS.includes(source.videoFit) ? source.videoFit : DEFAULT_LYRICS_SETTINGS.videoFit,
@@ -203,599 +208,6 @@ function writeLyricsSettings() {
 function saveLyricsSettings() {
   clearTimeout(lyricsSettingsWriteTimer);
   lyricsSettingsWriteTimer = setTimeout(writeLyricsSettings, 250);
-}
-
-function xmlEscape(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function xmlDecode(value) {
-  return String(value)
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&');
-}
-
-function xmlBlocks(xml, tag) {
-  const result = [];
-  const re = new RegExp(`<(?:(?:[\\w-]+):)?${tag}\\b[^>]*>([\\s\\S]*?)</(?:(?:[\\w-]+):)?${tag}>`, 'gi');
-  for (const match of String(xml).matchAll(re)) result.push(match[1]);
-  return result;
-}
-
-function xmlText(xml, tag) {
-  const block = xmlBlocks(xml, tag)[0];
-  return block == null ? '' : xmlDecode(block.replace(/<[^>]+>/g, '').trim());
-}
-
-// 같은 시각에 붙은 여러 줄(ALSong의 원문·발음·번역)은 한 블록으로 묶어 text를 줄바꿈으로 잇는다 —
-// 창에서는 첫 줄을 원문(크게), 나머지를 발음/번역(작게)으로 그린다.
-function parseLrc(text) {
-  const entries = [];
-  const timeRe = /\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]/g;
-  for (const raw of String(text || '').split(/\r?\n/)) {
-    const matches = [...raw.matchAll(timeRe)];
-    const lyricText = raw.replace(/\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]/g, '').trim();
-    if (!lyricText) continue;
-    for (const match of matches) {
-      entries.push({
-        time: (Number(match[1]) * 60 + Number(match[2])) * 1000,
-        text: lyricText,
-      });
-    }
-  }
-  entries.sort((a, b) => a.time - b.time);
-  const lines = [];
-  for (const entry of entries) {
-    const last = lines[lines.length - 1];
-    if (last && last.time === entry.time) last.text += `\n${entry.text}`;
-    else lines.push({ ...entry });
-  }
-  return lines;
-}
-
-function hasHangul(text) {
-  return /[가-힣]/.test(String(text || ''));
-}
-
-function hangulCount(lines) {
-  return (lines || []).reduce((count, line) => count + (String(line.text || '').match(/[가-힣]/g) || []).length, 0);
-}
-
-function normalizeMatch(text) {
-  return String(text || '').toLowerCase().replace(/[\(\[\{].*?[\)\]\}]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
-}
-
-function textMatchScore(value, query) {
-  const actual = normalizeMatch(value);
-  const wanted = normalizeMatch(query);
-  if (!actual || !wanted) return 0;
-  if (actual === wanted) return 1;
-  if (actual.includes(wanted) || wanted.includes(actual)) return 0.75;
-  return 0;
-}
-
-function durationMatchScore(value, target) {
-  if (!value || !target) return 0;
-  return Math.max(0, 1 - Math.abs(value - target) / Math.max(target, 1000));
-}
-
-// ── 가사 검색어 정제 ──
-// 렌더러가 넘기는 title/artist는 유튜브 영상 제목("[MV] IU(아이유) _ Good Day(좋은 날)",
-// "BTS (방탄소년단) 'Dynamite' Official MV", "ぐぬぬ / 重音テト", "설명🔥: 요루시카 - 봄도둑(春泥棒) [가사/해석]")과
-// 채널명("1theK (원더케이)", "IU - Topic")이다. ALSong 검색은 제목·아티스트 모두 부분 문자열 매칭이라
-// 이 원문을 그대로 넣으면 0건이 된다(실측). 태그를 걷어낸 뒤 제목/아티스트 후보를 여러 개 뽑아
-// 구체적인 조합부터 순서대로 검색한다.
-const NOISE_BRACKET_RE = /\b(?:official|mv|m\/v|pv|video|audio|lyrics?|live|ver|version|visualizer|performance|teaser|remaster(?:ed)?|hd|hq|4k|color coded|ost|clip|stage|practice|sub|cover|from|youtube|feat\.?|ft\.?|prod\.?|full\s*(?:album|track)|eng|kor|jpn)\b|가사|뮤비|뮤직비디오|공식|자막|라이브|안무|버전|음원|풀버전|해석|발음|번역|불러\s*보았다|전체\s*듣기|전곡|정규\s*\d+\s*집|미니\s*\d*\s*집|オリジナル|歌ってみた|カバー|公式|ミュージックビデオ|フル|ボカロ|自作曲/i;
-const BRACKET_RE = /[\(\[\{（［【]([^()\[\]{}（）［］【】]*)[\)\]\}）］】]/g;
-// 구분자: " - ", " _ ", " | " 는 "아티스트 - 제목", " / " 는 일본 관례대로 "제목 / 아티스트", ": " 는 앞이 설명문인 경우가 많다
-const SEPARATOR_RE = /\s+[-–—_|]\s+|\s*[:：]\s+|\s+[\/／]\s+/g;
-// 이모지(+ 변형 선택자 U+FE0F)와 괄호 마스킹용 제어문자
-const EMOJI_RE = new RegExp('[\\p{Extended_Pictographic}' + String.fromCharCode(0xfe0f) + ']', 'gu');
-const MASK_CHAR = String.fromCharCode(1);
-
-function stripTitleNoise(text) {
-  return String(text || '')
-    .replace(/　/g, ' ')
-    .replace(EMOJI_RE, ' ')
-    // 'ㅣ'(한글 자모)를 세로선 대신 쓰는 채널이 있다: "제목ㅣLyrics/가사" — 구분자로 취급
-    .replace(/(?<![ㄱ-ㅎㅏ-ㅣ])\s*ㅣ\s*(?![ㄱ-ㅎㅏ-ㅣ])/g, ' | ') // "ㅈㅣㅂ"처럼 자모로 쓴 제목은 건드리지 않는다
-    .replace(/\s*\|\s*lyrics?\s*\/?\s*(?:가사)?\s*$/i, ' ')
-    // 말미의 발매일 "- 2015.03.20" 은 제목이 아니다
-    .replace(/\s*[-–—]?\s*\d{4}\.\d{1,2}\.\d{1,2}\.?\s*$/, ' ')
-    // 앨범 전체 재생 영상의 꼬리표
-    .replace(/(?:앨범\s*)?전체\s*듣기|전곡\s*듣기|전곡|\bfull\s*(?:album|track)\b/gi, ' ')
-    .replace(BRACKET_RE, (match, inner) => (NOISE_BRACKET_RE.test(inner) ? ' ' : match))
-    .replace(/\b(?:official\s+)?(?:music\s+video|lyric\s+video|m\/v|mv|pv|visualizer)\b/gi, ' ')
-    .replace(/\bofficial\s+(?:video|audio)\b/gi, ' ')
-    .replace(/\blyrics?\b/gi, ' ')
-    .replace(/\s+ver\.?\s*$/i, ' ')
-    .replace(/가사|뮤비|뮤직비디오|공식\s*영상|불러\s*보았다\.?|歌ってみた|歌いました/g, ' ')
-    .replace(/\s*\bcover(?:ed)?\s+by\b.*$/i, ' ') // "ヒバナ Covered by あらき" — 부른 사람은 채널명으로 충분하다
-    .replace(/\s+/g, ' ')
-    .replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '')
-    .trim();
-}
-
-function cleanChannelName(author) {
-  return String(author || '')
-    .replace(BRACKET_RE, (match, inner) => (NOISE_BRACKET_RE.test(inner) ? ' ' : match))
-    .replace(/\s*-\s*topic$/i, '')
-    .replace(/vevo$/i, '')
-    .replace(/\s+official\b.*$/i, '')
-    .replace(/\s*공식\s*채널.*$/, '')
-    .replace(/\s*외\s*\d+명$/, '')
-    .trim();
-}
-
-// "FOMO feat. Teto" → "FOMO", 아티스트 "ZERA & via" → "ZERA" (부분 문자열 검색이라 짧은 쪽이 안전하다)
-function stripFeat(text) {
-  return String(text || '').replace(/\s*\b(?:feat|ft)\b\.?.*$/i, '').trim();
-}
-
-function primaryArtist(text) {
-  return stripFeat(text)
-    .replace(/^[^.。!?]{0,40}[.。!?]\s+(?=\S)/, '') // 앞에 붙은 설명 문장("함께서 즐거웠어요. 요네즈 켄시")
-    .replace(/\s*[×&,、，\/／]\s*.*$|\s+(?:x|및|and|with)\s+.*$/i, '').trim();
-}
-
-// "Good Day(좋은 날)" → ["좋은 날", "Good Day"] (한글 표기 우선), 괄호가 없으면 원문 그대로
-function nameVariants(text) {
-  const out = [];
-  const push = (value) => {
-    const v = String(value || '')
-      .replace(/[\(\[（［【][^)\]）］】]*$/, '')
-      .replace(/[\)\]）］】]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .replace(/^[\s\-–—_|:]+|[\s\-–—_|:]+$/g, '')
-      .trim();
-    if (v && !out.includes(v)) out.push(v);
-  };
-  const source = String(text || '');
-  const inner = [...source.matchAll(BRACKET_RE)].flatMap((m) => m[1].split(/\s*[\/／|]\s*/));
-  const all = [source.replace(BRACKET_RE, ' '), ...inner];
-  all.filter(hasHangul).forEach(push);
-  all.forEach(push);
-  // "춤 踊"처럼 구분자 없이 한글 표기와 원어 표기를 나란히 쓴 제목은 문자 체계별로도 나눈다
-  for (const value of [...out]) {
-    const segments = value.split(/\s+/);
-    if (segments.length < 2) continue;
-    const scripts = segments.map((seg) => (/[가-힣]/.test(seg) ? 'ko' : /[ぁ-んァ-ン一-龯]/.test(seg) ? 'ja' : 'other'));
-    if (new Set(scripts.filter((x) => x !== 'other')).size < 2) continue;
-    for (const script of ['ko', 'ja']) {
-      const part = segments.filter((seg, i) => scripts[i] === script).join(' ');
-      if (part) push(part);
-    }
-  }
-  return out;
-}
-
-// 괄호 안의 구분자는 무시하고 나눈다: "ぐぬぬ / 重音テト (GUNUNU / Kasane Teto)" → ["ぐぬぬ", "重音テト (GUNUNU / Kasane Teto)"]
-function splitOutsideBrackets(text) {
-  const masked = text.replace(BRACKET_RE, (m) => MASK_CHAR.repeat(m.length));
-  const parts = [];
-  const seps = [];
-  let last = 0;
-  // 공백 있는 구분자가 하나도 없으면 "flos/R Sound Design" 같은 공백 없는 슬래시로 나눈다
-  const matches = [...masked.matchAll(SEPARATOR_RE)];
-  for (const m of matches.length > 0 ? matches : masked.matchAll(/\s*[\/／]\s*/g)) {
-    parts.push(text.slice(last, m.index).trim());
-    seps.push(m[0].trim());
-    last = m.index + m[0].length;
-  }
-  parts.push(text.slice(last).trim());
-  return { parts, seps };
-}
-
-// 영상 제목에서 아티스트/제목 후보 조합을 가능성 순으로 돌려준다.
-// 따옴표 제목('Dynamite', 「アイドル」) → 앞부분이 아티스트. 구분자가 있으면 첫 구분자 기준 조합,
-// 3조각 이상이면 마지막 구분자 기준 조합("설명: 아티스트 - 제목")도, 마지막으로 뒤집은 조합("Title - Artist" 대비).
-// titleOnly=false 인 조합의 제목은 제목 단독 검색에 쓰지 않는다(아티스트명으로 검색하면 엉뚱한 곡만 걸린다).
-// 선두의 【Ado】·[레오루] 같은 라벨과 말미의 【Eve】는 제목이 아니라 아티스트 후보다
-// (말미의 ()/[]는 "봄도둑(春泥棒)"처럼 병기 제목이므로 남긴다).
-function splitArtistTitle(input, channel = '') {
-  const labels = [];
-  let text = input
-    .replace(/^\s*[\[［【]([^\]］】]*)[\]］】]\s*(?=\S)/, (m, inner) => { labels.push(inner.trim()); return ''; })
-    .replace(/(?<=\S)\s*【([^】]*)】\s*$/, (m, inner) => { labels.push(inner.trim()); return ''; })
-    .trim();
-  const withLabel = (split) => ({ ...split, artist: split.artist || labels[0] || '', labels });
-  // "가사 한 줄" 제목 [아티스트 앨범] 처럼 맨 앞의 따옴표 구절은 인용문이므로 버린다
-  text = text.replace(/^['‘“"][^'’”"]{6,}['’”"]\s+(?=\S)/, '').trim();
-  const quoted = text.match(/^(.*?)(?:^|\s)['‘“"]([^'’”"]+)['’”"](?=\s|$)/)
-    || text.match(/^(.*?)[「『《]([^」』》]+)[」』》]/);
-  if (quoted && quoted[2].trim() && quoted[1].trim()) {
-    return [withLabel({ title: quoted[2].trim(), artist: quoted[1].trim(), titleOnly: true })];
-  }
-  let { parts, seps } = splitOutsideBrackets(text);
-  // "설명문: 아티스트 - 제목" (번역 채널 관례) — 콜론 앞은 설명이므로 버린다
-  if (parts.length >= 3 && /^[:：]$/.test(seps[0])) {
-    parts = parts.slice(1);
-    seps = seps.slice(1);
-  }
-  // 조각이 채널명(정제본)과 같거나 서로 포함하면 그쪽이 아티스트 — "그 아이 시크릿 - Eve MV"(채널 Eve)는
-  // 구분자 관례("아티스트 - 제목")와 반대로 뒤가 아티스트다
-  const channelKey = normalizeMatch(channel);
-  const looksLikeChannel = (part) => {
-    const key = normalizeMatch(part);
-    // 한 글자짜리 한자 예명("遊")도 채널명(宮下遊)에 들어 있으면 인정한다
-    const meaningful = key.length >= 2 || /[\u3040-\u9fff]/.test(part);
-    return !!channelKey && !!key && meaningful && (key === channelKey || channelKey.includes(key) || key.includes(channelKey));
-  };
-  const pair = (index) => {
-    const [a, b] = [parts[index], parts[index + 1]];
-    if (looksLikeChannel(b) && !looksLikeChannel(a)) return { title: a, artist: b };
-    if (looksLikeChannel(a) && !looksLikeChannel(b)) return { title: b, artist: a };
-    const titleFirst = /^[\/／]$/.test(seps[index]);
-    return titleFirst ? { title: a, artist: b } : { title: b, artist: a };
-  };
-  if (parts.length < 2 || !parts[0] || !parts[1]) return [withLabel({ title: text, artist: '', titleOnly: true })];
-  const first = pair(0);
-  const splits = [withLabel({ ...first, titleOnly: true })];
-  if (parts.length >= 3 && parts[parts.length - 1]) {
-    splits.push(withLabel({ ...pair(parts.length - 2), titleOnly: true }));
-  }
-  splits.push(withLabel({ title: first.artist, artist: first.title, titleOnly: false }));
-  return splits;
-}
-
-// 검색 순서: 1순위 조합 제목×아티스트(≤4) → 나머지 조합(각 ≤1) → 제목 단독(≤3). 첫 결과가 나오는 조합에서 멈추고,
-// 제목 단독 검색은 여러 아티스트가 섞여 오므로 이후 rankLyricCandidates가 아티스트 일치로 골라낸다.
-function buildLyricQueries(rawTitle, rawAuthor) {
-  const cleanedChannel = cleanChannelName(rawAuthor);
-  const splits = splitArtistTitle(stripTitleNoise(rawTitle), primaryArtist(cleanedChannel));
-  const channel = nameVariants(primaryArtist(cleanedChannel));
-  const pairs = [];
-  const seen = new Set();
-  const add = (title, artist) => {
-    const key = (title + ' ' + artist).toLowerCase();
-    if (!title || seen.has(key)) return;
-    seen.add(key);
-    pairs.push({ title, artist });
-  };
-  const allTitles = [];
-  const allArtists = [];
-  const titleOnly = [];
-  const primaryTitles = [];
-  const matchTitles = [];
-  splits.forEach((split, index) => {
-    const titles = nameVariants(stripFeat(split.title)).slice(0, 3);
-    if (split.titleOnly) {
-      // 첫 조합의 괄호 병기 변형(해바라기 / ひまわり / Himawari)은 정식 제목이다 — 단 주 제목과 문자 체계가
-      // 다른 것만("Trapstar Lifestyle (Deluxe)"의 Deluxe처럼 같은 알파벳 꼬리표는 제목이 아니다)
-      if (titles[0]) primaryTitles.push(titles[0]);
-      if (index === 0) {
-        const script = (t) => (/[가-힣]/.test(t) ? 'ko' : /[ぁ-んァ-ン一-龯]/.test(t) ? 'ja' : 'latin');
-        for (const t of titles.slice(1)) if (script(t) !== script(titles[0])) primaryTitles.push(t);
-      }
-      matchTitles.push(...titles);
-    }
-    const artists = [
-      ...nameVariants(primaryArtist(split.artist)),
-      ...(index === 0 ? [...channel, ...split.labels.flatMap((label) => nameVariants(primaryArtist(label)))] : []),
-    ].slice(0, 2);
-    allTitles.push(...titles);
-    allArtists.push(...artists);
-    if (index === 0) for (const title of titles) for (const artist of artists) add(title, artist);
-    else if (titles[0] && artists[0]) add(titles[0], artists[0]);
-    if (split.titleOnly) titleOnly.push(...titles);
-  });
-  for (const title of titleOnly.slice(0, 3)) add(title, '');
-  if (pairs.length === 0 && String(rawTitle || '').trim()) add(String(rawTitle).trim(), '');
-  // 원어 표기가 섞여 있으면(가나) 일본 곡이다 — 동명의 한국 곡을 걸러내는 데 쓴다
-  const expectJapanese = /[ぁ-んァ-ン]/.test(String(rawTitle || ''));
-  return { pairs, titles: matchTitles.length > 0 ? matchTitles : allTitles, primaryTitles, artists: [...allArtists, ...channel], expectJapanese };
-}
-
-function hasKana(text) {
-  return /[ぁ-んァ-ン]/.test(String(text || ''));
-}
-
-function candidateIsJapanese(candidate) {
-  return hasKana(candidate.title) || hasKana(candidate.artist) || (candidate.lines || []).some((line) => hasKana(line.text));
-}
-
-// 제목 유사도: 정규화 후 같으면 1, 한쪽이 다른 쪽을 포함하면 길이 비율(짧은/긴) — "Deluxe" vs "Night Deluxe"는
-// 0.55라 걸러지고 "Black Star (검은 별)" vs "Black Star"는 괄호가 벗겨져 1이 된다.
-function titleSimilarity(value, query) {
-  const actual = normalizeMatch(value);
-  const wanted = normalizeMatch(query);
-  if (!actual || !wanted) return 0;
-  if (actual === wanted) return 1;
-  if (actual.includes(wanted) || wanted.includes(actual)) {
-    return Math.min(actual.length, wanted.length) / Math.max(actual.length, wanted.length);
-  }
-  return 0;
-}
-
-function bestTitleScore(value, titles) {
-  return (titles || []).reduce((best, query) => Math.max(best, titleSimilarity(value, query)), 0);
-}
-
-// 후보 채택 기준: 제목이 거의 같고(≥0.8) 아티스트도 맞거나, 주 제목과 정확히 같다.
-// 괄호 병기 같은 보조 제목 변형("keep me going (BIRDBRAIN)"의 BIRDBRAIN)은 아티스트까지 맞아야 한다 —
-// 그렇지 않으면 이름만 같은 다른 곡이 걸린다.
-// 제목만 정확히 같고 아티스트는 다른 후보(동명이곡)는 재생시간이 맞을 때만 받는다 — 재생시간을 아는 경우에 한해.
-// DB 항목 제목도 유튜브 제목처럼 "아티스트 - 제목 feat.X" 꼴로 올라온 것이 많다("Chenomio - フィクションです。feat.重音テト").
-// 그대로 비교하면 우리 제목(フィクションです。)과 길이 비율이 낮아 걸러지므로, 항목 쪽도 같은 정제를 거쳐
-// 아티스트 조각·feat·잡음을 뗀 '핵심 제목'을 함께 비교한다.
-function candidateTitleVariants(candidate) {
-  const raw = String(candidate.title || '');
-  const out = [raw];
-  const cleaned = stripFeat(stripTitleNoise(raw));
-  if (cleaned && cleaned !== raw) out.push(cleaned);
-  const artistKey = normalizeMatch(candidate.artist);
-  // "Chenomio -フィクションです。"처럼 구분자 한쪽에만 공백이 있는 경우: 앞 조각이 아티스트면 뒤만 남긴다
-  const loose = (cleaned || raw).match(/^(.+?)\s*[-–—_|:：]\s*(.+)$/);
-  if (loose) {
-    const [, head, tail] = loose;
-    const headKey = normalizeMatch(head);
-    if (artistKey && headKey && (headKey === artistKey || artistKey.includes(headKey) || headKey.includes(artistKey))) out.push(tail.trim());
-  }
-  const { parts } = splitOutsideBrackets(cleaned || raw);
-  if (parts.length >= 2) {
-    const rest = parts.filter((part) => {
-      const key = normalizeMatch(part);
-      return !(artistKey && key && (key === artistKey || artistKey.includes(key) || key.includes(artistKey)));
-    });
-    if (rest.length > 0 && rest.length < parts.length) out.push(rest.join(' '));
-    else out.push(...parts);
-  }
-  return out.filter(Boolean);
-}
-
-function bestCandidateTitleScore(candidate, titles) {
-  return candidateTitleVariants(candidate).reduce((best, variant) => Math.max(best, bestTitleScore(variant, titles)), 0);
-}
-
-function lyricMatchScore(candidate, queries, targetDuration = 0) {
-  const title = bestCandidateTitleScore(candidate, queries.titles);
-  const primary = bestCandidateTitleScore(candidate, queries.primaryTitles || queries.titles);
-  const artist = bestMatchScore(candidate.artist, queries.artists);
-  const hasArtistQuery = (queries.artists || []).length > 0;
-  // 가수 칸에 영상 제목을 통째로 넣은 쓰레기 항목(제목과 같거나 비정상적으로 김)도 '가수 미상'으로 본다
-  const unknownArtist = !candidate.artist || /알\s*수\s*없음|unknown/i.test(candidate.artist)
-    || String(candidate.artist).length > 40 || normalizeMatch(candidate.artist) === normalizeMatch(candidate.title);
-  const raw = bestTitleScore(candidate.title, queries.titles); // 정제 없이 제목 그대로의 일치도 (동점 정리용)
-  let accepted = !unknownArtist && title >= 0.8 && (artist > 0 || !hasArtistQuery);
-  if (!accepted && primary === 1 && !unknownArtist) {
-    // 제목만 같고 가수가 다른 후보(동명이곡): 재생시간이 맞고, 일본 곡이면 후보도 일본 곡이어야 한다
-    const canCheckDuration = targetDuration > 0 && candidate.duration > 0;
-    const durationOk = !canCheckDuration || durationMatchScore(candidate.duration, targetDuration) >= 0.85;
-    const scriptOk = !queries.expectJapanese || candidateIsJapanese(candidate);
-    accepted = durationOk && scriptOk;
-  }
-  return { title, artist, raw, accepted };
-}
-
-function bestMatchScore(value, queries) {
-  return (queries || []).reduce((best, query) => Math.max(best, textMatchScore(value, query)), 0);
-}
-
-function markLyricLanguage(candidate, fallbackNotice = false) {
-  const lines = candidate.lines || [];
-  const korean = candidate.hasKorean === true || lines.some((line) => hasHangul(line.text));
-  return {
-    ...candidate,
-    hasKorean: korean,
-    language: korean ? 'ko' : 'original',
-    fallbackNotice: !korean && fallbackNotice ? '한글 번역 없음 · 원어 가사' : (candidate.fallbackNotice || ''),
-  };
-}
-
-// 정렬: 채택 기준을 통과한 후보 → 제목 유사도 → 아티스트 일치 → 한글 가사 → 재생시간 근사 → 한글 양.
-// 예전에는 한글 여부를 최우선으로 두어, 이름만 비슷한 다른 곡의 한글 가사가 진짜 곡을 이기곤 했다.
-function rankLyricCandidates(candidates, queries, targetDuration) {
-  return [...candidates]
-    .map((candidate) => ({ ...markLyricLanguage(candidate), match: lyricMatchScore(candidate, queries, targetDuration) }))
-    .sort((a, b) => {
-      if (a.match.accepted !== b.match.accepted) return b.match.accepted ? 1 : -1;
-      const titleScore = b.match.title - a.match.title;
-      if (Math.abs(titleScore) > 0.05) return titleScore;
-      const artistScore = b.match.artist - a.match.artist;
-      if (artistScore) return artistScore;
-      // 같은 곡이 여럿이면 제목이 깔끔한 항목("뭘 알어")을 "창모 - 뭘 알어 (REMIX)"보다 앞에
-      const rawScore = b.match.raw - a.match.raw;
-      if (Math.abs(rawScore) > 0.05) return rawScore;
-      if (queries.expectJapanese) {
-        const ja = candidateIsJapanese(b) - candidateIsJapanese(a);
-        if (ja) return ja;
-      }
-      if (a.hasKorean !== b.hasKorean) return b.hasKorean ? 1 : -1;
-      const durationScore = durationMatchScore(b.duration, targetDuration) - durationMatchScore(a.duration, targetDuration);
-      if (Math.abs(durationScore) > 0.02) return durationScore;
-      return hangulCount(b.lines) - hangulCount(a.lines);
-    });
-}
-
-function alsongRequest(action, fields) {
-  const fieldXml = Object.entries(fields)
-    .map(([key, value]) => `<ns1:${key}>${xmlEscape(value)}</ns1:${key}>`)
-    .join('');
-  const body = `<?xml version="1.0" encoding="UTF-8"?>
-  <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://www.w3.org/2003/05/soap-envelope" xmlns:ns1="ALSongWebServer">
-    <SOAP-ENV:Body><ns1:${action}>${fieldXml}</ns1:${action}></SOAP-ENV:Body>
-  </SOAP-ENV:Envelope>`;
-
-  return new Promise((resolve, reject) => {
-    const req = http.request({
-      hostname: 'lyrics.alsong.co.kr',
-      port: 80,
-      path: '/alsongwebservice/service1.asmx',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/xml;charset=utf-8',
-        'Content-Length': Buffer.byteLength(body),
-        'User-Agent': 'gSOAP/2.7',
-        SOAPAction: `ALSongWebServer/${action}`,
-      },
-    }, (res) => {
-      const chunks = [];
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => chunks.push(chunk));
-      res.on('end', () => {
-        if (res.statusCode !== 200) return reject(new Error(`ALSong HTTP ${res.statusCode}`));
-        resolve(chunks.join(''));
-      });
-    });
-    req.setTimeout(10000, () => req.destroy(new Error('ALSong request timeout')));
-    req.on('error', reject);
-    req.end(body);
-  });
-}
-
-function lyricCandidate(source, data) {
-  const lines = data.lines || [];
-  return {
-    source,
-    id: String(data.id || ''),
-    title: data.title || '',
-    artist: data.artist || '',
-    album: data.album || '',
-    duration: Number(data.duration) || 0,
-    lines,
-    hasKorean: data.hasKorean === true || lines.some((line) => hasHangul(line.text)),
-  };
-}
-
-async function fetchLrclibCandidates(queries) {
-  const urls = queries.pairs.map((pair) => {
-    const query = new URLSearchParams({ track_name: pair.title });
-    if (pair.artist) query.set('artist_name', pair.artist);
-    return `https://lrclib.net/api/search?${query}`;
-  });
-  const result = [];
-  const seen = new Set();
-  for (const url of urls) {
-    try {
-      const response = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
-      if (!response.ok) continue;
-      const json = await response.json();
-      for (const item of Array.isArray(json) ? json : []) {
-        if (!item.syncedLyrics) continue;
-        const key = String(item.id || `${item.trackName}:${item.artistName}:${item.albumName}`);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        const lines = parseLrc(item.syncedLyrics);
-        if (lines.length > 0) result.push(lyricCandidate('lrclib', {
-          id: item.id,
-          title: item.trackName,
-          artist: item.artistName,
-          album: item.albumName,
-          duration: Number(item.duration) * 1000,
-          lines,
-        }));
-      }
-      if (result.length > 0) break;
-    } catch {}
-  }
-  return result;
-}
-
-// 조합을 순서대로 검색하되 첫 결과에서 멈추지 않는다 — 앞 조합이 이름만 비슷한 엉뚱한 곡을 돌려주고
-// 진짜 곡은 뒤 조합에서 나오는 경우가 있어, 채택 기준을 통과하는 후보가 나올 때까지(최대 6조합) 모아 병합한다.
-async function fetchAlsongCandidates(queries) {
-  const merged = new Map();
-  let tried = 0;
-  for (const search of queries.pairs) {
-    if (tried >= 6) break;
-    tried += 1;
-    try {
-      const fields = { encData: ALSong_ENC_DATA, pageNo: 1, title: search.title };
-      if (search.artist) fields.artist = search.artist;
-      const xml = await alsongRequest('GetResembleLyricList2', fields);
-      for (const block of xmlBlocks(xml, 'ST_SEARCHLYRIC_LIST')) {
-        const item = lyricCandidate('alsong', {
-          id: xmlText(block, 'lyricID'),
-          title: xmlText(block, 'title'),
-          artist: xmlText(block, 'artist'),
-          album: xmlText(block, 'album'),
-        });
-        if (item.id && !merged.has(item.id)) merged.set(item.id, item);
-      }
-      const hit = [...merged.values()].some((item) => lyricMatchScore(item, queries).accepted);
-      if (hit) break; // 진짜 곡 후보가 나왔으면 더 넓은(느슨한) 조합은 검색하지 않는다
-    } catch {}
-  }
-  return [...merged.values()];
-}
-
-async function resolveLyricCandidate(candidate) {
-  if (!candidate) return null;
-  if (candidate.lines && candidate.lines.length > 0) return markLyricLanguage(candidate);
-  if (candidate.source !== 'alsong' || !candidate.id) return null;
-  try {
-    const xml = await alsongRequest('GetLyricByID2', { encData: ALSong_ENC_DATA, lyricID: Number(candidate.id) });
-    const lyric = xmlText(xml, 'lyric');
-    const lines = parseLrc(lyric);
-    if (lines.length === 0) return null;
-    const duration = Math.max(candidate.duration || 0, lines[lines.length - 1].time);
-    return markLyricLanguage({ ...candidate, duration, lines });
-  } catch {
-    return null;
-  }
-}
-
-async function resolveAlsongCandidates(queries, targetDuration) {
-  // 최대 100건이 오므로 가사 본문을 받기 전에 메타(제목/아티스트 일치)로 먼저 추려 16건만 조회한다
-  const metadata = rankLyricCandidates(await fetchAlsongCandidates(queries), queries, 0).slice(0, 16);
-  const resolved = (await Promise.all(metadata.map((candidate) => resolveLyricCandidate(candidate)))).filter(Boolean);
-  return rankLyricCandidates(resolved, queries, targetDuration);
-}
-
-// 채택된 후보들은 같은 곡의 중복 등록본이다 — 고른 가사의 제목이 원어라도, 그중 한글 제목 등록본이 있으면
-// 표기(곡명·아티스트)만 그쪽을 쓴다. 번역 모델 없이 "한국어 제목"을 얻는 가장 값싼 길.
-// 표기용 제목 정리: DB 등록본 제목엔 "[가사/해석/발음]" 같은 꼬리표가 붙어 있는 경우가 많다 — 표기에서만 뗀다
-function cleanLyricLabel(title) {
-  const cleaned = stripFeat(stripTitleNoise(title));
-  return cleaned || String(title || '');
-}
-
-function preferKoreanLabel(chosen, accepted, queries) {
-  if (!chosen) return chosen;
-  if (hasHangul(chosen.title)) return { ...chosen, title: cleanLyricLabel(chosen.title) };
-  const ko = accepted.find((c) => hasHangul(c.title) && !/[\(\[]/.test(c.title.trim()[0] || ''));
-  if (ko) {
-    return { ...chosen, title: cleanLyricLabel(ko.title), artist: hasHangul(ko.artist) || !chosen.artist ? ko.artist || chosen.artist : chosen.artist };
-  }
-  // DB에 한글 등록본이 없으면 영상 제목의 한글 표기(괄호 병기·병렬 표기)라도 쓴다 — 같은 영상에서 나온 제목이라 안전
-  const fromVideo = (queries && queries.primaryTitles || []).find((t) => hasHangul(t));
-  if (fromVideo) return { ...chosen, title: fromVideo };
-  return { ...chosen, title: cleanLyricLabel(chosen.title) };
-}
-
-async function findLyricsForTrack(title, artist, targetDuration) {
-  const queries = buildLyricQueries(title, artist);
-  const alsong = (await resolveAlsongCandidates(queries, targetDuration)).filter((c) => c.match.accepted);
-  const korean = alsong.find((candidate) => candidate.hasKorean);
-  if (korean) return preferKoreanLabel(korean, alsong, queries);
-
-  // ALSong에 한글 가사가 없을 때만 LRCLIB 원어 가사로 내려간다. 여기서도 채택 기준을 통과한 것만.
-  const lrclib = rankLyricCandidates(await fetchLrclibCandidates(queries), queries, targetDuration)
-    .filter((c) => c.match.accepted);
-  if (lrclib.length > 0) return markLyricLanguage(lrclib[0], true);
-  // 이름만 비슷한 다른 곡을 보여주느니 "찾지 못함"이 낫다
-  return alsong.length > 0 ? markLyricLanguage(alsong[0], true) : null;
-}
-
-async function searchAllLyrics(title, artist) {
-  const queries = buildLyricQueries(title, artist);
-  const alsong = await resolveAlsongCandidates(queries, 0);
-  const lrclib = rankLyricCandidates(await fetchLrclibCandidates(queries), queries, 0);
-  const hasKoreanAlsong = alsong.some((candidate) => candidate.hasKorean);
-  return [
-    ...alsong.map((candidate) => markLyricLanguage(candidate, !hasKoreanAlsong)),
-    ...lrclib.map((candidate) => markLyricLanguage(candidate, !hasKoreanAlsong)),
-  ].slice(0, 16);
 }
 
 let lyricsWindow = null;
@@ -852,8 +264,12 @@ function sendLyricsSettingsToMain() {
   }
 }
 
+// 캐시 키는 영상 id 하나로 고정한다. 예전엔 제목까지 넣었는데, 렌더러가 곡 시작 때는 한국어 현지화 제목을,
+// 재생 중엔 임베드의 원어 제목을 보내 같은 영상의 키가 둘로 갈렸다 — 다른 제목으로 두 번 찾고 창의 가사가
+// '찾음 ↔ 못 찾음'으로 오락가락한 원인. 원어 제목은 altTitle로 받아 검색어에 합친다.
 function lyricStateKey(state) {
-  return [state.id, state.title, state.artist].join('\\u0000').toLowerCase();
+  if (state.id) return `id:${state.id}`;
+  return [state.title, state.artist].join('\u0000').toLowerCase();
 }
 
 // 유튜브가 영상에 등록한 저작권 음악 정보(설명란의 '음악' 카드: 곡명·아티스트·앨범). 영상 제목으로 못 찾을 때
@@ -887,7 +303,6 @@ async function fetchVideoMusicInfo(videoId) {
 // 메인 프로세스에서 돌리면 우선순위를 BELOW_NORMAL까지밖에 못 내려(UI·오디오 공유) 게임 프레임이
 // 30%+ 떨어졌다 — 워커는 IDLE 우선순위 + 1스레드라 전면 앱이 항상 CPU를 먼저 가져간다.
 // 줄당 수 초 걸리므로 백그라운드로 진행하며 4줄마다 화면을 갱신하고, 곡별 결과는 userData/mt-cache에 저장한다.
-const mtInFlight = new Set();
 let mtWorker = null;
 let mtWorkerIdleTimer = null;
 let mtJobSeq = 0;
@@ -904,7 +319,7 @@ function getMtWorker() {
       if (msg.type === 'line') job.onLine(msg.index, msg.ko);
       else if (msg.type === 'done') {
         mtJobs.delete(msg.id);
-        if (msg.error) job.reject(new Error(msg.error)); else job.resolve();
+        if (msg.error) job.reject(new Error(msg.error)); else job.resolve(msg.result);
       }
     });
     mtWorker.on('exit', () => {
@@ -920,18 +335,28 @@ function getMtWorker() {
 function scheduleMtWorkerStop() {
   clearTimeout(mtWorkerIdleTimer);
   mtWorkerIdleTimer = setTimeout(() => {
-    if (mtInFlight.size > 0 || !mtWorker) return;
+    if (augmentInFlight.size > 0 || !mtWorker) return;
     try { mtWorker.kill(); } catch {}
     mtWorker = null;
   }, 5 * 60 * 1000);
 }
 
 // lines: 줄별 번역 원문(빈 문자열 = 생략), 줄마다 onLine(index, ko) 호출, 전체 완료 시 resolve
-function runMtJob(lines, src, onLine) {
+function runMtJob(lines, src, onLine, onStart) {
   return new Promise((resolve, reject) => {
     const id = ++mtJobSeq;
+    if (onStart) onStart(id);
     mtJobs.set(id, { onLine, resolve, reject });
     try { getMtWorker().postMessage({ id, lines, src }); } catch (err) { mtJobs.delete(id); reject(err); }
+  });
+}
+
+// 일본어 원문 줄들 → 한글 발음 줄들 (워커에서 kuromoji 사전으로, 곡당 수 밀리초)
+function runPronJob(lines) {
+  return new Promise((resolve, reject) => {
+    const id = ++mtJobSeq;
+    mtJobs.set(id, { onLine: () => {}, resolve, reject });
+    try { getMtWorker().postMessage({ id, type: 'pron', lines }); } catch (err) { mtJobs.delete(id); reject(err); }
   });
 }
 
@@ -944,77 +369,191 @@ function detectSourceLang(lines) {
   return 'en';
 }
 
+// 캐시: 곡(출처-id)별 {pron: [...], ko: [...]}. v1(mt-cache)은 루프에 빠진 번역("나 나 나 …")이 섞여 있어 버린다.
 function mtCachePath(data) {
-  const dir = path.join(app.getPath('userData'), 'mt-cache');
+  const dir = path.join(app.getPath('userData'), 'mt-cache-v2');
   return { dir, file: path.join(dir, `${data.source || 'x'}-${String(data.id || 'x').replace(/[^\w-]/g, '_')}.json`) };
 }
 
-async function machineTranslateLyrics(key, data) {
-  if (mtInFlight.has(key)) return;
-  mtInFlight.add(key);
+// 의성어·추임새 줄("ラララ", "Na na na", "oh oh")은 번역하지 않는다 — 작은 모델이 루프에 빠지는 주범이고 뜻도 없다
+function isVocalization(text) {
+  const core = String(text || '').toLowerCase().replace(/[\s\p{P}\p{S}ー〜~]/gu, '');
+  if (!core) return true;
+  return new Set(core).size <= 3 || /^(?:la|na|oh|ah|uh|yeah|wow|woo|hey|ooh|la-|ラ|ナ|ア|オ|ウ|ラン)+$/i.test(core);
+}
+
+// 보강 전 원본 가사 (모드를 바꿔 다시 붙일 때 쓴다)
+function baseLyrics(data) {
+  return data && data.baseLines ? { ...data, lines: data.baseLines } : data;
+}
+
+// ── 외국어 가사 보강: 한국어가 없는 가사에 원문 아래 줄로 한글 발음(일본어)·기계 번역을 붙인다 ──
+// 설정 foreignMode: pron(원어+발음, 기본) | pron+tr | tr | off. 영어(라틴 문자) 가사는 둘 다 하지 않는다.
+// 발음은 사전 기반이라 즉시 붙고, 번역은 무거워 백그라운드로 4줄마다 채운다(줄당 0.5~1초, 실측).
+const augmentInFlight = new Set();
+// 곡마다 세대 번호 — 표시 모드를 바꾸면 세대가 올라가 이전 작업은 화면을 건드리지 못하고, 진행 중 번역은 취소한다
+const augmentGen = new Map(); // key → number
+const mtJobOfKey = new Map(); // key → 진행 중인 번역 잡 id
+
+function cancelForeignWork(key) {
+  augmentGen.set(key, (augmentGen.get(key) || 0) + 1);
+  const jobId = mtJobOfKey.get(key);
+  if (jobId && mtWorker) { try { mtWorker.postMessage({ type: 'cancel', id: jobId }); } catch {} }
+  mtJobOfKey.delete(key);
+  for (const k of [...augmentInFlight]) if (k.startsWith(`${key}|`)) augmentInFlight.delete(k);
+}
+
+function foreignPlan(data) {
+  const mode = lyricsSettings.foreignMode;
+  if (!data || data.unavailable || data.hasKorean || !(data.lines || []).length || mode === 'off') return null;
+  const lang = detectSourceLang(data.lines);
+  if (lang === 'en') return null;
+  const plan = { mode, lang, pron: mode.startsWith('pron') && lang === 'ja', tr: mode.includes('tr') };
+  return plan.pron || plan.tr ? plan : null;
+}
+
+async function augmentForeignLyrics(key, data) {
+  const base = baseLyrics(data);
+  const plan = foreignPlan(base);
+  if (!plan) return;
+  const jobKey = `${key}|${plan.mode}`;
+  if (augmentInFlight.has(jobKey)) return;
+  augmentInFlight.add(jobKey);
+  const gen = augmentGen.get(key) || 0;
+  const n = base.lines.length;
+  const originals = base.lines.map((line) => String(line.text || '').split('\n')[0].trim());
   try {
-    const { dir, file } = mtCachePath(data);
-    let koLines = null;
-    try { koLines = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
-    const publish = (lines) => {
-      const next = { ...data, lines, machineTranslated: true, fallbackNotice: '한글 번역 없음 · 기계 번역' };
+    const { dir, file } = mtCachePath(base);
+    let cache = {};
+    try { cache = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
+    const saveCache = () => { try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(cache)); } catch {} };
+    let pron = plan.pron && Array.isArray(cache.pron) && cache.pron.length === n ? cache.pron : null;
+    const koDone = plan.tr && Array.isArray(cache.ko) && cache.ko.length === n;
+    const ko = plan.tr ? (koDone ? cache.ko : new Array(n).fill('')) : null;
+    const publish = () => {
+      // 그새 모드를 바꿨으면(세대가 올라감) 이 작업은 화면을 건드리지 않는다 — 끈 번역이 다시 나타나지 않게
+      if ((augmentGen.get(key) || 0) !== gen || lyricsSettings.foreignMode !== plan.mode) return;
+      const lines = base.lines.map((line, i) => {
+        const parts = [line.text];
+        if (pron && pron[i] && pron[i] !== originals[i]) parts.push(pron[i]);
+        if (ko && ko[i]) parts.push(ko[i]);
+        return { ...line, text: parts.join('\n') };
+      });
+      const next = {
+        ...base, lines, baseLines: base.lines, augmented: plan.mode,
+        machineTranslated: !!plan.tr,
+        fallbackNotice: plan.tr ? '한글 가사 없음 · 기계 번역' : '한글 가사 없음 · 발음 표기',
+      };
       lyricsCache.set(key, next);
-      if (key === lyricsKey) {
-        lyricsData = next;
-        sendLyricsToWindow();
-      }
+      if (key === lyricsKey) { lyricsData = next; sendLyricsToWindow(); }
     };
-    if (!koLines) {
-      const src = detectSourceLang(data.lines);
-      // 번역할 원문만 추려 워커에 넘긴다 (빈 문자열 = 한글이 있거나 빈 줄 → 생략)
-      const originals = data.lines.map((line) => {
-        const text = String(line.text || '').replace(/\s*\n\s*/g, ' ').trim();
-        return text && !hasHangul(text) ? text : '';
-      });
-      koLines = new Array(originals.length).fill('');
-      const merged = data.lines.map((line) => ({ ...line }));
-      await runMtJob(originals, src, (i, ko) => {
-        koLines[i] = ko;
-        if (ko) merged[i].text = `${data.lines[i].text}\n${ko}`;
-        // 곡이 바뀌었으면 나머지는 조용히 이어서 번역만 해 캐시에 남긴다 (화면 갱신 생략)
-        if ((i + 1) % 4 === 0 && key === lyricsKey) publish(merged.map((line) => ({ ...line })));
-      });
-      try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(koLines)); } catch {}
-      publish(merged);
-      return;
+    if (plan.pron && !pron) {
+      try { pron = await runPronJob(originals); } catch { pron = null; }
+      if (pron && pron.length === n) { cache.pron = pron; saveCache(); } else pron = null;
     }
-    publish(data.lines.map((line, i) => (koLines[i] ? { ...line, text: `${line.text}\n${koLines[i]}` } : { ...line })));
+    publish();
+    if (plan.tr && !koDone) {
+      const sources = originals.map((t) => (t && !hasHangul(t) && !isVocalization(t) ? t : ''));
+      await runMtJob(sources, plan.lang, (i, text) => {
+        ko[i] = text;
+        if (text && key === lyricsKey) publish(); // 한 줄 될 때마다 바로 보인다 (곡이 바뀌었으면 캐시만 채운다)
+      }, (jobId) => mtJobOfKey.set(key, jobId));
+      if ((augmentGen.get(key) || 0) !== gen) return; // 도중에 취소됨 — 덜 된 번역은 캐시하지 않는다
+      mtJobOfKey.delete(key);
+      cache.ko = ko;
+      saveCache();
+      publish();
+    }
   } catch {} finally {
-    mtInFlight.delete(key);
-    if (mtInFlight.size === 0 && mtWorker) scheduleMtWorkerStop();
+    augmentInFlight.delete(jobKey);
+    if (augmentInFlight.size === 0 && mtWorker) scheduleMtWorkerStop();
   }
+}
+
+// 표시 모드를 바꾸면 지금 곡에 바로 다시 적용한다 (원어만으로 돌아가는 경우 포함)
+function reapplyForeignMode() {
+  if (!lyricsKey || !lyricsData || lyricsData.unavailable) return;
+  cancelForeignWork(lyricsKey); // 진행 중 번역 취소 + 이전 작업의 화면 갱신 차단
+  const base = baseLyrics(lyricsData);
+  if (base !== lyricsData) {
+    lyricsData = base;
+    lyricsCache.set(lyricsKey, base);
+    sendLyricsToWindow();
+  }
+  augmentForeignLyrics(lyricsKey, base);
+}
+
+// 같은 곡을 두 번 찾지 않도록 진행 중인 검색을 공유한다 (미리 찾기 ↔ 재생 시작이 겹칠 때)
+const lyricsInflight = new Map(); // key → Promise<{ data, transient }>
+
+function searchLyricsShared(state, key) {
+  if (lyricsInflight.has(key)) return lyricsInflight.get(key);
+  const failuresBefore = lyricFailureCount();
+  const promise = (async () => {
+    // 유튜브 음악 카드(곡명·아티스트)는 검색과 동시에 받아 넘긴다 — 있으면 검색어 맨 앞에 쓰인다
+    const alt = state.altTitle && state.altTitle !== state.title ? [{ title: state.altTitle, artist: state.altArtist || state.artist }] : [];
+    const data = await findLyricsForTrack(state.title, state.artist, state.duration, { musicInfo: fetchVideoMusicInfo(state.id), alt });
+    // 못 찾았는데 그 사이 요청이 끝내 실패했다면 '없음'이 아니라 '모름'
+    return { data, transient: !data && lyricFailureCount() > failuresBefore };
+  })().finally(() => lyricsInflight.delete(key));
+  lyricsInflight.set(key, promise);
+  return promise;
+}
+
+// 다음 곡 가사 미리 찾기 — 렌더러가 곡 시작 몇 초 뒤 다음 곡 정보를 보낸다. 곡이 바뀌는 순간 바로 뜨게.
+// 결과는 같은 키로 캐시에 넣는다(기계 번역은 실제로 재생될 때 시작). 실패는 캐시하지 않는다.
+async function prefetchLyrics(info) {
+  if (!info || !info.id || !info.title || info.title === info.id) return;
+  const state = { id: String(info.id), title: String(info.title), artist: String(info.artist || ''), duration: Math.max(0, Number(info.duration) || 0) };
+  const key = lyricStateKey(state);
+  if (lyricsCache.has(key) || lyricsInflight.has(key)) return;
+  try {
+    const { data, transient } = await searchLyricsShared(state, key);
+    if (!transient && !lyricsCache.has(key)) lyricsCache.set(key, data || { unavailable: true, lines: [] });
+  } catch {}
+}
+
+// 네트워크 실패로 못 찾은 곡은 15초 간격으로 최대 3번 다시 찾는다 (그동안 창에는 '찾는 중'이 유지된다)
+const lyricsRetries = new Map(); // key → 시도 횟수
+
+function scheduleLyricsRetry(state, key) {
+  const attempts = (lyricsRetries.get(key) || 0) + 1;
+  lyricsRetries.set(key, attempts);
+  if (attempts > 3) {
+    lyricsRetries.delete(key);
+    lyricsCache.set(key, { unavailable: true, lines: [] });
+    if (key === lyricsKey) { lyricsData = lyricsCache.get(key); sendLyricsToWindow(); }
+    return;
+  }
+  setTimeout(() => {
+    if (key !== lyricsKey || lyricsCache.has(key)) return; // 곡이 바뀌었으면 그만
+    loadLyricsForState(state, key).catch(() => {});
+  }, 15000);
 }
 
 async function loadLyricsForState(state, key) {
   if (lyricsLoadingKey === key) return;
   if (lyricsCache.has(key)) {
     lyricsData = lyricsCache.get(key);
-    if (!lyricsData.unavailable && lyricsData.lines.length > 0 && !lyricsData.hasKorean && !lyricsData.machineTranslated && lyricsSettings.machineTranslate) {
-      machineTranslateLyrics(key, lyricsData);
-    }
+    if (lyricsData.augmented !== lyricsSettings.foreignMode) augmentForeignLyrics(key, lyricsData); // 발음·번역 (필요할 때만)
     sendLyricsToWindow();
     return;
   }
   lyricsLoadingKey = key;
   const requestId = ++lyricsRequestId;
   try {
-    let data = await findLyricsForTrack(state.title, state.artist, state.duration);
-    if (!data) {
-      // 영상 제목으로 못 찾으면 유튜브에 등록된 곡명·아티스트로 한 번 더
-      const music = await fetchVideoMusicInfo(state.id);
-      if (music && music.title) data = await findLyricsForTrack(music.title, music.artist, state.duration);
+    const { data, transient } = await searchLyricsShared(state, key);
+    // 실패로 못 찾은 것은 캐시하지 않고 잠시 뒤 다시 찾는다
+    // (예전엔 이걸 '가사 없음'으로 캐시해 같은 곡이 찾아졌다 말았다 했다)
+    if (transient) {
+      scheduleLyricsRetry(state, key);
+      return;
     }
+    lyricsRetries.delete(key);
     const displayData = data || { unavailable: true, lines: [] };
     lyricsCache.set(key, displayData);
-    // 한국어 가사를 못 구한 곡은 동봉 모델로 기계 번역을 백그라운드에서 시작한다
-    if (!displayData.unavailable && displayData.lines.length > 0 && !displayData.hasKorean && lyricsSettings.machineTranslate) {
-      machineTranslateLyrics(key, displayData);
-    }
+    // 한국어 가사를 못 구한 외국어 곡은 한글 발음·기계 번역을 붙인다 (설정 foreignMode)
+    augmentForeignLyrics(key, displayData);
     if (requestId !== lyricsRequestId || key !== lyricsKey) return;
     lyricsData = displayData;
     sendLyricsToWindow();
@@ -1029,6 +568,9 @@ function updateLyricsState(data) {
     id: String(data.id || ''),
     title: String(data.title || ''),
     artist: String(data.artist || ''),
+    // 임베드 플레이어가 아는 원어 제목·채널 (표시 제목이 현지화 제목일 때 검색어로 함께 쓴다)
+    altTitle: String(data.altTitle || ''),
+    altArtist: String(data.altArtist || ''),
     status: ['playing', 'paused', 'idle'].includes(data.status) ? data.status : 'idle',
     progress: Math.max(0, Number(data.progress) || 0),
     duration: Math.max(0, Number(data.duration) || 0),
@@ -1050,7 +592,8 @@ function updateLyricsState(data) {
     sendLyricsOffset();
   }
   sendLyricsToWindow();
-  if (next.status !== 'idle' && next.title && next.duration > 0 && !lyricsCache.has(key)) {
+  // 제목을 아직 못 받아 영상 id를 제목 자리에 둔 상태에서는 찾지 않는다 (헛검색이 '없음'으로 남지 않게)
+  if (next.status !== 'idle' && next.title && next.title !== next.id && next.duration > 0 && !lyricsCache.has(key)) {
     loadLyricsForState(next, key).catch(() => {});
   }
 }
@@ -1099,6 +642,7 @@ function pulseLyricsOutline() {
 function updateLyricsSettings(value, persist = true) {
   const before = lyricsSettings;
   lyricsSettings = normalizeLyricsSettings({ ...lyricsSettings, ...(value || {}) });
+  if (lyricsSettings.foreignMode !== before.foreignMode) reapplyForeignMode();
   if (lyricsSettings.width !== before.width || lyricsSettings.height !== before.height) pulseLyricsOutline();
   if (persist) saveLyricsSettings();
   if (lyricsWindow && !lyricsWindow.isDestroyed()) {
@@ -1246,7 +790,7 @@ function sendLyricsFlash(text) {
   lyricsWindow.webContents.send('lyrics:flash', text);
 }
 
-// ── 가사 싱크 보정: 곡(영상 id)마다 따로 저장. Alt+A = 가사를 빠르게(+), Alt+D = 늦게(−) ──
+// ── 가사 싱크 보정: 곡(영상 id)마다 따로 저장. Alt+D = 가사를 빠르게(+), Alt+A = 늦게(−) ──
 const LYRICS_OFFSET_STEP = 250;
 let lyricsOffsets = {};
 let lyricsOffsetsWriteTimer = null;
@@ -1270,9 +814,10 @@ function sendLyricsOffset() {
   }
 }
 
+// delta = null 이면 원래 싱크(0)로 되돌린다 (Alt+S). 보정 폭에는 제한을 두지 않는다(사용자 요청 — 10초 상한 제거)
 function adjustLyricsOffset(delta) {
   if (!lyricsState.id) { sendLyricsFlash('재생 중인 곡이 없습니다'); return; }
-  const next = Math.max(-10000, Math.min(10000, currentLyricsOffset() + delta));
+  const next = delta === null ? 0 : currentLyricsOffset() + delta;
   if (next === 0) delete lyricsOffsets[lyricsState.id];
   else lyricsOffsets[lyricsState.id] = next;
   clearTimeout(lyricsOffsetsWriteTimer);
@@ -1286,6 +831,11 @@ function adjustLyricsOffset(delta) {
   const sec = (Math.abs(next) / 1000).toFixed(2).replace(/\.?0+$/, '');
   sendLyricsFlash(next === 0 ? '🎵 가사 싱크 원래대로'
     : next > 0 ? `⏩ 가사 ${sec}초 빠르게` : `⏪ 가사 ${sec}초 늦게`);
+}
+
+function sendLyricsScroll(delta) {
+  if (!lyricsWindow || lyricsWindow.isDestroyed() || lyricsWindow.webContents.isLoading()) return;
+  lyricsWindow.webContents.send('lyrics:scroll', delta);
 }
 
 // ── 플로팅 창 레이아웃 프리셋: 크기·모양·표시 항목만 저장한다 (항상 위·클릭 비활성화 같은 동작 설정은 제외) ──
@@ -1350,8 +900,13 @@ const LYRICS_SHORTCUTS = [
   { accelerator: 'Alt+Q', label: '이전 곡 (Alt+W 누른 채 Q 꾹: 되감기)', run: () => trackOrScrub('Alt+Q', -1) },
   { accelerator: 'Alt+W', label: '재생/일시정지', run: () => playToggleOrChord() },
   { accelerator: 'Alt+E', label: '다음 곡 (Alt+W 누른 채 E 꾹: 빨리 감기)', run: () => trackOrScrub('Alt+E', 1) },
-  { accelerator: 'Alt+A', label: '가사 싱크 빠르게 (0.25초)', run: () => adjustLyricsOffset(LYRICS_OFFSET_STEP) },
-  { accelerator: 'Alt+D', label: '가사 싱크 늦게 (0.25초)', run: () => adjustLyricsOffset(-LYRICS_OFFSET_STEP) },
+  // 사용자 요청으로 방향을 맞바꿨다 — Alt+A = 늦게(왼쪽=뒤로 미룸), Alt+D = 빠르게
+  { accelerator: 'Alt+A', label: '가사 싱크 늦게 (0.25초)', run: () => adjustLyricsOffset(-LYRICS_OFFSET_STEP) },
+  { accelerator: 'Alt+D', label: '가사 싱크 빠르게 (0.25초)', run: () => adjustLyricsOffset(LYRICS_OFFSET_STEP) },
+  { accelerator: 'Alt+S', label: '가사 싱크 원래대로', run: () => adjustLyricsOffset(null) },
+  // 싱크 없는 가사(본문만)일 때 플로팅 창에서 줄 넘기기 — 게임 중엔 마우스 휠을 쓸 수 없으므로 단축키로
+  { accelerator: 'Alt+Z', label: '싱크 없는 가사 위로 넘기기', run: () => sendLyricsScroll(-2) },
+  { accelerator: 'Alt+X', label: '싱크 없는 가사 아래로 넘기기', run: () => sendLyricsScroll(2) },
 ];
 
 // Alt+Q/E는 즉시 이전/다음 곡(판정 대기 없음). 되감기/빨리 감기는 Alt+W를 누른 채 Q/E를 꾹 누르는 코드.
@@ -1520,14 +1075,20 @@ function lockupToItem(vm) {
   try {
     author = meta.metadata.contentMetadataViewModel.metadataRows[0].metadataParts[0].text.content || '';
   } catch {}
-  return { id: vm.contentId, title: title || '', author };
+  // 길이는 썸네일 배지("3:45")에 있다 — 다음 곡 가사를 미리 찾을 때 재생시간 비교에 쓴다
+  let seconds = 0;
+  try {
+    const m = JSON.stringify(vm.contentImage || '').match(/"text":"((?:\d+:)?\d{1,2}:\d{2})"/);
+    if (m) seconds = m[1].split(':').reduce((acc, part) => acc * 60 + Number(part), 0);
+  } catch {}
+  return { id: vm.contentId, title: title || '', author, seconds };
 }
 
 function rendererToItem(r) {
   if (!r.videoId || r.isPlayable === false) return null;
   const title = r.title && r.title.runs && r.title.runs[0] && r.title.runs[0].text;
   const author = r.shortBylineText && r.shortBylineText.runs && r.shortBylineText.runs[0] && r.shortBylineText.runs[0].text;
-  return { id: r.videoId, title: title || '', author: author || '' };
+  return { id: r.videoId, title: title || '', author: author || '', seconds: Number(r.lengthSeconds) || 0 };
 }
 
 function findToken(node) {
@@ -2338,6 +1899,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('lyrics:settings:reset', () => updateLyricsSettings(DEFAULT_LYRICS_SETTINGS));
   ipcMain.handle('lyrics:data:get', () => lyricsData);
   ipcMain.handle('lyrics:offset:get', () => currentLyricsOffset());
+  ipcMain.on('lyrics:prefetch', (_event, info) => { prefetchLyrics(info).catch(() => {}); });
   ipcMain.handle('lyrics:presets:list', () => presetNames());
   ipcMain.handle('lyrics:presets:save', (_event, name) => saveLyricsPreset(name));
   ipcMain.handle('lyrics:presets:apply', (_event, name) => applyLyricsPreset(name));
@@ -2401,6 +1963,7 @@ app.whenReady().then(async () => {
       lyricsData = data;
       if (lyricsKey) lyricsCache.set(lyricsKey, data);
       sendLyricsToWindow();
+      if (lyricsKey) augmentForeignLyrics(lyricsKey, data);
     }
     return data;
   });

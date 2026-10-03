@@ -14,6 +14,7 @@ let queueIndex = -1;
 let loadToken = 0;
 let titleFetchInFlight = false;
 const titleCache = new Map(); // videoId -> {title, author} | null
+const durationCache = new Map(); // videoId -> 재생목록에 표시된 길이(초) — 다음 곡 가사 미리 찾기에 쓴다
 const fallbackIds = new Set(); // 임베드 차단 → 유튜브 워치페이지 직접 재생으로 전환된 곡
 const unplayableIds = new Set(); // 직접 재생조차 불가(삭제/비공개 등) → 즉시 스킵
 let watchdogTimer = null;
@@ -74,6 +75,8 @@ function setNowPlaying(id, title, author, badge) {
     id: id || '',
     title: title || '',
     artist: author || '',
+    altTitle: '',
+    altArtist: '',
     status: id ? 'playing' : 'idle',
     progress: 0,
     duration: 0,
@@ -677,7 +680,7 @@ function onPlayerStateChange(event) {
     progress = player.getCurrentTime() * 1000;
     duration = player.getDuration() * 1000;
   } catch {}
-  publishLyricsState({ status: state, progress, duration });
+  publishLyricsState({ status: state, progress, duration, altTitle: (data && data.title) || '', altArtist: (data && data.author) || '' });
 }
 
 // 임베드 플레이어의 진행 시각을 가사 창으로 보낸다. 가사 창은 이 값을 보간해
@@ -694,10 +697,19 @@ setInterval(() => {
     progress = player.getCurrentTime() * 1000;
     duration = player.getDuration() * 1000;
   } catch {}
+  // 제목은 곡 시작 때 정한 표시 제목(한국어 현지화 우선)을 유지한다 — 여기서 임베드의 원어 제목으로 덮으면
+  // 가사 키가 갈라져 같은 곡을 두 번 찾았다. 원어 제목은 altTitle로 보내 검색어로만 쓴다.
+  const vid = (data && data.video_id) || queue[queueIndex];
+  // 같은 곡일 때만 이어 쓴다 — 곡이 막 바뀐 순간 새 id에 이전 곡 제목이 붙으면 새 곡을 옛 제목으로 찾는다.
+  // 제목 자리에 id가 들어 있던 경우(제목 미수신)도 새로 정한다.
+  const sameTrack = lyricsPublishedState.id === vid && lyricsPublishedState.title && lyricsPublishedState.title !== vid;
+  const cachedInfo = titleCache.get(vid);
   publishLyricsState({
-    id: (data && data.video_id) || queue[queueIndex],
-    title: (data && data.title) || lyricsPublishedState.title,
-    artist: (data && data.author) || lyricsPublishedState.artist,
+    id: vid,
+    title: sameTrack ? lyricsPublishedState.title : ((cachedInfo && cachedInfo.title) || (data && data.title) || ''),
+    artist: sameTrack ? lyricsPublishedState.artist : ((cachedInfo && cachedInfo.author) || (data && data.author) || ''),
+    altTitle: (data && data.title) || '',
+    altArtist: (data && data.author) || '',
     status: state === YT.PlayerState.PLAYING ? 'playing' : 'paused',
     progress,
     duration,
@@ -737,6 +749,7 @@ async function playPlaylist(listId, shuffle, preset = {}) {
   if (first && first.items.length > 0) {
     for (const it of first.items) {
       if (it.title) titleCache.set(it.id, { title: it.title, author: it.author || '' });
+      if (it.seconds) durationCache.set(it.id, it.seconds);
     }
     const firstVideoId = first.items[0].id;
     queue = first.items.map((it) => it.id);
@@ -760,6 +773,7 @@ async function playPlaylist(listId, shuffle, preset = {}) {
       if (!more) break;
       for (const it of more.items) {
         if (it.title) titleCache.set(it.id, { title: it.title, author: it.author || '' });
+        if (it.seconds) durationCache.set(it.id, it.seconds);
         if (shuffle) {
           const pos = queueIndex + 1 + Math.floor(Math.random() * (queue.length - queueIndex));
           queue.splice(pos, 0, it.id);
@@ -811,6 +825,27 @@ function captureQueue(token, shuffle, retries) {
 
 let pendingQueuePlay = false; // 플레이어 준비 전에 검색 결과 등에서 들어온 곡 단위 재생 요청
 
+// 다음 곡 가사 미리 찾기: 곡이 시작되고 3초 뒤(지금 곡의 가사 검색과 겹치지 않게) 다음 재생 가능한 곡을 main에 알린다.
+// 제목·가수는 setNowPlaying이 쓸 값과 똑같이 넘긴다(캐시의 현지화 제목) — main은 영상 id로 캐시한다.
+let lyricsPrefetchTimer = null;
+
+function scheduleLyricsPrefetch() {
+  clearTimeout(lyricsPrefetchTimer);
+  lyricsPrefetchTimer = setTimeout(() => {
+    if (queue.length < 2) return;
+    for (let n = 1; n < Math.min(queue.length, 6); n++) {
+      const id = queue[(queueIndex + n) % queue.length];
+      if (unplayableIds.has(id)) continue;
+      const info = titleCache.get(id);
+      if (!info || !info.title) return;
+      try {
+        window.lyrics.prefetch({ id, title: info.title, artist: info.author || '', duration: (durationCache.get(id) || 0) * 1000 });
+      } catch {}
+      return;
+    }
+  }, 3000);
+}
+
 function playCurrent() {
   // 임베드 프레임에 유튜브 자체 UI 숨김 CSS를 다시 심는다 (프레임이 새로 준비됐을 수 있다)
   try { window.appinfo.refreshEmbedChrome(); } catch {}
@@ -825,6 +860,7 @@ function playCurrent() {
     nextTrack();
     return;
   }
+  scheduleLyricsPrefetch();
   if (fallbackIds.has(id) || precisePlaybackActive) {
     startFallback(id);
     return;
@@ -1451,6 +1487,7 @@ const lsSelects = {
   coverMode: document.getElementById('ls-cover-mode'),
   videoFit: document.getElementById('ls-video-fit'),
   fontFamily: document.getElementById('ls-font-family'),
+  foreignMode: document.getElementById('ls-foreign-mode'),
 };
 const lsToggleInputs = {
   showProgressBar: document.getElementById('ls-progress'),
@@ -1460,7 +1497,6 @@ const lsToggleInputs = {
   showNextButton: document.getElementById('ls-next'),
   showVolumeButton: document.getElementById('ls-volume'),
   showLyrics: document.getElementById('ls-lyrics'),
-  machineTranslate: document.getElementById('ls-machine-translate'),
   showTrackInfo: document.getElementById('ls-track-info'),
   alwaysOnTop: document.getElementById('ls-topmost'),
   clickThrough: document.getElementById('ls-lock'),
@@ -2217,6 +2253,7 @@ let browseToken = 0;
 function cacheTitles(items) {
   for (const it of items) {
     if (it.title) titleCache.set(it.id, { title: it.title, author: it.author || '' });
+    if (it.seconds) durationCache.set(it.id, it.seconds);
   }
 }
 
@@ -2885,10 +2922,33 @@ function formatClock(ms) {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
+// 싱크 없는 가사(본문만): 현재 줄 강조 없이 전부 나열하고 마우스 휠로 스크롤한다
+let lyricsPlainScroll = 0;
+
+function lyricsViewIsPlain() {
+  return !!(lyricsViewData && lyricsViewData.plain && lyricsViewData.lines && lyricsViewData.lines.length);
+}
+
+function applyPlainScroll() {
+  const top = lyricsViewport.clientHeight * 0.18;
+  const min = Math.min(top, lyricsViewport.clientHeight * 0.5 - lyricsViewList.offsetHeight);
+  lyricsPlainScroll = Math.max(min, Math.min(top, lyricsPlainScroll));
+  lyricsViewList.style.transform = `translateY(${Math.round(lyricsPlainScroll)}px)`;
+}
+
+lyricsViewport.addEventListener('wheel', (e) => {
+  if (!lyricsViewIsPlain()) return;
+  e.preventDefault();
+  lyricsPlainScroll -= e.deltaY;
+  applyPlainScroll();
+}, { passive: false });
+
 function renderLyricsView() {
   lyricsViewList.replaceChildren();
   lyricsViewList.style.transform = '';
   lyricsViewIndex = -2;
+  const plain = lyricsViewIsPlain();
+  lyricsViewEl.toggleAttribute('data-plain', plain);
   const lines = (lyricsViewData && lyricsViewData.lines) || [];
   for (const line of lines) {
     const li = document.createElement('li');
@@ -2907,6 +2967,11 @@ function renderLyricsView() {
   else if (lyricsViewData.unavailable || lines.length === 0) msg = '가사를 찾지 못했습니다';
   lyricsViewMsg.textContent = msg;
   lyricsViewMsg.hidden = !msg;
+  if (plain) {
+    for (const li of lyricsViewList.children) li.className = 'lo-block plain';
+    lyricsPlainScroll = lyricsViewport.clientHeight * 0.18;
+    applyPlainScroll();
+  }
   tickLyricsView(true);
 }
 
@@ -2922,7 +2987,7 @@ function tickLyricsView(force) {
   loPause.classList.toggle('paused', s.status !== 'playing');
 
   const blocks = lyricsViewList.children;
-  if (blocks.length === 0) return;
+  if (blocks.length === 0 || lyricsViewIsPlain()) return; // 싱크 없는 가사는 휠로만 움직인다
   const progress = lyricsProgressNow();
   const lines = lyricsViewData.lines;
   let index = -1;

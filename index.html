@@ -258,6 +258,14 @@
             <option value="gowun-batang">고운바탕</option>
           </select>
         </label>
+        <label class="ls-select"><span>외국어 가사 (한글 가사 없을 때)</span>
+          <select id="ls-foreign-mode">
+            <option value="pron">원어 + 한글 발음</option>
+            <option value="pron+tr">원어 + 발음 + 기계 번역</option>
+            <option value="tr">원어 + 기계 번역</option>
+            <option value="off">원어만</option>
+          </select>
+        </label>
         <label class="ls-select"><span>영상 맞춤</span>
           <select id="ls-video-fit">
             <option value="cover">채우기 (좌우 잘림)</option>
@@ -275,10 +283,9 @@
           <label><input type="checkbox" id="ls-track-info" /> 곡 정보 표시</label>
           <label><input type="checkbox" id="ls-topmost" /> 항상 위에 표시</label>
           <label title="게임처럼 마우스를 쓰는 프로그램 위에 띄울 때 — 가사 창을 눌러도 아래 프로그램이 클릭을 받습니다"><input type="checkbox" id="ls-lock" /> 클릭 비활성화 (아래 창으로 통과)</label>
-          <label><input type="checkbox" id="ls-machine-translate" /> 기계 번역 (한국어 가사 없을 때, 곡당 수십 초)</label>
           <label title="광고는 기본적으로 플레이어 응답에서 광고 데이터를 걷어내 없앱니다. 이 항목은 그 방식이 통하지 않을 때 쓰던 구식 방식(무음·16배속·강제 스킵)으로, 유튜브에 감지되면 재생 자체가 막힙니다."><input type="checkbox" id="ls-adblock" /> 광고 강제 스킵 (구식 · 감지되면 재생이 막힘)</label>
         </div>
-        <p class="settings-hint" id="ls-shortcuts">단축키 — <b>Alt+`</b> 음소거, <b>Alt+1/Alt+2</b> 볼륨 감소/증가, <b>Alt+3</b> 가사 창 표시/숨기기, <b>Alt+4</b> 가사 창 클릭 활성화/비활성화, <b>Alt+5</b> 가사 창 다시 맨 위로, <b>Alt+Q/W/E</b> 이전 곡·재생/일시정지·다음 곡 (Alt+W를 누른 채 Q/E를 꾹 누르면 되감기/빨리 감기), <b>Alt+A/D</b> 가사 싱크 빠르게/늦게 (0.25초씩, 곡마다 저장). 작업 중인 프로그램에서 창이 전환되지 않습니다(클릭 활성화만 예외 — 가사 창을 조작하려면 커서가 넘어와야 합니다).</p>
+        <p class="settings-hint" id="ls-shortcuts">단축키 — <b>Alt+`</b> 음소거, <b>Alt+1/Alt+2</b> 볼륨 감소/증가, <b>Alt+3</b> 가사 창 표시/숨기기, <b>Alt+4</b> 가사 창 클릭 활성화/비활성화, <b>Alt+5</b> 가사 창 다시 맨 위로, <b>Alt+Q/W/E</b> 이전 곡·재생/일시정지·다음 곡 (Alt+W를 누른 채 Q/E를 꾹 누르면 되감기/빨리 감기), <b>Alt+A/D</b> 가사 싱크 늦게/빠르게 (0.25초씩, 곡마다 저장), <b>Alt+S</b> 싱크 원래대로. 작업 중인 프로그램에서 창이 전환되지 않습니다(클릭 활성화만 예외 — 가사 창을 조작하려면 커서가 넘어와야 합니다).</p>
         <button id="lyrics-settings-reset">가사 창 기본값으로 되돌리기</button>
       </div>
     </div>

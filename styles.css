@@ -1812,6 +1812,23 @@ body.seeking #progress-fill::after {
 .lo-block.d3 { opacity: 0.4; filter: blur(1.5px); }
 .lo-block.far { filter: blur(2px); }
 .lo-block.current { opacity: 1; filter: none; }
+/* 싱크 없는 가사: 강조·흐림 없이 나열, 이 영역만 휠을 받는다 (나머지 오버레이는 클릭 통과) */
+.lo-block.plain { opacity: 0.92; filter: none; padding: 6px 0; }
+#lyrics-overlay[data-plain] #lyrics-overlay-viewport { pointer-events: auto; }
+#lyrics-overlay[data-plain] #lyrics-overlay-list { transition: transform 0.12s ease-out; }
+#lyrics-overlay[data-plain] #lyrics-overlay-viewport::before {
+  content: '싱크 없는 가사 · 마우스 휠로 넘기기';
+  position: absolute;
+  top: 12px;
+  right: 5%;
+  z-index: 1;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #ffd36b;
+  font-size: 12px;
+  font-weight: 700;
+}
 
 /* 글꼴·크기는 디자인 설정(가사 보기)에서 — --lv-font / --lv-scale 는 renderer가 documentElement에 건다 */
 #lyrics-overlay-list { font-family: var(--lv-font, inherit); }

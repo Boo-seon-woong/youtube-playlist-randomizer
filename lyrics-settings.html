@@ -79,9 +79,17 @@
         <label><input type="checkbox" data-key="showVolumeButton" /> 볼륨 버튼</label>
         <label><input type="checkbox" data-key="alwaysOnTop" /> 항상 위에 표시</label>
         <label><input type="checkbox" data-key="clickThrough" /> 클릭 비활성화 (아래 창으로 통과)</label>
-        <label><input type="checkbox" data-key="machineTranslate" /> 기계 번역 (한국어 가사 없을 때)</label>
       </div>
-      <p class="hint">단축키 — Alt+` 음소거, Alt+1/2 볼륨, Alt+3 창 표시, Alt+4 클릭 활성화/비활성화, Alt+5 맨 위로, Alt+Q/W/E 이전·재생/정지·다음 (W 누른 채 Q/E 꾹: 되감기/빨리 감기), Alt+A/D 가사 싱크 빠르게/늦게 (곡마다 저장)</p>
+      <label class="row select"><span>외국어 가사 (한글 가사 없을 때)</span>
+        <select data-key="foreignMode">
+          <option value="pron">원어 + 한글 발음</option>
+          <option value="pron+tr">원어 + 발음 + 기계 번역</option>
+          <option value="tr">원어 + 기계 번역</option>
+          <option value="off">원어만</option>
+        </select>
+      </label>
+      <p class="hint">발음은 일본어 가사에 바로 붙습니다. 기계 번역은 무거워(메모리 약 1.7GB) 천천히 채워지고 품질이 거칩니다. 영어 가사는 둘 다 하지 않습니다.</p>
+      <p class="hint">단축키 — Alt+` 음소거, Alt+1/2 볼륨, Alt+3 창 표시, Alt+4 클릭 활성화/비활성화, Alt+5 맨 위로, Alt+Q/W/E 이전·재생/정지·다음 (W 누른 채 Q/E 꾹: 되감기/빨리 감기), Alt+A/D 가사 싱크 늦게/빠르게 (곡마다 저장), Alt+S 싱크 원래대로</p>
     </section>
 
     <button id="ls-reset">기본값으로 되돌리기</button>

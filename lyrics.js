@@ -3,7 +3,7 @@ let lyricData = null;
 let lyricsSettings = {
   width: 760, height: 240, backgroundOpacity: 94, uiOpacity: 100, fontSize: 16,
   showProgressBar: true, showPlaybackControls: true,
-  showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true, showLyrics: true, machineTranslate: true,
+  showPreviousButton: true, showPauseButton: true, showNextButton: true, showVolumeButton: true, showLyrics: true, machineTranslate: true, foreignMode: 'pron',
   showTrackInfo: true, coverMode: 'art', videoFit: 'cover', fontFamily: 'default', showStatus: true, alwaysOnTop: true, clickThrough: false,
 };
 
@@ -302,7 +302,27 @@ function linesPerSide() {
   return Math.max(1, Math.min(20, Math.floor((h - currentBlock) / 2 / sideBlock)));
 }
 
+// 싱크 없는 가사: 위쪽 시작 줄(plainTop)부터 창에 들어가는 만큼 나열 — Alt+Z/X(main)가 plainTop을 옮긴다
+let plainTop = 0;
+
+function renderPlainLines() {
+  const lines = lyricData.lines;
+  const fs = Number(lyricsSettings.fontSize) || 16;
+  const per = fs * 0.86 * 1.28 + 3 + 4;
+  const count = Math.max(1, Math.floor((linesEl.clientHeight || per) / per));
+  plainTop = Math.max(0, Math.min(plainTop, Math.max(0, lines.length - 1)));
+  const key = `plain|${lyricDataVersion}|${plainTop}|${count}`;
+  if (key === linesKey) return;
+  linesKey = key;
+  linesEl.replaceChildren();
+  for (const line of lines.slice(plainTop, plainTop + count)) linesEl.append(lineElement(line, 'plain'));
+}
+
 function renderLines(index) {
+  const plain = !!(lyricData && lyricData.plain && lyricData.lines && lyricData.lines.length);
+  document.body.classList.toggle('plain-lyrics', plain);
+  document.getElementById('lyrics-plain-badge').hidden = !plain;
+  if (plain) { renderPlainLines(); return; }
   const hasLines = !!(lyricData && lyricData.lines && lyricData.lines.length);
   const k = hasLines ? linesPerSide() : 0;
   const note = !hasLines ? (lyricData && lyricData.unavailable ? '가사를 찾지 못했습니다'
@@ -443,8 +463,15 @@ window.lyricsOverlay.onState((next) => {
 });
 
 window.lyricsOverlay.onData((next) => {
+  if (!next || !lyricData || next.id !== lyricData.id || next.source !== lyricData.source) plainTop = 0; // 다른 곡이면 처음부터
   lyricData = next;
   lyricDataVersion += 1;
+  render();
+});
+
+window.lyricsOverlay.onScroll((delta) => {
+  if (!lyricData || !lyricData.plain) return;
+  plainTop += Number(delta) || 0;
   render();
 });
 
