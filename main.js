@@ -4,6 +4,7 @@ const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
 const { hasHangul, buildLyricQueries, resolveLyricCandidate, findLyricsForTrack, searchAllLyrics, lyricFailureCount } = require('./lyrics-search');
+const { translateLines: webTranslateLines } = require('./web-translate');
 
 // WSLg의 GPU 합성 버그로 영상이 창 밖에 그려지거나 검게 나오는 문제 방지 (Windows 네이티브에서는 불필요)
 if (process.platform === 'linux') app.disableHardwareAcceleration();
@@ -133,8 +134,9 @@ const DEFAULT_LYRICS_SETTINGS = {
   showVolumeButton: true,
   showLyrics: true, // 오른쪽 가사 영역 (끄면 왼쪽 사각형만 남는다)
   machineTranslate: true, // (구버전 키 — foreignMode로 대체)
-  // 한국어 가사가 없는 외국어 가사의 보조 줄: 'pron'(원어+한글 발음) | 'pron+tr'(+기계 번역) | 'tr'(원어+번역) | 'off'(원어만)
-  // 발음은 일본어만(사전 기반, 즉시), 번역은 무겁고(1.7GB RAM) 품질이 거칠어 기본은 발음만. 영어는 둘 다 하지 않는다.
+  // 한국어 가사가 없는 외국어 가사의 보조 줄: 'pron'(원어+한글 발음) | 'pron+web'·'web'(+웹 번역) | 'pron+tr'·'tr'(+내장 모델 번역) | 'off'(원어만)
+  // 발음은 일본어만(사전 기반, 즉시). 웹 번역은 Bing/구글 무료 번역(web-translate.js, 곡당 3~6초), 내장 모델은 오프라인이지만
+  // 무겁고(RAM 1.2GB) 느리다. 기본은 발음만. 영어는 발음·번역 모두 하지 않는다.
   foreignMode: 'pron',
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
@@ -145,7 +147,7 @@ const DEFAULT_LYRICS_SETTINGS = {
   clickThrough: false, // 잠금 모드: 창을 눌러도 아래 프로그램(게임 등)으로 클릭이 지나간다
 };
 const COVER_MODES = ['none', 'art', 'video'];
-const FOREIGN_MODES = ['pron', 'pron+tr', 'tr', 'off'];
+const FOREIGN_MODES = ['pron', 'pron+web', 'web', 'pron+tr', 'tr', 'off'];
 const VIDEO_FITS = ['cover', 'contain'];
 // 가사 글꼴 후보 — 웹폰트(Google Fonts)라 오프라인이면 시스템 글꼴로 대체된다
 const LYRIC_FONTS = ['default', 'noto-sans', 'noto-serif', 'nanum-myeongjo', 'gowun-batang', 'gowun-dodum', 'ibm-plex'];
@@ -369,9 +371,10 @@ function detectSourceLang(lines) {
   return 'en';
 }
 
-// 캐시: 곡(출처-id)별 {pron: [...], ko: [...]}. v1(mt-cache)은 루프에 빠진 번역("나 나 나 …")이 섞여 있어 버린다.
+// 캐시: 곡(출처-id)별 {pron: [...], ko: [...](내장 모델), web: [...](웹 번역)}. v1(mt-cache)은 루프에 빠진 번역
+// ("나 나 나 …"), v2는 번역 잡 두 개가 한 생성 시퀀스를 같이 써 뒤섞인 번역(v1.32.0)이 섞여 있어 버린다.
 function mtCachePath(data) {
-  const dir = path.join(app.getPath('userData'), 'mt-cache-v2');
+  const dir = path.join(app.getPath('userData'), 'mt-cache-v3');
   return { dir, file: path.join(dir, `${data.source || 'x'}-${String(data.id || 'x').replace(/[^\w-]/g, '_')}.json`) };
 }
 
@@ -382,14 +385,17 @@ function isVocalization(text) {
   return new Set(core).size <= 3 || /^(?:la|na|oh|ah|uh|yeah|wow|woo|hey|ooh|la-|ラ|ナ|ア|オ|ウ|ラン)+$/i.test(core);
 }
 
-// 보강 전 원본 가사 (모드를 바꿔 다시 붙일 때 쓴다)
+// 보강 전 원본 가사 (모드를 바꿔 다시 붙일 때 쓴다). 이전 보강 표시(augmented)도 지운다 — 남겨 두면 '원어만'으로
+// 돌린 곡이 예전 모드 이름을 달고 있어, 그 모드로 다시 돌아왔을 때 보강이 끝난 것으로 보고 건너뛴다
 function baseLyrics(data) {
-  return data && data.baseLines ? { ...data, lines: data.baseLines } : data;
+  if (!data || !data.baseLines) return data;
+  const { baseLines, augmented, ...rest } = data;
+  return { ...rest, lines: baseLines };
 }
 
 // ── 외국어 가사 보강: 한국어가 없는 가사에 원문 아래 줄로 한글 발음(일본어)·기계 번역을 붙인다 ──
-// 설정 foreignMode: pron(원어+발음, 기본) | pron+tr | tr | off. 영어(라틴 문자) 가사는 둘 다 하지 않는다.
-// 발음은 사전 기반이라 즉시 붙고, 번역은 무거워 백그라운드로 4줄마다 채운다(줄당 0.5~1초, 실측).
+// 설정 foreignMode: pron(원어+발음, 기본) | pron+web | web | pron+tr | tr | off. 영어(라틴 문자) 가사는 둘 다 하지 않는다.
+// 발음은 사전 기반이라 즉시 붙는다. 웹 번역은 묶음(약 400자)마다, 내장 모델 번역은 한 줄씩(줄당 1~2초) 채워진다.
 const augmentInFlight = new Set();
 // 곡마다 세대 번호 — 표시 모드를 바꾸면 세대가 올라가 이전 작업은 화면을 건드리지 못하고, 진행 중 번역은 취소한다
 const augmentGen = new Map(); // key → number
@@ -408,8 +414,9 @@ function foreignPlan(data) {
   if (!data || data.unavailable || data.hasKorean || !(data.lines || []).length || mode === 'off') return null;
   const lang = detectSourceLang(data.lines);
   if (lang === 'en') return null;
-  const plan = { mode, lang, pron: mode.startsWith('pron') && lang === 'ja', tr: mode.includes('tr') };
-  return plan.pron || plan.tr ? plan : null;
+  const parts = mode.split('+');
+  const plan = { mode, lang, pron: parts.includes('pron') && lang === 'ja', tr: parts.includes('tr'), web: parts.includes('web') };
+  return plan.pron || plan.tr || plan.web ? plan : null;
 }
 
 async function augmentForeignLyrics(key, data) {
@@ -428,9 +435,14 @@ async function augmentForeignLyrics(key, data) {
     try { cache = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
     const saveCache = () => { try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(cache)); } catch {} };
     let pron = plan.pron && Array.isArray(cache.pron) && cache.pron.length === n ? cache.pron : null;
-    const koDone = plan.tr && Array.isArray(cache.ko) && cache.ko.length === n;
-    const ko = plan.tr ? (koDone ? cache.ko : new Array(n).fill('')) : null;
-    const publish = () => {
+    const field = plan.web ? 'web' : 'ko'; // 웹 번역과 내장 모델 번역은 따로 캐시한다
+    const translating = plan.tr || plan.web;
+    const koDone = translating && Array.isArray(cache[field]) && cache[field].length === n;
+    const ko = translating ? (koDone ? cache[field] : new Array(n).fill('')) : null;
+    let webFailed = false;
+    // final: 이 모드의 보강이 끝났다는 표시(augmented = 모드). 덜 된 결과(곡이 바뀌어 취소된 번역, 실패한 웹 번역)는
+    // 표시만 하고 끝났다고 적지 않는다 — 그래야 그 곡을 다시 틀 때 이어서 번역한다(예전엔 반쯤 된 번역이 그대로 남았다)
+    const publish = (final) => {
       // 그새 모드를 바꿨으면(세대가 올라감) 이 작업은 화면을 건드리지 않는다 — 끈 번역이 다시 나타나지 않게
       if ((augmentGen.get(key) || 0) !== gen || lyricsSettings.foreignMode !== plan.mode) return;
       const lines = base.lines.map((line, i) => {
@@ -440,9 +452,10 @@ async function augmentForeignLyrics(key, data) {
         return { ...line, text: parts.join('\n') };
       });
       const next = {
-        ...base, lines, baseLines: base.lines, augmented: plan.mode,
-        machineTranslated: !!plan.tr,
-        fallbackNotice: plan.tr ? '한글 가사 없음 · 기계 번역' : '한글 가사 없음 · 발음 표기',
+        ...base, lines, baseLines: base.lines, augmented: final ? plan.mode : `${plan.mode}…`,
+        machineTranslated: !!translating,
+        fallbackNotice: webFailed ? '한글 가사 없음 · 웹 번역 실패' : plan.web ? '한글 가사 없음 · 웹 번역'
+          : plan.tr ? '한글 가사 없음 · 기계 번역' : '한글 가사 없음 · 발음 표기',
       };
       lyricsCache.set(key, next);
       if (key === lyricsKey) { lyricsData = next; sendLyricsToWindow(); }
@@ -451,9 +464,21 @@ async function augmentForeignLyrics(key, data) {
       try { pron = await runPronJob(originals); } catch { pron = null; }
       if (pron && pron.length === n) { cache.pron = pron; saveCache(); } else pron = null;
     }
-    publish();
+    publish(!translating || koDone);
+    const sources = originals.map((t) => (t && !hasHangul(t) && !isVocalization(t) ? t : ''));
+    if (plan.web && !koDone) {
+      // 네트워크 작업이라 CPU를 거의 안 쓰고 다른 곡의 작업과 겹쳐도 된다 (미리 찾기에서도 돌린다)
+      const { ko: out, complete } = await webTranslateLines(sources, (partial) => {
+        partial.forEach((text, i) => { if (text) ko[i] = text; });
+        publish(false);
+      });
+      if ((augmentGen.get(key) || 0) !== gen) return;
+      out.forEach((text, i) => { if (text) ko[i] = text; });
+      webFailed = !complete && !ko.some(Boolean);
+      if (complete) { cache.web = ko; saveCache(); }
+      publish(complete);
+    }
     if (plan.tr && !koDone) {
-      const sources = originals.map((t) => (t && !hasHangul(t) && !isVocalization(t) ? t : ''));
       // 다른 곡의 번역이 아직 돌고 있으면 취소한다 — 번역기는 한 번에 한 줄만 처리하므로 지금 곡이 밀리지 않게
       // (이전 곡은 다시 틀 때 처음부터 다시 번역한다; 완성된 곡만 캐시된다)
       for (const otherKey of [...mtJobOfKey.keys()]) if (otherKey !== key) cancelForeignWork(otherKey);
@@ -466,13 +491,13 @@ async function augmentForeignLyrics(key, data) {
       const order = [...Array(n).keys()].slice(start).concat([...Array(start).keys()]);
       await runMtJob(sources, plan.lang, (i, text) => {
         ko[i] = text;
-        if (text && key === lyricsKey) publish(); // 한 줄 될 때마다 바로 보인다 (곡이 바뀌었으면 캐시만 채운다)
+        if (text && key === lyricsKey) publish(false); // 한 줄 될 때마다 바로 보인다 (곡이 바뀌었으면 캐시만 채운다)
       }, (jobId) => mtJobOfKey.set(key, jobId), order);
       if ((augmentGen.get(key) || 0) !== gen) return; // 도중에 취소됨 — 덜 된 번역은 캐시하지 않는다
       mtJobOfKey.delete(key);
       cache.ko = ko;
       saveCache();
-      publish();
+      publish(true);
     }
   } catch {} finally {
     augmentInFlight.delete(jobKey);
@@ -519,7 +544,12 @@ async function prefetchLyrics(info) {
   if (lyricsCache.has(key) || lyricsInflight.has(key)) return;
   try {
     const { data, transient } = await searchLyricsShared(state, key);
-    if (!transient && !lyricsCache.has(key)) lyricsCache.set(key, data || { unavailable: true, lines: [] });
+    if (!transient && !lyricsCache.has(key)) {
+      lyricsCache.set(key, data || { unavailable: true, lines: [] });
+      // 발음·웹 번역도 미리 붙여 둔다(곡이 시작되면 바로 보이게). 내장 모델 번역은 지금 곡의 번역을 취소시키므로 미리 하지 않는다
+      const plan = foreignPlan(data);
+      if (plan && !plan.tr) augmentForeignLyrics(key, data);
+    }
   } catch {}
 }
 
@@ -598,6 +628,15 @@ function updateLyricsState(data) {
   if (keyChanged) {
     lyricsKey = key;
     lyricsData = lyricsCache.has(key) ? lyricsCache.get(key) : null;
+    // 미리 찾아 둔 곡, 보강이 덜 끝난 곡, 다른 표시 모드로 보강했던 곡 → 지금 모드로 (다시) 붙인다.
+    // (캐시에 있는 곡은 loadLyricsForState를 거치지 않아, 미리 찾은 외국어 곡에 발음이 안 붙던 문제가 있었다)
+    if (lyricsData && lyricsData.augmented !== lyricsSettings.foreignMode) {
+      if (lyricsData.baseLines && String(lyricsData.augmented).replace('…', '') !== lyricsSettings.foreignMode) {
+        lyricsData = baseLyrics(lyricsData);
+        lyricsCache.set(key, lyricsData);
+      }
+      augmentForeignLyrics(key, lyricsData);
+    }
     sendLyricsToWindow();
     sendLyricsOffset();
   }

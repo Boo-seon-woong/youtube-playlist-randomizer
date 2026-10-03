@@ -83,12 +83,14 @@
       <label class="row select"><span>외국어 가사 (한글 가사 없을 때)</span>
         <select data-key="foreignMode">
           <option value="pron">원어 + 한글 발음</option>
-          <option value="pron+tr">원어 + 발음 + 기계 번역</option>
-          <option value="tr">원어 + 기계 번역</option>
+          <option value="pron+web">원어 + 발음 + 웹 번역</option>
+          <option value="web">원어 + 웹 번역</option>
+          <option value="pron+tr">원어 + 발음 + 내장 모델 번역</option>
+          <option value="tr">원어 + 내장 모델 번역</option>
           <option value="off">원어만</option>
         </select>
       </label>
-      <p class="hint">발음은 일본어 가사에 바로 붙습니다. 기계 번역은 무거워(메모리 약 1.7GB) 천천히 채워지고 품질이 거칩니다. 영어 가사는 둘 다 하지 않습니다.</p>
+      <p class="hint">발음은 일본어 가사에 바로 붙습니다. 웹 번역은 Bing·구글 무료 번역으로 몇 초 안에 채워지고 품질이 좋습니다. 내장 모델 번역은 인터넷 없이 되지만 무겁고(메모리 약 1.2GB) 한 줄씩 천천히 채워집니다. 영어 가사는 발음·번역 모두 하지 않습니다.</p>
       <p class="hint">단축키 — Alt+` 음소거, Alt+1/2 볼륨, Alt+3 창 표시, Alt+4 클릭 활성화/비활성화, Alt+5 맨 위로, Alt+Q/W/E 이전·재생/정지·다음 (W 누른 채 Q/E 꾹: 되감기/빨리 감기), Alt+A/D 가사 싱크 늦게/빠르게 (곡마다 저장), Alt+S 싱크 원래대로</p>
     </section>
 
