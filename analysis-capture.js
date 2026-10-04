@@ -30,7 +30,7 @@
     let ctx;
     try { ctx = new AudioContext(); } catch (e) { st.error = 'audiocontext'; return; }
     const sr = ctx.sampleRate;
-    // 원래 시간축 표본율(8000이면 ×2 보간). 게임 중(main이 __ympAnalysisSlow를 켠다)에는 16000 = 약 3배속 — 순간 부담을 절반으로
+    // 원래 시간축 표본율(8000이면 ×2 보간). 다른 프로그램(게임 등)이 앞에 있는 동안(main이 __ympAnalysisSlow를 켠다)에는 16000 = 약 3배속 — 순간 부담을 절반으로
     // (그때 음성 인식은 CPU라 이보다 빨리 받아도 쓰지 못한다). 도중에 바뀌면 main이 __ympAnalysisSetSlow를 부른다.
     let fastSilent = false; // 높은 배속에서 소리가 안 나와 내린 적이 있으면 다시 올리지 않는다
     const fastMode = () => (!fastSilent && sr / 8000 <= 6.5 ? 8000 : 16000);

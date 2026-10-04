@@ -16,15 +16,13 @@ npm start        # 내부적으로 electron . --no-sandbox
 ```bash
 npm run package:win
 # → dist/YouTube Music Player-win32-x64/YouTube Music Player.exe
-# node_modules는 지우면 안 된다 — 런타임 의존성(node-llama-cpp: 내장 번역 엔진, kuromoji: 일본어 발음 사전, koffi: 게임 감지)이 들어있다.
+# node_modules는 지우면 안 된다 — 런타임 의존성(node-llama-cpp: 내장 번역 엔진, kuromoji: 일본어 발음 사전)이 들어있다.
 # electron-packager --prune이 devDependencies를 알아서 뺀다. 다른 플랫폼 바이너리·테스트 파일만 정리:
 APP="dist/YouTube Music Player-win32-x64/resources/app/node_modules"
 find "$APP/@node-llama-cpp" -mindepth 1 -maxdepth 1 ! -name win-x64 -exec rm -rf {} +   # Windows CPU판(30MB)만 남김
 rm -rf "$APP/kuromoji/test" "$APP/kuromoji/demo"
-find "$APP/@koromix" -mindepth 1 -maxdepth 1 ! -name koffi-win32-x64 -exec rm -rf {} +   # koffi(게임 감지 FFI)도 Windows판만
 # 사전 준비(1회): node-llama-cpp의 Windows 바이너리는 리눅스 npm이 받지 않는다 —
 #   mkdir -p node_modules/@node-llama-cpp/win-x64 && curl -sL https://registry.npmjs.org/@node-llama-cpp/win-x64/-/win-x64-<버전>.tgz | tar xz -C node_modules/@node-llama-cpp/win-x64 --strip-components=1
-#   koffi도 같다: mkdir -p node_modules/@koromix/koffi-win32-x64 && curl -sL https://registry.npmjs.org/@koromix/koffi-win32-x64/-/koffi-win32-x64-<버전>.tgz | tar xz -C node_modules/@koromix/koffi-win32-x64 --strip-components=1
 # 동봉 파일(gitignore — 저장소에는 없다, 없으면 그 기능만 꺼진다):
 #   models/Hy-MT2-1.8B-IQ4_XS.gguf(986MB, 내장 번역) — https://huggingface.co/unsloth/Hy-MT2-1.8B-GGUF 의 IQ4_XS
 #   models/ggml-small-q8_0.bin(264MB, 자동 싱크 음성 인식) — https://huggingface.co/ggerganov/whisper.cpp
