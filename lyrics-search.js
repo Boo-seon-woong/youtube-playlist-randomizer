@@ -5,7 +5,7 @@ const http = require('http');
 const ALSong_ENC_DATA = '8456ec35caba5c981e705b0c5d76e4593e020ae5e3d469c75d1c6714b6b1244c0732f1f19cc32ee5123ef7de574fc8bc6d3b6bd38dd3c097f5a4a1aa1b438fea0e413baf8136d2d7d02bfcdcb2da4990df2f28675a3bd621f8234afa84fb4ee9caa8f853a5b06f884ea086fd3ed3b4c6e14f1efac5a4edbf6f6cb475445390b0';
 // main.js의 UA와 같은 값 (모듈이 main을 거꾸로 require할 수 없어 따로 둔다)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const { extractDescriptionLyrics, fetchBugsCandidates, fetchUtatenCandidates, fetchGeniusCandidates, identifySong, fetchWebLyricsCandidates } = require('./lyrics-sources');
+const { extractDescriptionLyrics, scriptOf, fetchBugsCandidates, fetchUtatenCandidates, fetchGeniusCandidates, identifySong, fetchWebLyricsCandidates } = require('./lyrics-sources');
 
 function xmlEscape(value) {
   return String(value)
@@ -284,7 +284,9 @@ function splitArtistTitle(input, channel = '') {
 // 제목 단독 검색은 여러 아티스트가 섞여 오므로 이후 rankLyricCandidates가 아티스트 일치로 골라낸다.
 function buildLyricQueries(rawTitle, rawAuthor) {
   const cleanedChannel = cleanChannelName(rawAuthor);
-  const splits = splitArtistTitle(stripTitleNoise(rawTitle), primaryArtist(cleanedChannel));
+  // 끝의 커버 표기("　Cover. LOLUET", "（cover）", "covered by X")는 곡명이 아니다 — 떼고 해석한다
+  const coverless = String(rawTitle || '').replace(/[\s\u3000]*[(（\[【]?\s*(?<![A-Za-z])(?:covered\s+by|cover(?:ed)?(?:\s+by)?|歌ってみた|カバー|커버)(?![A-Za-z])\s*[.:：]?[^)）\]】]{0,40}[)）\]】]?\s*$/i, '').trim() || String(rawTitle || '');
+  const splits = splitArtistTitle(stripTitleNoise(coverless), primaryArtist(cleanedChannel));
   // "Crazy (feat. Yina) by chomin" — 피처링 표기 뒤의 "by 가수"는 가수 표기(잡음 제거 전 원래 제목으로 판단 —
   // "Stand by Me"처럼 제목 속 by는 그대로 둔다)
   const byForm = String(rawTitle || '').match(/^(.+?)\s*[(（\[]?\s*(?:feat\.?|ft\.?)[^)）\]]*[)）\]]?\s+by\s+([^()（）\[\]【】「」]{2,40})$/i);
@@ -329,7 +331,9 @@ function buildLyricQueries(rawTitle, rawAuthor) {
   if (pairs.length === 0 && String(rawTitle || '').trim()) add(String(rawTitle).trim(), '');
   // 원어 표기가 섞여 있으면(가나) 일본 곡이다 — 동명의 한국 곡을 걸러내는 데 쓴다
   const expectJapanese = /[ぁ-んァ-ン]/.test(String(rawTitle || ''));
-  return { pairs, titles: matchTitles.length > 0 ? matchTitles : allTitles, primaryTitles, artists: [...allArtists, ...channel], expectJapanese };
+  // 커버 영상("Cover. LOLUET", "歌ってみた", "커버") — 가수 칸은 커버한 사람이라 원곡 가사와 가수가 안 맞는다
+  const cover = /\bcover(?:ed)?\b|歌ってみた|カバー|커버|불러\s*보았다/i.test(String(rawTitle || ''));
+  return { pairs, titles: matchTitles.length > 0 ? matchTitles : allTitles, primaryTitles, artists: [...allArtists, ...channel], expectJapanese, cover };
 }
 
 function hasKana(text) {
@@ -414,6 +418,8 @@ function lyricMatchScore(candidate, queries, targetDuration = 0) {
     || artistCore.length > 40 || normalizeMatch(candidate.artist) === normalizeMatch(candidate.title);
   const raw = bestTitleScore(candidate.title, queries.titles); // 정제 없이 제목 그대로의 일치도 (동점 정리용)
   let accepted = !unknownArtist && title >= 0.8 && (artist > 0 || !hasArtistQuery);
+  // 커버 영상: 제목이 정확히 같으면 원곡 가수의 가사도 받는다(곡이 맞는지는 자동 싱크의 소리 판정이 확인한다)
+  if (!accepted && queries.cover && primary === 1 && !unknownArtist && (!queries.expectJapanese || candidateIsJapanese(candidate))) accepted = true;
   if (!accepted && primary === 1 && !unknownArtist) {
     // 제목만 같고 가수가 다른 후보(동명이곡): 재생시간이 맞고, 일본 곡이면 후보도 일본 곡이어야 한다
     const canCheckDuration = targetDuration > 0 && candidate.duration > 0;
@@ -781,6 +787,7 @@ function mergeQueries(first, second, cardFirst = true) {
     primaryTitles: cardFirst ? first.primaryTitles : [...first.primaryTitles, ...second.primaryTitles],
     artists: [...first.artists, ...second.artists],
     expectJapanese: first.expectJapanese || second.expectJapanese,
+    cover: !!(first.cover || second.cover),
   };
 }
 
@@ -871,7 +878,10 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
   const desc = await withTimeout(descPromise, 1500);
   // 설명란에 "歌詞/가사/Lyrics"로 표시된 가사와 본문이 거의 안 겹치는 싱크 가사 = 다른 곡일 가능성이 높다.
   // 표시 없는 덩어리는 곡 소개 글일 수도 있어 이 판단에 쓰지 않는다(맞는 싱크 가사를 밀어낼 수 있다)
-  const conflictsWithDesc = (c) => !!desc && desc.marked && desc.lines.length >= 12 && (c.lines || []).length >= 8 && lyricOverlap(c.lines, desc.lines) < 0.1;
+  // 언어가 다르면(설명란에 한국어 번역만 있는 경우 — 실측: FOMO) 비교하지 않는다 — 번역과 원어 가사는 당연히 안 겹친다
+  const descLang = desc ? scriptOf(desc.lines.map((l) => l.text).join(' ')) : '';
+  const conflictsWithDesc = (c) => !!desc && desc.marked && desc.lines.length >= 12 && (c.lines || []).length >= 8
+    && scriptOf((c.lines || []).map((l) => String(l.text).split('\n')[0]).join(' ')) === descLang && lyricOverlap(c.lines, desc.lines) < 0.1;
   const finish = (best, others) => {
     const pool = [...others, ...(desc && best !== desc ? [desc] : [])].filter((c) => c && c !== best);
     // 같은 본문(겹침 70% 이상)의 다른 등록본은 한 번만 — 소리 검증에는 본문이 다른 후보가 쓸모 있다
@@ -915,7 +925,8 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
   const texts = [...(await withTimeout(extras(), 9000) || []), ...refs.filter((c) => c.plain)];
   const plainOut = (c) => ({ ...markLyricLanguage(c), plain: true, fallbackNotice: '싱크 없는 가사' });
   // 설명란 덩어리는 표시가 있거나, 다른 출처 본문과 겹치거나, 다른 후보가 아예 없을 때만 믿는다
-  const descOk = desc && (desc.marked || !texts.length || texts.some((o) => lyricOverlap(desc.lines, o.lines) >= 0.3));
+  const songLang = texts.length ? scriptOf(texts[0].lines.map((l) => l.text).join(' ')) : '';
+  const descOk = desc && (!songLang || songLang === descLang) && (desc.marked || !texts.length || texts.some((o) => lyricOverlap(desc.lines, o.lines) >= 0.3));
   if (descOk) return finish(plainOut(desc), texts);
   const agreed = texts.find((c) => texts.some((o) => o !== c && o.source !== c.source && lyricOverlap(c.lines, o.lines) >= 0.5));
   const firstText = agreed || texts[0];
