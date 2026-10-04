@@ -17,6 +17,7 @@ const FIRST_SPAN_MS = 10000; // 첫 창 — 목소리 시작을 빨리 찾는다
 const CUT_GUARD_MS = 1500; // 창 끝에서 이만큼 안에 끝나는 조각은 다음 창에서 다시(잘렸을 수 있다)
 const BIN = 0.1; // 채움 기록 단위(초)
 const QUIET_MS = 6000; // 이 시간 동안 새 소리가 없으면(일시정지·건너뛰기) 덜 찬 창도 처리한다
+const TAIL_SLACK_MS = 3000; // 곡 끝에서 이만큼은 소리가 비어 있어도 마지막 창을 처리한다
 const MAX_VIDEOS = 3;
 
 class SyncEngine {
@@ -125,7 +126,11 @@ class SyncEngine {
     const span = first ? FIRST_SPAN_MS : SPAN_MS;
     const last = from + span >= dur - 1500;
     const need = last ? dur - from : first ? span : span + LOOK_MS;
-    if (this.fill(v, from, from + need) >= 0.95) return { from, span: last ? dur - from : span, last, tile: first && !last };
+    // 마지막 창은 곡 끝 몇 초가 비어 있어도 처리한다 — 미리 듣기는 끝 1.5초 전에 받기를 멈추고 'ended' 순간의 마지막 버퍼도
+    // 빠져, 끝 창의 소리가 늘 모자랐다. 그러면 곡이 95~99%에서 영영 '미완'으로 남아 다시 틀 때마다 미리 듣기·인식을 처음부터
+    // 다시 했다(사용자 저장본 253곡 중 74곡 미완, 그중 다수가 95~99%). 빈 끝은 무음으로 넘어간다.
+    const needFill = last ? Math.max(1000, need - TAIL_SLACK_MS) : need;
+    if (this.fill(v, from, from + needFill) >= 0.95) return { from, span: last ? dur - from : span, last, tile: first && !last };
     // 조용해졌으면(일시정지·곡 넘김) 들어온 만큼만이라도
     if (quiet && this.fill(v, from, from + Math.min(need, 8000)) >= 0.9) {
       let b = Math.floor(from / 1000 / BIN);

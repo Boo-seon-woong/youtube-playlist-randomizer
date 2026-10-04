@@ -3044,7 +3044,7 @@ function updateTranslatedBadges() {
 // 화면 밖에 둔 작은 iframe(소리는 analysis-capture.js가 스피커로 내보내지 않는다). 화면 배치·조작에 영향 없음.
 // 예전엔 화면 안(왼쪽 위, 투명도 0.01)에 두어 5.5배속 영상 프레임마다 창 전체가 다시 합성됐다 — 화면 밖이면 합성할
 // 것이 없다(실측: 화면 밖에서도 소리 받기·5.5배속 재생 그대로).
-window.ympAnalysis.onLoad((id) => {
+window.ympAnalysis.onLoad((id, start) => {
   let f = document.getElementById('analysis-frame');
   if (!id) { if (f) f.remove(); return; }
   if (!f) {
@@ -3056,7 +3056,9 @@ window.ympAnalysis.onLoad((id) => {
     f.style.cssText = 'position:fixed;left:-10000px;top:0;width:200px;height:112px;pointer-events:none;z-index:-1;border:0';
     document.body.append(f);
   }
-  f.src = `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&rel=0&playsinline=1&ymp=analysis`;
+  // start: 저장본에서 이어 하는 곡은 이미 들은 지점부터(main이 정한다)
+  const from = Math.max(0, Math.floor(Number(start) || 0));
+  f.src = `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&rel=0&playsinline=1${from ? `&start=${from}` : ''}&ymp=analysis`;
 });
 
 // ── 가사 종류 표시: 싱크 가사/텍스트 가사 · 번역 출처 · 자동 싱크 상태를 플레이어 오른쪽 위에 작게 ──

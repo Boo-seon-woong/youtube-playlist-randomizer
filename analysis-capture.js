@@ -45,6 +45,7 @@
     const src = ctx.createMediaElementSource(v);
     const proc = ctx.createScriptProcessor(4096, 2, 1);
     let silentSince = 0;
+    let silentFrom = 0; // 무음이 시작된 영상 시각 — 재생이 실제로 나아가는데도 무음일 때만 배속을 내린다
     proc.onaudioprocess = (e) => {
       if (v.paused || st.done) return;
       const player = document.getElementById('movie_player');
@@ -53,10 +54,11 @@
       const b = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : a;
       let energy = 0;
       for (let i = 0; i < a.length; i += 8) energy += Math.abs(a[i]) + Math.abs(b[i]);
-      // 높은 배속에서 소리가 안 나오면 약 3배속으로 내린다
-      if (energy < 1e-4 && mode === 8000 && v.currentTime > 3) {
-        if (!silentSince) silentSince = performance.now();
-        else if (performance.now() - silentSince > 2000) { fastSilent = true; mode = 16000; applyRate(); silentSince = 0; }
+      // 높은 배속에서 소리가 안 나오면 약 3배속으로 내린다. 재생이 실제로 3초 이상 나아갔는데도 무음일 때만 —
+      // 곡 중간부터 받을 때(start=…) 처음 버퍼링 동안의 무음을 배속 문제로 착각하지 않게(예전 조건 'currentTime > 3'은 늘 참)
+      if (energy < 1e-4 && mode === 8000) {
+        if (!silentSince) { silentSince = performance.now(); silentFrom = v.currentTime; }
+        else if (performance.now() - silentSince > 2000 && v.currentTime - silentFrom > 3) { fastSilent = true; mode = 16000; applyRate(); silentSince = 0; }
       } else silentSince = 0;
       const up = mode === 8000 ? 2 : 1;
       const out = new Int16Array(a.length * up);

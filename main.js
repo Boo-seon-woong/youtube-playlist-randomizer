@@ -788,10 +788,20 @@ function saveLyricsToStore(vid, data, complete, force = false) {
   });
 }
 
+// 못 찾음(요청 실패가 아닌 진짜 없음)도 저장한다 — 예전엔 메모리에만 두어 앱을 켤 때마다 같은 곡을 처음부터 다시 찾았다
+// (느린 출처·웹 검색까지 곡당 수 초, 사용자 지적: "매번 가사를 탐색하는 것 같다"). 7일이 지나면 다시 찾는다(출처 DB가 늘고
+// 검색도 고쳐진다). '다시 찾기'는 저장본을 지우고 찾으므로 언제든 바로 다시 찾을 수 있다.
+const NOT_FOUND_TTL_MS = 7 * 24 * 3600 * 1000;
+
+function saveNotFound(vid) {
+  if (lyricsStore && vid) lyricsStore.put(vid, { data: { unavailable: true, notFound: true, lines: [] }, doneWindows: [], complete: false });
+}
+
 // 저장본 → 표시 (검색·인식 없이 바로)
 function loadStoredLyrics(state, key) {
   const stored = lyricsStore && state.id ? lyricsStore.get(state.id) : null;
   if (!stored || !stored.data) return null;
+  if (stored.data.notFound && !(Date.now() - Date.parse(stored.savedAt || '') < NOT_FOUND_TTL_MS)) return null;
   const data = { ...stored.data, fromStore: true, augmentCache: stored.augment || null };
   syncMeta.delete(state.id);
   const meta = {
@@ -859,7 +869,10 @@ function startNextAnalysis() {
   analysis.queue = analysis.queue.filter((v) => v !== vid && analysisEligible(v));
   if (!vid) return;
   Object.assign(analysis, { vid, startedAt: Date.now(), lastProgressAt: Date.now(), lastT: 0, injected: false });
-  mainWindow.webContents.send('analysis:load', vid);
+  // 이미 들은 데까지(저장본의 확정 지점) 건너뛰어 받는다 — 예전엔 끝 몇 초만 남은 곡도 처음부터 다시 받았다
+  const ev = syncEngine.videos.get(vid);
+  const startSec = ev && ev.at > 5000 ? Math.floor(ev.at / 1000) - 2 : 0;
+  mainWindow.webContents.send('analysis:load', vid, startSec);
   clearInterval(analysis.timer);
   analysis.timer = setInterval(pollAnalysis, 1000);
   updateCapture();
@@ -1030,6 +1043,7 @@ async function prefetchLyrics(info) {
     const { data, transient } = await searchLyricsShared(state, key);
     if (!transient && !lyricsCache.has(key)) {
       lyricsCache.set(key, data || { unavailable: true, lines: [] });
+      if (!data) saveNotFound(state.id);
       // 발음·웹 번역도 미리 붙여 둔다(곡이 시작되면 바로 보이게). 내장 모델 번역은 지금 곡의 번역을 취소시키므로 미리 하지 않는다
       const plan = foreignPlan(data);
       if (plan && !plan.tr) augmentForeignLyrics(key, data);
@@ -1085,6 +1099,7 @@ async function loadLyricsForState(state, key) {
       return;
     }
     lyricsRetries.delete(key);
+    if (!data) saveNotFound(state.id);
     // 텍스트 가사는 1차(대략) 싱크로 바로 띄우고, 자동 싱크 대상으로 등록한다
     const displayData = data ? (key === lyricsKey ? activateLyrics(key, data, { reset: true }) : prepareLyrics(data, state.duration)) : { unavailable: true, lines: [] };
     lyricsCache.set(key, displayData);
