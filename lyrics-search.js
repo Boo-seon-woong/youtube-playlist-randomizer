@@ -802,7 +802,8 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
   for (const alt of opts.alt || []) {
     if (alt && alt.title) videoQueries = mergeQueries(videoQueries, buildLyricQueries(alt.title, alt.artist), false);
   }
-  const card = await withTimeout(opts.musicInfo, 1500); // 카드는 보통 0.2~0.4초 — 늦으면 영상 제목만으로 간다
+  let card = await withTimeout(opts.musicInfo, 1500); // 카드는 보통 0.2~0.4초 — 늦으면 영상 제목만으로 간다
+  if (!card || !card.title) card = cardFromDescription(await withTimeout(opts.description, 300)) || card;
   const queries = card && card.title ? mergeQueries(buildCardQueries(card), videoQueries) : videoQueries;
 
   const kanaRe = /[\u3040-\u30ff]/;
@@ -886,6 +887,18 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
   const firstText = agreed || texts[0];
   if (firstText) return finish(plainOut(firstText), texts.filter((c) => c !== firstText));
   return finish(null, []);
+}
+
+// 음원 자동 생성 영상(…- Topic)의 저작권 설명: "Provided to YouTube by 유통사\n\n곡명 · 가수 · 가수2\n\n앨범…" —
+// 음악 카드가 없을 때 이 줄을 카드처럼 쓴다(곡명·가수가 정확히 적혀 있다)
+function cardFromDescription(desc) {
+  const lines = String(desc || '').split(/\r?\n/).map((l) => l.trim());
+  const at = lines.findIndex((l) => /^Provided to YouTube by /i.test(l));
+  if (at < 0) return null;
+  const line = lines.slice(at + 1).find((l) => l);
+  if (!line || !line.includes(' · ')) return null;
+  const [title, ...artists] = line.split(' · ').map((x) => x.trim()).filter(Boolean);
+  return title && artists.length ? { title, artist: artists.join(', ') } : null;
 }
 
 // 예전 호출 방식(가사 하나) — 측정 하네스 등

@@ -134,3 +134,18 @@
 - 저장소: userData/lyrics-store/<videoId>.json + index.json(로컬 재생목록 listId → videoId 목록, 전체 수집이 끝났을 때만
   갱신) → 어느 로컬 재생목록에도 없는 곡의 가사는 지운다.
 - 측정 자료: /root/asrtest (capture.js 소리 수집, align.js 정렬, truth/ 정답 싱크, whisper.cpp 빌드·모델).
+
+### 진행 결과 (2026-10-04 밤, 자율 작업)
+- 가능성 검토 → 구현 완료. 실측 근거·설계는 ARCHITECTURE.md "텍스트 가사 + 자동 싱크 + 가사 저장소" 절.
+- 커밋: 4cc32b8(본체) → 66bb27c(정렬 보강, v1.34.0) → 3d62313 → (설명란 저작권 카드). 설치본 v1.34.0 배포(12:5x),
+  사용자가 12:53에 앱을 다시 켜 실사용 중 — 사용자 프로필 저장본 실측: GUNUNU(설명란 텍스트 가사) 자동 싱크 완료
+  match 71%, 騙シ愛 알송 +1.19초 자동 보정, 설정 이전(pron+web, autoSync) 정상.
+- 앱 실측(WSLg 격리 프로필 cfg2): CLAN QUEEN NetEase 싱크 소리 확인(match 72~80%), 千鳥(직접 재생 웹뷰) 알송 +1.44초 보정,
+  퇴폐적 인생 찬가(LRCLIB 텍스트) 대략 → 정밀 → 완료, 다른 가사 선택 시 들은 글자로 2.5초 만에 재정렬, 저장본 재생 0.2~0.4초,
+  재생목록 삭제 시 가사 9개 정리, 가사 삭제·다시 찾기 동작. Windows: 패키지 whisper-cli.exe 실행(30초 창 24초, 2스레드).
+- 측정 자료: /root/asrtest (capture.js·sim.js·engine-test.js·realign.js·find-test.js, audio/ 녹음 4곡, truth/ 정답 싱크).
+
+### 남은 일
+1. 재생목록 536곡 가사 검색 결과를 직접 읽고 판정(이전부터 남은 일) — 이제 텍스트 가사·소리 판정까지 포함해 다시.
+2. 보컬로이드/UTAU 곡은 음성 인식이 약하다(±1초 54%) — 보컬 분리나 더 큰 모델은 CPU 때문에 보류.
+3. 사용자 확인 후 main 병합·GitHub 릴리스.
