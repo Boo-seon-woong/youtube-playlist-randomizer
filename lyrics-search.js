@@ -5,7 +5,7 @@ const http = require('http');
 const ALSong_ENC_DATA = '8456ec35caba5c981e705b0c5d76e4593e020ae5e3d469c75d1c6714b6b1244c0732f1f19cc32ee5123ef7de574fc8bc6d3b6bd38dd3c097f5a4a1aa1b438fea0e413baf8136d2d7d02bfcdcb2da4990df2f28675a3bd621f8234afa84fb4ee9caa8f853a5b06f884ea086fd3ed3b4c6e14f1efac5a4edbf6f6cb475445390b0';
 // main.js의 UA와 같은 값 (모듈이 main을 거꾸로 require할 수 없어 따로 둔다)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const { extractDescriptionLyrics, fetchBugsCandidates, fetchUtatenCandidates, fetchGeniusCandidates } = require('./lyrics-sources');
+const { extractDescriptionLyrics, fetchBugsCandidates, fetchUtatenCandidates, fetchGeniusCandidates, identifySong, fetchWebLyricsCandidates } = require('./lyrics-sources');
 
 function xmlEscape(value) {
   return String(value)
@@ -43,14 +43,16 @@ function xmlText(xml, tag) {
 // 창에서는 첫 줄을 원문(크게), 나머지를 발음/번역(작게)으로 그린다.
 function parseLrc(text) {
   const entries = [];
-  const timeRe = /\[(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\]/g;
+  // [mm:ss.xx]와 함께 [mm:ss:xx](NetEase 일부 등록본 — 소수점 대신 콜론)도 받는다(예전엔 본문 가사로 잘못 분류)
+  const timeRe = /\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
   for (const raw of String(text || '').split(/\r?\n/)) {
     const matches = [...raw.matchAll(timeRe)];
-    const lyricText = raw.replace(/\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]/g, '').trim();
+    const lyricText = raw.replace(/\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g, '').trim();
     if (!lyricText) continue;
     for (const match of matches) {
+      const frac = match[3] ? Number(`0.${match[3]}`) : 0;
       entries.push({
-        time: (Number(match[1]) * 60 + Number(match[2])) * 1000,
+        time: Math.round((Number(match[1]) * 60 + Number(match[2]) + frac) * 1000),
         text: lyricText,
       });
     }
@@ -283,6 +285,10 @@ function splitArtistTitle(input, channel = '') {
 function buildLyricQueries(rawTitle, rawAuthor) {
   const cleanedChannel = cleanChannelName(rawAuthor);
   const splits = splitArtistTitle(stripTitleNoise(rawTitle), primaryArtist(cleanedChannel));
+  // "Crazy (feat. Yina) by chomin" — 피처링 표기 뒤의 "by 가수"는 가수 표기(잡음 제거 전 원래 제목으로 판단 —
+  // "Stand by Me"처럼 제목 속 by는 그대로 둔다)
+  const byForm = String(rawTitle || '').match(/^(.+?)\s*[(（\[]?\s*(?:feat\.?|ft\.?)[^)）\]]*[)）\]]?\s+by\s+([^()（）\[\]【】「」]{2,40})$/i);
+  if (byForm && byForm[1].trim()) splits.unshift({ title: byForm[1].trim(), artist: byForm[2].trim(), labels: [] });
   const channel = nameVariants(primaryArtist(cleanedChannel));
   const pairs = [];
   const seen = new Set();
@@ -401,8 +407,11 @@ function lyricMatchScore(candidate, queries, targetDuration = 0) {
   const artist = bestMatchScore(candidate.artist, queries.artists);
   const hasArtistQuery = (queries.artists || []).length > 0;
   // 가수 칸에 영상 제목을 통째로 넣은 쓰레기 항목(제목과 같거나 비정상적으로 김)도 '가수 미상'으로 본다
+  // 길이 판정은 괄호 병기·피처링을 뗀 핵심 이름으로(Genius·NetEase의 "東京真中 (Tokyo Manaka) (Ft. 重音テト (Kasane Teto))" 같은
+  // 정상 표기가 40자를 넘어 걸리던 문제) — 쓰레기 항목은 괄호를 떼도 길거나 제목과 같다
+  const artistCore = stripFeat(String(candidate.artist || '').replace(/[\(\[（【［][^()\[\]（）【】［］]*[\)\]）】］]/g, ' ')).trim();
   const unknownArtist = !candidate.artist || /알\s*수\s*없음|unknown/i.test(candidate.artist)
-    || String(candidate.artist).length > 40 || normalizeMatch(candidate.artist) === normalizeMatch(candidate.title);
+    || artistCore.length > 40 || normalizeMatch(candidate.artist) === normalizeMatch(candidate.title);
   const raw = bestTitleScore(candidate.title, queries.titles); // 정제 없이 제목 그대로의 일치도 (동점 정리용)
   let accepted = !unknownArtist && title >= 0.8 && (artist > 0 || !hasArtistQuery);
   if (!accepted && primary === 1 && !unknownArtist) {
@@ -553,7 +562,7 @@ function lyricCandidate(source, data) {
 function parsePlainLyrics(text) {
   return String(text || '')
     .split(/\r?\n/)
-    .map((line) => line.replace(/\[\d{1,3}:\d{2}(?:\.\d{1,3})?\]/g, '').trim())
+    .map((line) => line.replace(/\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\]/g, '').trim())
     .filter((line) => line && !/^(?:作词|作曲|编曲|作詞|作曲|編曲|lyrics?|composer|arranger)\s*[:：]/i.test(line))
     .map((text) => ({ time: 0, text }));
 }
@@ -812,7 +821,16 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
   }
   let card = await withTimeout(opts.musicInfo, 1500); // 카드는 보통 0.2~0.4초 — 늦으면 영상 제목만으로 간다
   if (!card || !card.title) card = cardFromDescription(await withTimeout(opts.description, 300)) || card;
-  const queries = card && card.title ? mergeQueries(buildCardQueries(card), videoQueries) : videoQueries;
+  let queries = card && card.title ? mergeQueries(buildCardQueries(card), videoQueries) : videoQueries;
+  // 1단계 — 곡 정보 확인(iTunes): 원어 곡명·가수("ポッペンキュート / 東京真中")를 찾아 모든 출처의 검색어 앞쪽에 넣는다
+  const identities = (await withTimeout(identifySong(queries, targetDuration), 1500)) || [];
+  for (const id of identities) {
+    const idq = buildCardQueries(id);
+    const merged = mergeQueries(queries, idq, false);
+    // 원어 곡명 조합을 둘째 자리로 — 출처마다 앞쪽 몇 조합만 검색하므로 뒤에 붙이면 잘린다
+    merged.pairs = [queries.pairs[0], ...idq.pairs.slice(0, 2), ...merged.pairs.slice(1)].filter((p, i, arr) => p && arr.findIndex((x) => x && x.title === p.title && x.artist === p.artist) === i);
+    queries = merged;
+  }
 
   const kanaRe = /[\u3040-\u30ff]/;
   // 일본 곡에 가나 없는 가사(한글 발음 표기·로마자)는 그 곡의 "가사 원문"이 아니다
@@ -826,11 +844,19 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
     .then((d) => (d && d.lines.length >= 8 ? { ...lyricCandidate('desc', { id: opts.videoId || '', title: (card && card.title) || queries.titles[0] || title, artist: (card && card.artist) || queries.artists[0] || artist, lines: d.lines }), plain: true, marked: !!d.marked } : null))
     .catch(() => null);
   // 텍스트 가사 출처(utaten·Genius)는 느려서(2~5초) 백그라운드 — 싱크 가사를 못 찾았을 때만 기다린다
-  const extras = Promise.all([
+  // 느린 텍스트 가사 출처(utaten·Genius·웹 검색)는 필요할 때만 — 싱크 가사가 없거나, 소리 검증이 지금 가사를 거부했을 때.
+  // 곡마다 미리 돌리면 곡을 빨리 넘길 때 검색 사이트가 요청을 막는다(실측: 야후 429, NetEase 빈 응답).
+  const webPairs = [...identities, ...(queries.pairs || []).slice(0, 1)];
+  let extrasPromise = null;
+  const extras = () => extrasPromise || (extrasPromise = Promise.all([
     queries.expectJapanese || !/[\uac00-\ud7a3]/.test(`${title} ${artist}`) ? fetchUtatenCandidates(queries, strictAccept).catch(() => []) : [],
     fetchGeniusCandidates(queries, strictAccept).catch(() => []),
-  ]).then((lists) => lists.flat().map(asCandidate).filter(langOk));
-  extras.catch(() => {});
+    // 2단계 — 웹 검색(야후 재팬)으로 가사 사이트 페이지를 찾아 본문을 받는다
+    fetchWebLyricsCandidates(webPairs, strictAccept).catch(() => []),
+  ]).then((lists) => {
+    const all = lists.flat().map(asCandidate).filter(langOk);
+    return all.filter((c, i) => all.findIndex((o) => lyricOverlap(o.lines, c.lines) >= 0.8) === i); // 같은 본문은 한 번만
+  }).catch(() => []));
 
   // 보조 출처는 처음부터 병렬로 — 단 알송에서 ①이 먼저 나오면 결과를 쓰지 않는다
   const refsPromise = Promise.all([
@@ -886,7 +912,7 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
   if (alsongRest.length) return finish(markLyricLanguage(alsongRest[0], true), others);
 
   // ⑥ 텍스트 가사: 설명란 → 두 출처가 일치하는 본문 → 나머지(곡명·가수 모두 일치한 것만)
-  const texts = [...(await withTimeout(extras, 9000) || []), ...refs.filter((c) => c.plain)];
+  const texts = [...(await withTimeout(extras(), 9000) || []), ...refs.filter((c) => c.plain)];
   const plainOut = (c) => ({ ...markLyricLanguage(c), plain: true, fallbackNotice: '싱크 없는 가사' });
   // 설명란 덩어리는 표시가 있거나, 다른 출처 본문과 겹치거나, 다른 후보가 아예 없을 때만 믿는다
   const descOk = desc && (desc.marked || !texts.length || texts.some((o) => lyricOverlap(desc.lines, o.lines) >= 0.3));

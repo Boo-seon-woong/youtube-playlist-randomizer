@@ -11,7 +11,8 @@ const corpus = JSON.parse(fs.readFileSync(path.join(DIR, 'playlists.json'), 'utf
 const from = Number(arg('--from', 0));
 const to = Number(arg('--to', corpus.length));
 const step = Number(arg('--step', 1));
-const useCards = process.argv.includes('--cards'); // 앱과 똑같이 유튜브 음악 카드를 검색 입력으로 넘긴다 (판정에는 안 씀)
+const useV2 = process.argv.includes('--v2'); // 앱 v1.34+와 같은 경로: 카드·설명란·곡 정보 확인·웹 검색(findLyricsCandidates)
+const useCards = process.argv.includes('--cards') || useV2; // 앱과 똑같이 유튜브 음악 카드를 검색 입력으로 넘긴다 (판정에는 안 씀)
 const OUT = path.join(DIR, `result-${label}.jsonl`);
 const done = new Set(fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).i) : []);
 
@@ -32,14 +33,16 @@ async function musicCard(videoId) {
     const data = await res.json();
     const text = (x) => (x && (x.content || x.simpleText || (x.runs || []).map((r) => r.text).join(''))) || '';
     let info = null;
+    let description = '';
     (function walk(node) {
-      if (info || !node || typeof node !== 'object') return;
+      if (!node || typeof node !== 'object') return;
       if (Array.isArray(node)) return node.forEach(walk);
+      if (node.attributedDescription && !description) description = text(node.attributedDescription);
       const vm = node.videoAttributeViewModel;
-      if (vm && vm.title) { info = { title: text(vm.title) || String(vm.title), artist: text(vm.subtitle) || String(vm.subtitle || '') }; return; }
+      if (vm && vm.title && !info) info = { title: text(vm.title) || String(vm.title), artist: text(vm.subtitle) || String(vm.subtitle || '') };
       for (const v of Object.values(node)) walk(v);
     })(data);
-    return info;
+    return useV2 ? { title: info ? info.title : '', artist: info ? info.artist : '', description } : info;
   } catch { return null; }
 }
 
@@ -47,14 +50,23 @@ async function musicCard(videoId) {
   const todo = [];
   for (let i = from; i < Math.min(to, corpus.length); i += step) if (!done.has(i)) todo.push(i);
   let next = 0;
-  await Promise.all([0, 1, 2].map(async () => {
+  await Promise.all((useV2 ? [0, 1] : [0, 1, 2]).map(async () => {
     while (next < todo.length) {
       const i = todo[next++];
       const c = corpus[i];
       const t0 = Date.now();
       let r = null;
       const card = useCards ? musicCard(c.id) : null;
-      try { r = await ls.findLyricsForTrack(c.title, c.channel, c.duration * 1000, { musicInfo: card }); } catch {}
+      if (useV2) {
+        try {
+          const found = await ls.findLyricsCandidates(c.title, c.channel, c.duration * 1000, {
+            musicInfo: card.then((i) => (i && i.title ? i : null)), description: card.then((i) => (i && i.description) || ''), videoId: c.id,
+          });
+          r = found.best;
+        } catch {}
+      } else {
+        try { r = await ls.findLyricsForTrack(c.title, c.channel, c.duration * 1000, { musicInfo: card }); } catch {}
+      }
       // v1.31.0 배포본 동작 재현: 못 찾으면 음악 카드 곡명·가수로 한 번 더 (--old-fallback)
       if (!r && process.argv.includes('--old-fallback')) {
         const info = await musicCard(c.id);

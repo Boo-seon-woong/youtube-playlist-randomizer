@@ -216,6 +216,157 @@ async function geniusLyrics(url) {
   return lines.length >= 4 ? { lines: toLines(lines), plain: true } : null;
 }
 
+// ── 1단계: 곡 정보 확인 (iTunes 검색 — 무료·키 없음) ──
+// 영상 제목은 영문·로마자·한국어 표기거나 원제가 빠진 경우가 많다("Tokyo Manaka - Pop & Cute"). 일본·한국 스토어에서 찾으면
+// 원어 곡명·가수가 나온다(실측: → ポッペンキュート / 東京真中, "Yomitan Akane GUNUNU" → ぐぬぬ / 読谷あかね). 이 이름으로 모든
+// 가사 출처를 다시 찾는다. 채택: 제목·가수가 맞거나(가나는 로마자로 바꿔 비교 — ぐぬぬ ↔ GUNUNU), 1순위 결과이면서
+// 곡 길이가 영상과 3초(또는 3%) 안. 틀린 곡을 집어도 그 가사는 소리 검증(자동 싱크)에서 걸러진다.
+const KANA_ROMA = {
+  ア: 'a', イ: 'i', ウ: 'u', エ: 'e', オ: 'o', カ: 'ka', キ: 'ki', ク: 'ku', ケ: 'ke', コ: 'ko', サ: 'sa', シ: 'shi', ス: 'su', セ: 'se', ソ: 'so',
+  タ: 'ta', チ: 'chi', ツ: 'tsu', テ: 'te', ト: 'to', ナ: 'na', ニ: 'ni', ヌ: 'nu', ネ: 'ne', ノ: 'no', ハ: 'ha', ヒ: 'hi', フ: 'fu', ヘ: 'he', ホ: 'ho',
+  マ: 'ma', ミ: 'mi', ム: 'mu', メ: 'me', モ: 'mo', ヤ: 'ya', ユ: 'yu', ヨ: 'yo', ラ: 'ra', リ: 'ri', ル: 'ru', レ: 're', ロ: 'ro', ワ: 'wa', ヲ: 'o', ン: 'n',
+  ガ: 'ga', ギ: 'gi', グ: 'gu', ゲ: 'ge', ゴ: 'go', ザ: 'za', ジ: 'ji', ズ: 'zu', ゼ: 'ze', ゾ: 'zo', ダ: 'da', ヂ: 'ji', ヅ: 'zu', デ: 'de', ド: 'do',
+  バ: 'ba', ビ: 'bi', ブ: 'bu', ベ: 'be', ボ: 'bo', パ: 'pa', ピ: 'pi', プ: 'pu', ペ: 'pe', ポ: 'po', ヴ: 'vu', ァ: 'a', ィ: 'i', ゥ: 'u', ェ: 'e', ォ: 'o',
+};
+function kanaRomaji(text) {
+  const k = String(text || '').replace(/[\u3041-\u3096]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x60));
+  let out = '';
+  for (let i = 0; i < k.length; i++) {
+    const c = k[i];
+    if (c === 'ッ') { const nx = KANA_ROMA[k[i + 1]]; if (nx) out += nx[0]; continue; }
+    if (c === 'ー') { const m = out.match(/[aeiou]$/); if (m) out += m[0]; continue; }
+    if ('ャュョ'.includes(c)) { out = out.replace(/i$/, '') + { ャ: 'ya', ュ: 'yu', ョ: 'yo' }[c]; continue; }
+    out += KANA_ROMA[c] != null ? KANA_ROMA[c] : c;
+  }
+  return out;
+}
+const loose = (t) => String(t || '').toLowerCase().replace(/[\(\[（【].*?[\)\]）】]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+const romaLoose = (t) => loose(kanaRomaji(t)).replace(/(.)\1+/g, '$1').replace(/ou/g, 'o').replace(/uu/g, 'u');
+function nameMatches(a, b) {
+  const x = loose(a);
+  const y = loose(b);
+  if (!x || !y) return false;
+  // 포함 관계는 짧은 쪽이 긴 쪽의 60% 이상일 때만("cute" ⊂ "popcute" 같은 우연한 포함 배제 — 실측 "Cute / Koresawa")
+  const contains = (p, q) => Math.min(p.length, q.length) >= 3 && Math.min(p.length, q.length) / Math.max(p.length, q.length) >= 0.6 && (p.includes(q) || q.includes(p));
+  if (x === y || contains(x, y)) return true;
+  const rx = romaLoose(a);
+  const ry = romaLoose(b);
+  return rx.length >= 3 && (rx === ry || contains(rx, ry));
+}
+
+async function itunesSearch(term, country) {
+  const data = JSON.parse(await fetchText(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&country=${country}&limit=5`, {}, 5000));
+  return (data.results || []).map((r) => ({ title: r.trackName || '', artist: r.artistName || '', duration: Number(r.trackTimeMillis) || 0 }));
+}
+
+// queries: buildLyricQueries 결과, durationMs: 영상 길이. 반환: [{title, artist}] (최대 3)
+// iTunes 검색은 분당 약 20회 제한 — 곡마다 2회(검색어 1개 × 스토어 2곳)만, 같은 곡은 한 번만(실행 중 캐시)
+const identityCache = new Map();
+function identifySong(queries, durationMs) {
+  const key = `${(queries.pairs || [])[0] ? `${queries.pairs[0].title}\u0000${queries.pairs[0].artist}` : ''}|${Math.round((durationMs || 0) / 5000)}`;
+  if (!identityCache.has(key)) {
+    const p = identifySongUncached(queries, durationMs).catch(() => []);
+    identityCache.set(key, p);
+    if (identityCache.size > 500) identityCache.delete(identityCache.keys().next().value);
+  }
+  return identityCache.get(key);
+}
+
+async function identifySongUncached(queries, durationMs) {
+  const titles = queries.titles || [];
+  const artists = queries.artists || [];
+  const korean = [...titles, ...artists].some((t) => /[\uac00-\ud7a3]/.test(t));
+  const countries = korean ? ['KR', 'JP'] : ['JP', 'US'];
+  const terms = [...new Set((queries.pairs || []).slice(0, 1).map((p) => `${p.title} ${p.artist || ''}`.trim()))];
+  const found = [];
+  await Promise.all(countries.flatMap((country) => terms.map(async (term) => {
+    let list = [];
+    try { list = await itunesSearch(term, country); } catch { return; }
+    list.forEach((r, rank) => {
+      if (/instrumental|off vocal|karaoke|カラオケ|inst\.?\)/i.test(r.title)) return;
+      const titleOk = titles.some((t) => nameMatches(r.title, t));
+      const artistOk = artists.some((a) => nameMatches(r.artist, a));
+      const durOk = durationMs > 0 && r.duration > 0 && Math.abs(r.duration - durationMs) <= Math.max(3000, durationMs * 0.03);
+      // 1순위 결과의 제목 일치(로마자로 같은 것 포함 — ぐぬぬ ↔ GUNUNU)는 그 자체로 강한 증거
+      if (titleOk && (artistOk || durOk)) found.push({ ...r, strong: true, score: 2 + (artistOk ? 2 : 0) + (durOk ? 1 : 0) });
+      else if (titleOk && rank === 0) found.push({ ...r, strong: false, titleOnly: true, score: 1 });
+      // 제목이 안 맞고 가수·길이만 맞는 결과는 약하다 — 같은 가수의 비슷한 길이 다른 곡일 수 있다(실측: 人生パッパラパー →
+      // "Dopamine Loop"). 제목이 맞는 결과와 길이가 같은(같은 음원의 다른 나라 표기 — Pop & Cute ↔ ポッペンキュート,
+      // 둘 다 152.75초) 경우에만 쓴다.
+      else if (artistOk && durOk) found.push({ ...r, strong: false, score: 2 });
+    });
+  })));
+  let strong = found.filter((r) => r.strong).sort((a, b) => b.score - a.score);
+  // 제목만 맞은 1순위 결과는 다른 근거가 하나도 없을 때만(같은 제목의 다른 가수 곡이 섞이지 않게 — 실측 "Gununu / Kōya Ogata")
+  if (!strong.length) strong = found.filter((r) => r.titleOnly).slice(0, 1);
+  const localized = found.filter((r) => !r.strong && !r.titleOnly && strong.some((x) => x.duration > 0 && Math.abs(x.duration - r.duration) <= 1500));
+  const out = [];
+  // 제목이 확인된 것 중 최고 1개 + 같은 음원의 다른 표기(원어명) + 나머지 순 — 최대 3개
+  for (const r of [...strong.slice(0, 1), ...localized, ...strong.slice(1)]) {
+    if (out.length >= 3) break;
+    if (!out.some((o) => loose(o.title) === loose(r.title) && loose(o.artist) === loose(r.artist))) out.push({ title: r.title, artist: r.artist });
+  }
+  return out;
+}
+
+// ── 2단계: 웹 검색(야후 재팬) → 가사 사이트 페이지에서 본문 ──
+// 정확한 곡 정보로 검색하면 일본 가사 사이트가 바로 나온다(실측: ポッペンキュート 東京真中 歌詞 → utaten·Genius·uta5·atwiki).
+// 본문을 뽑을 수 있는 곳만 쓴다: utaten, Genius, uta5(atwiki·miraheze는 봇 확인으로 403, petitlyrics는 스크립트로 불러옴).
+// 구글·빙 직접 검색은 봇 판정으로 엉뚱한 결과(빙: 목걸이 줄)를 줘서 쓰지 않는다.
+async function yahooSearch(q) {
+  const html = await fetchText(`https://search.yahoo.co.jp/search?p=${encodeURIComponent(q)}`, { 'Accept-Language': 'ja' }, 6000);
+  const urls = [];
+  for (const m of html.matchAll(/<a[^>]+href="(https?:\/\/(?:utaten\.com\/lyric\/[^"]+|genius\.com\/[^"]+-lyrics|www\.uta5\.com\/kasi\/\d+))"/g)) {
+    const u = decodeHtml(m[1]);
+    if (!urls.includes(u)) urls.push(u);
+  }
+  return urls.slice(0, 5);
+}
+
+async function uta5Lyrics(url) {
+  const html = await fetchText(url);
+  const at = html.search(/<div[^>]*class="[^"]*uta5-lyrics-main[^"]*"/);
+  if (at < 0) return null;
+  const title = decodeHtml((html.match(/<title>([^<]*)<\/title>/) || [])[1] || '');
+  const lines = toLines(htmlToLines(sliceDiv(html, at).inner));
+  const tm = title.match(/^(.+?)\s*[–-]\s*(.+?)\s*歌詞/);
+  return lines.length >= 4 ? { lines, plain: true, title: tm ? tm[2] : '', artist: tm ? tm[1] : '' } : null;
+}
+
+// pairs: [{title, artist}] (확인된 원어 곡명 우선). accept({title, artist}) — 제목·가수 판정
+async function fetchWebLyricsCandidates(pairs, accept) {
+  const out = [];
+  const seen = new Set();
+  for (const p of pairs.slice(0, 2)) {
+    let urls = [];
+    try { urls = await yahooSearch(`${p.title} ${p.artist || ''} 歌詞`.trim()); } catch { continue; }
+    for (const url of urls) {
+      if (out.length >= 3 || seen.has(url)) continue;
+      seen.add(url);
+      let body = null;
+      try {
+        if (url.includes('utaten.com')) {
+          const id = (url.match(/lyric\/([^/]+)/) || [])[1];
+          const html = await fetchText(url);
+          const t = (html.match(/<title>([^<]*)<\/title>/) || [])[1] || '';
+          const m = decodeHtml(t).match(/^(.+?)\s*歌詞\s*(.+?)\s*(?:ふりがな付|\||-)/);
+          body = await utatenLyrics(id);
+          if (body) Object.assign(body, { title: m ? m[1] : p.title, artist: m ? m[2] : p.artist });
+        } else if (url.includes('genius.com')) {
+          body = await geniusLyrics(url);
+          if (body) Object.assign(body, { title: p.title, artist: p.artist });
+        } else {
+          body = await uta5Lyrics(url);
+        }
+      } catch {}
+      if (!body || !accept({ title: body.title || p.title, artist: body.artist || p.artist })) continue;
+      out.push({ source: url.includes('utaten') ? 'utaten' : url.includes('genius') ? 'genius' : 'uta5', id: url, title: body.title || p.title, artist: body.artist || p.artist, duration: 0, lines: body.lines, plain: true });
+    }
+    if (out.length) break;
+  }
+  return out;
+}
+
 // 공통: 검색어 쌍(제목×가수)으로 출처를 훑어 후보를 모은다. accept(hit)으로 제목·가수가 맞는 항목만 가사까지 받는다.
 async function collect(source, queries, search, lyrics, accept, maxFetch = 2) {
   const out = [];
@@ -244,6 +395,9 @@ const fetchGeniusCandidates = (queries, accept) => collect('genius', queries,
   (p) => geniusSearch(`${p.title} ${p.artist || ''}`.trim()), (hit) => geniusLyrics(hit.url), accept);
 
 module.exports = {
+  identifySong,
+  fetchWebLyricsCandidates,
+  nameMatches,
   extractDescriptionLyrics,
   scriptOf,
   fetchBugsCandidates,

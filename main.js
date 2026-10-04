@@ -700,7 +700,7 @@ function applySyncResult(vid, r) {
   // 지금 가사가 소리와 안 맞으면 느린 출처(utaten·Genius) 후보까지 더해 다시 맞춰 본다
   if (r.results[chosen].verdict === 'mismatch' && !meta.extrasMerged && meta.extras) {
     meta.extrasMerged = true;
-    Promise.resolve(meta.extras).then((list) => {
+    Promise.resolve(typeof meta.extras === 'function' ? meta.extras() : meta.extras).then((list) => {
       const fresh = (list || []).map(candidateOf).filter((c) => !meta.candidates.some((x) => sameBody(x, c)));
       if (fresh.length && syncMeta.get(vid) === meta) { meta.candidates.push(...fresh); syncEngine.setCandidates(vid, meta.candidates); }
     }).catch(() => {});
