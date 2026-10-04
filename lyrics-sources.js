@@ -49,6 +49,7 @@ const MARK_RE = /^[\s\-=―ー─━~〜*＊・(（【［\[]*(?:日本語|英語
 function lyricLike(line) {
   if (!line) return false;
   if (line.length > 70) return false;
+  if ((line.match(/[、,，]/g) || []).length >= 3) return false; // 나열(배급처·출연진 목록 — 실측: 애니 OP 설명란)
   if (NOISE_RE.test(line) || CREDIT_RE.test(line)) return false;
   if (/^[\s\-=―ー─━~〜*＊・_.。]+$/.test(line)) return false; // 구분선
   return true;
@@ -103,6 +104,12 @@ function extractDescriptionLyrics(desc, hint = {}) {
       if (avg > 45) score -= 20; // 설명 문단
       if (hint.lang && lang && lang !== hint.lang) score -= 100; // 다른 언어(번역 블록 등)
       return { ...b, lang, score };
+    })
+    .map((b, _i, all) => {
+      // 언어를 모를 때: 일본어 덩어리와 한국어 덩어리가 함께 있으면 한국어 쪽은 번역·발음 표기(한국 팬 자막 영상 — 실측: Doomer,
+      // 25時、ナイトコードで。)로 보고 일본어(원문)를 고른다
+      if (!hint.lang && b.lang === 'ko' && all.some((o) => o.lang === 'ja' && o.lines.length >= 8)) return { ...b, score: b.score - 100 };
+      return b;
     })
     .filter((b) => b.score > 0)
     .sort((a, b) => b.score - a.score);
@@ -254,6 +261,11 @@ function nameMatches(a, b) {
   return rx.length >= 3 && (rx === ry || contains(rx, ry));
 }
 
+async function itunesSearchMany(term, country) {
+  const data = JSON.parse(await fetchText(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&attribute=artistTerm&country=${country}&limit=50`, {}, 6000));
+  return (data.results || []).map((r) => ({ title: r.trackName || '', artist: r.artistName || '', duration: Number(r.trackTimeMillis) || 0 }));
+}
+
 async function itunesSearch(term, country) {
   const data = JSON.parse(await fetchText(`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&entity=song&country=${country}&limit=5`, {}, 5000));
   return (data.results || []).map((r) => ({ title: r.trackName || '', artist: r.artistName || '', duration: Number(r.trackTimeMillis) || 0 }));
@@ -296,6 +308,19 @@ async function identifySongUncached(queries, durationMs) {
       else if (artistOk && durOk) found.push({ ...r, strong: false, score: 2 });
     });
   })));
+  // 제목이 한국어 음역(팬픽션 = ファンフィクション)이라 아무 것도 못 찾았을 때: 채널(원곡 가수)의 곡 목록에서 길이가 맞는
+  // 곡이 딱 하나면 그것 — 틀려도 자동 싱크의 소리 판정이 걸러 낸다
+  if (!found.some((r) => r.strong) && durationMs > 0) {
+    for (const a of artists.slice(0, 2)) {
+      let list = [];
+      try { list = (await itunesSearch(a, korean ? 'KR' : 'JP')).concat(); } catch { continue; }
+      try { list = list.concat(await itunesSearchMany(a, korean ? 'KR' : 'JP')); } catch {}
+      const near = list.filter((r) => nameMatches(r.artist, a) && r.duration > 0 && Math.abs(r.duration - durationMs) <= 2500
+        && !/instrumental|off vocal|karaoke|カラオケ/i.test(r.title));
+      const uniq = near.filter((r, i) => near.findIndex((o) => loose(o.title) === loose(r.title)) === i);
+      if (uniq.length === 1) { found.push({ ...uniq[0], strong: true, score: 1 }); break; }
+    }
+  }
   let strong = found.filter((r) => r.strong).sort((a, b) => b.score - a.score);
   // 제목만 맞은 1순위 결과는 다른 근거가 하나도 없을 때만(같은 제목의 다른 가수 곡이 섞이지 않게 — 실측 "Gununu / Kōya Ogata")
   if (!strong.length) strong = found.filter((r) => r.titleOnly).slice(0, 1);

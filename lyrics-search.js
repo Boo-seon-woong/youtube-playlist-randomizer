@@ -222,6 +222,11 @@ function splitArtistTitle(input, channel = '') {
   const withLabel = (split) => ({ ...split, artist: split.artist || labels[0] || '', labels });
   // "가사 한 줄" 제목 [아티스트 앨범] 처럼 맨 앞의 따옴표 구절은 인용문이므로 버린다
   text = text.replace(/^['‘“"][^'’”"]{6,}['’”"]\s+(?=\S)/, '').trim();
+  // 애니 OP/ED 영상: "テレビアニメ『작품』OPムービー｜「곡명」가수" — 마지막 「」이 곡명, 그 뒤가 가수
+  const tie = /(?:OP|ED|オープニング|エンディング|主題歌|テーマ|挿入歌)/i.test(text) && text.match(/[「『]([^」』]+)[」』]\s*([^「『|｜]{1,40})?\s*$/);
+  if (tie && tie[1].trim() && (text.match(/[「『]/g) || []).length >= 2) {
+    return [withLabel({ title: tie[1].trim(), artist: (tie[2] || '').trim(), titleOnly: true })];
+  }
   const quoted = text.match(/^(.*?)(?:^|\s)['‘“"]([^'’”"]+)['’”"](?=\s|$)/)
     || text.match(/^(.*?)[「『《]([^」』》]+)[」』》]/);
   if (quoted && quoted[2].trim() && quoted[1].trim()) {
