@@ -634,7 +634,13 @@ function activateLyrics(key, data, opts = {}) {
       candidates, chosen: 0, userSelected: !!opts.userSelected, extras: alt.extras || null, extrasMerged: !alt.extras,
       doneWindows: (meta && meta.doneWindows) || opts.doneWindows || [], complete: !!opts.complete, fromStore: !!opts.fromStore, lastSaveAt: 0,
     };
+    syncMeta.delete(vid);
     syncMeta.set(vid, meta);
+    // 오래 틀어 두면 곡마다 쌓이므로 최근 200곡만 (Map은 넣은 순서 — 지금 곡·엔진이 붙잡은 곡은 남긴다)
+    for (const old of syncMeta.keys()) {
+      if (syncMeta.size <= 200) break;
+      if (old !== vid && !syncEngine.videos.has(old)) syncMeta.delete(old);
+    }
     if (!opts.fromStore) saveLyricsToStore(vid, prepared, false, true);
   }
   if (lyricsSettings.autoSync && asrReady && !meta.complete) {

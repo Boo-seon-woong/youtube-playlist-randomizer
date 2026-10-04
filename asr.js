@@ -62,10 +62,14 @@ function parseWhisperJson(json, offsetMs = 0) {
 // whisper의 되풀이 환각: 한 창 안에서 앞 조각과 똑같은 긴 조각(8글자 이상)이 다시 나오는 것(실측: 0~6초의 두 줄이
 // 13~18초에 그대로 다시 찍힘 — 정렬이 뒤의 복사본에 붙어 줄 시각이 13초 밀렸다). 진짜 반복 가사("抜け出せない
 // 抜け出せない")는 대개 한 조각에 함께 들어오므로, 바로 앞이 아닌 앞 조각과 같은 긴 조각만 버린다.
+// 괄호로만 된 짧은 조각("(音楽)", "(エンディング)", "[拍手]")은 whisper가 소리가 아닌 것에 붙이는 설명이라 버린다
+// (실측: 보컬을 못 알아들은 UTAU 곡 창이 "(ダクトリーメイテブリー)"·"(エンディング)"만 남겼다)
 function dropRepeats(segs) {
   const norm = (t) => t.replace(/[\s\p{P}\p{S}]/gu, '');
   const out = [];
   for (const seg of segs) {
+    const bare = seg.text.trim();
+    if (bare.length <= 20 && /^(?:[(\[（【［].*[)\]）】］]|[♪♫\s]+)$/.test(bare)) continue;
     const key = norm(seg.text);
     const earlier = out.slice(0, -1).some((o) => norm(o.text) === key);
     if (key.length >= 8 && earlier) continue;

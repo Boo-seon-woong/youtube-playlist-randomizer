@@ -43,7 +43,8 @@ const toLines = (texts) => texts.filter(Boolean).map((text) => ({ time: 0, text 
 // 있으면 그 뒤 덩어리를 우선한다. 노래의 문자 체계(일본어면 가나)와 다른 덩어리(영어 번역 등)는 버린다.
 const CREDIT_RE = /^(?:作詞|作曲|編曲|歌唱?|唄|vocals?|music|lyrics?|words|composer?|arrange(?:ment|r)?|mix(?:ing)?|master(?:ing)?|illust(?:ration)?|movie|video|animation|guitar|bass|drums?|piano|chorus|director|producer|edit|design|thumbnail|mv|作|曲|詞|絵|動画|映像|イラスト|ミックス|マスタリング|歌词|作词|编曲|演唱|작사|작곡|편곡|노래|보컬|영상|일러스트|믹싱|마스터링)\b.*[:：／/]/i;
 const NOISE_RE = /https?:\/\/|www\.|@\w|^#|[#＃]\S+\s*[#＃]|\.com\b|instagram|twitter|tiktok|youtube|spotify|apple\s*music|subscribe|チャンネル登録|配信|ダウンロード|ストリーミング|구독|좋아요|스트리밍|다운로드|■|▶|►|♦|◆|【.*(?:配信|公開|発売|情報).*】|copyright|©|℗|all rights reserved/i;
-const MARK_RE = /^[\s\-=―ー─━~〜*＊・]*(?:歌詞|lyrics?|가사|【歌詞】|\[lyrics?\]|lyric)[\s\-=―ー─━~〜*＊・:：]*$/i;
+// 가사 표시 줄: "歌詞", "Lyrics:", "【歌詞】", "(日本語歌詞)", "[Korean Lyrics]", "- 가사 -" 등 (괄호·언어 이름 허용)
+const MARK_RE = /^[\s\-=―ー─━~〜*＊・(（【［\[]*(?:日本語|英語|韓国語|中国語|japanese|english|korean|chinese|romaji|original|원어|일본어|한국어|영어)?\s*(?:歌詞|lyrics?|가사)[\s\-=―ー─━~〜*＊・:：)）】］\]]*$/i;
 
 function lyricLike(line) {
   if (!line) return false;
