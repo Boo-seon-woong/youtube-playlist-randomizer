@@ -16,6 +16,10 @@
 
 (() => {
   if (window.__ympAudio) return;
+  // 미리 듣기용 숨은 임베드(analysis-capture.js)는 볼륨 상한·소리 받기 대상이 아니다 — 스피커로 나가지 않고 따로 받는다
+  if (/[?&]ymp=analysis\b/.test(location.href)) return;
+  // 미리 듣기용 숨은 임베드(analysis-capture.js)는 볼륨 상한·소리 받기 대상이 아니다 — 스피커로 나가지 않고 따로 받는다
+  if (/[?&]ymp=analysis\b/.test(location.href)) return;
   const proto = window.HTMLMediaElement && HTMLMediaElement.prototype;
   if (!proto) return;
   const volumeDesc = Object.getOwnPropertyDescriptor(proto, 'volume');
