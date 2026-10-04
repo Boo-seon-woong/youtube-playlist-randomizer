@@ -200,6 +200,8 @@ function updateFsReveal(y) {
   else if (fsExitBtn.classList.contains('reveal') && y > FS_REVEAL_KEEP) setFsReveal(false);
 }
 
+let lastWatchedCursor = null;
+
 function startCursorWatch() {
   // 진입 직후엔 잠깐 보여 준다 — 해제 방법을 모른 채 갇히지 않도록 (2.5초 뒤 자동으로 올라감)
   fsExitBtn.classList.add('reveal');
@@ -209,7 +211,11 @@ function startCursorWatch() {
   cursorWatchTimer = setInterval(async () => {
     let pt = null;
     try { pt = await window.winctl.cursor(); } catch {}
-    if (pt) updateFsReveal(pt.y - window.screenY);
+    if (pt) {
+      updateFsReveal(pt.y - window.screenY);
+      if (lastWatchedCursor && (pt.x !== lastWatchedCursor.x || pt.y !== lastWatchedCursor.y)) pokeLyricsKind();
+      lastWatchedCursor = pt;
+    }
   }, 150);
 }
 
@@ -1500,6 +1506,7 @@ const lsToggleInputs = {
   showTrackInfo: document.getElementById('ls-track-info'),
   alwaysOnTop: document.getElementById('ls-topmost'),
   clickThrough: document.getElementById('ls-lock'),
+  autoSync: document.getElementById('ls-autosync'),
 };
 
 function paintLyricsSettings(next) {
@@ -3022,6 +3029,60 @@ function updateTranslatedBadges() {
   npTrBadge.title = tip;
 }
 
+// ── 가사 종류 표시: 싱크 가사/텍스트 가사 · 번역 출처 · 자동 싱크 상태를 플레이어 오른쪽 위에 작게 ──
+// 마우스를 움직일 때만 잠깐 보인다(전체화면의 ✕처럼). 플로팅 창에는 띄우지 않는다(사용자 명세).
+const lyricsKindEl = document.getElementById('lyrics-kind');
+const lkMain = document.getElementById('lk-main');
+const lkSync = document.getElementById('lk-sync');
+let lyricsKindTimer = null;
+const LYRIC_SOURCE_LABELS = { alsong: '알송', lrclib: 'LRCLIB', netease: 'NetEase', bugs: 'Bugs', utaten: 'utaten', genius: 'Genius', desc: '영상 설명란' };
+
+function lyricsKindText(d) {
+  if (!lyricsPublishedState.id) return null;
+  if (!d) return { main: '가사 찾는 중…', sync: '' };
+  if (d.unavailable) return { main: d.deleted ? '가사 삭제됨' : d.mismatch ? '소리와 맞는 가사를 찾지 못함' : '가사 없음', sync: '' };
+  const text = d.origin === 'text' || d.plain;
+  const src = LYRIC_SOURCE_LABELS[d.source] || d.source || '';
+  const firstLines = (d.baseLines || d.lines || []).map((l) => String(l.text || '').split('\n')[0]).join(' ');
+  const koreanSong = /[\uac00-\ud7a3]/.test(firstLines);
+  let tr;
+  if (d.machineTranslated) tr = d.translatedBy === 'web' ? '웹 번역' : '내장 모델 번역';
+  else if (koreanSong) tr = '한국어 가사';
+  else if (d.hasKorean) tr = '번역 포함';
+  else if (String(d.augmented || '').startsWith('pron')) tr = '번역 없음 · 발음 표기';
+  else tr = '번역 없음';
+  const s = d.sync || {};
+  const pct = Math.round((s.progress || 0) * 100);
+  let sync;
+  switch (s.kind) {
+    case 'rough': sync = lyricsSettings.autoSync ? '대략 싱크 — 소리로 맞추는 중' : '대략 싱크(같은 간격)'; break;
+    case 'auto-partial': sync = `자동 싱크 계산 중 ${pct}%`; break;
+    case 'auto': sync = s.replacedDb ? '자동 싱크 (원본 싱크가 어긋나 교체)' : '자동 싱크 완료'; break;
+    case 'db-shifted': sync = `원본 싱크 · 소리로 ${s.shiftMs > 0 ? '+' : ''}${((s.shiftMs || 0) / 1000).toFixed(1)}초 보정`; break;
+    case 'db-verified': sync = '원본 싱크 · 소리로 확인됨'; break;
+    default: sync = s.verdict === 'mismatch' ? '원본 싱크 · 소리와 다를 수 있음' : '원본 싱크';
+  }
+  if (d.fromStore) sync += ' · 저장됨';
+  return { main: `${text ? '텍스트 가사' : '싱크 가사'}${src ? ` (${src})` : ''} · ${tr}`, sync };
+}
+
+function paintLyricsKind() {
+  const t = lyricsKindText(lyricsViewData);
+  lkMain.textContent = t ? t.main : '';
+  lkSync.textContent = t ? t.sync : '';
+  lkSync.hidden = !(t && t.sync);
+  return !!t;
+}
+
+function pokeLyricsKind() {
+  if (!paintLyricsKind()) return;
+  lyricsKindEl.classList.add('show');
+  clearTimeout(lyricsKindTimer);
+  lyricsKindTimer = setTimeout(() => lyricsKindEl.classList.remove('show'), 1800);
+}
+
+document.addEventListener('mousemove', pokeLyricsKind);
+
 function setLyricsView(flag) {
   lyricsViewOn = flag;
   lyricsViewEl.hidden = !flag;
@@ -3061,6 +3122,12 @@ function closeLyricsSearch() {
 document.getElementById('lyrics-search-btn').addEventListener('click', openLyricsSearch);
 document.getElementById('lyrics-retry-btn').addEventListener('click', () => { window.lyricsOverlay.retry(); showToast('가사를 다시 찾는 중…'); });
 document.getElementById('lyrics-search-close').addEventListener('click', closeLyricsSearch);
+document.getElementById('lyrics-delete-btn').addEventListener('click', async () => {
+  let ok = false;
+  try { ok = await window.lyricsOverlay.deleteLyrics(); } catch {}
+  closeLyricsSearch();
+  showToast(ok ? '이 곡의 가사를 지웠습니다 — 다시 찾기로 다시 찾을 수 있습니다' : '지울 가사가 없습니다');
+});
 lyricsSearchBackdrop.addEventListener('click', (e) => { if (e.target === lyricsSearchBackdrop) closeLyricsSearch(); });
 document.getElementById('lyrics-search-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -3074,7 +3141,7 @@ document.getElementById('lyrics-search-form').addEventListener('submit', async (
     return;
   }
   if (!candidates || candidates.length === 0) {
-    lyricsSearchStatus.textContent = '동기화된 가사를 찾지 못했습니다.';
+    lyricsSearchStatus.textContent = '가사를 찾지 못했습니다.';
     return;
   }
   lyricsSearchStatus.textContent = `${candidates.length}개 결과 — 클릭하면 현재 곡의 가사로 적용됩니다`;
@@ -3091,7 +3158,7 @@ document.getElementById('lyrics-search-form').addEventListener('submit', async (
     main.append(title, artist);
     const source = document.createElement('span');
     source.className = 'lr-source';
-    source.textContent = `${candidate.source}${candidate.hasKorean ? ' · 한국어' : ' · 원어'}`;
+    source.textContent = `${LYRIC_SOURCE_LABELS[candidate.source] || candidate.source}${candidate.plain ? ' · 텍스트(자동 싱크)' : ' · 싱크'}${candidate.hasKorean ? ' · 한국어' : ' · 원어'}`;
     li.append(main, source);
     li.addEventListener('click', async () => {
       lyricsSearchStatus.textContent = '가사 적용 중…';
@@ -3110,6 +3177,7 @@ new ResizeObserver(() => { if (lyricsViewOn) tickLyricsView(true); }).observe(ly
 window.lyricsOverlay.onData((data) => {
   lyricsViewData = data;
   updateTranslatedBadges();
+  if (lyricsKindEl.classList.contains('show')) paintLyricsKind();
   if (lyricsViewOn) renderLyricsView();
 });
 window.lyrics.getData().then((data) => {

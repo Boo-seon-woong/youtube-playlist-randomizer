@@ -11,7 +11,8 @@
 //    필터 6개는 CPU를 거의 쓰지 않고, 재생이 멈추면 컨텍스트를 suspend해 유휴 비용도 없앤다.
 //
 // 초기 상태는 window.__ympAudioInit, 이후 갱신은 window.__ympSetAudio(state).
-// state = { cap: 0~1(앱 볼륨의 실제 진폭), eq: { enabled, gains: [6개 dB] } }
+// state = { cap: 0~1(앱 볼륨의 실제 진폭), eq: { enabled, gains: [6개 dB] }, capture?: 자동 싱크용 소리 받기 }
+// ③ 소리 받기: 아래 "소리 받아 두기" — 자동 싱크(음성 인식)가 쓸 16kHz 모노 PCM을 쌓아 둔다.
 
 (() => {
   if (window.__ympAudio) return;
@@ -113,13 +114,107 @@
   function route(el) {
     if (routed.has(el) || !ensureGraph()) return;
     try {
-      ctx.createMediaElementSource(el).connect(filters[0]);
+      const src = ctx.createMediaElementSource(el);
+      src.connect(filters[0]);
       routed.add(el);
+      if (capturing) src.connect(ensureTap());
+      sources.push(src);
       if (!el.paused) ctx.resume().catch(() => {});
     } catch {
       // 이미 다른 컨텍스트에 연결된 요소 등 — EQ만 빠지고 볼륨 상한은 그대로 유지된다
     }
   }
+
+  // ── 소리 받아 두기(자동 싱크용) ──
+  // 켜지면 요소를 위 그래프로 통과시키고(EQ가 꺼져 있으면 필터는 0dB로 그대로 통과), EQ 앞단 소리를 ScriptProcessor로
+  // 받아 16kHz 모노로 줄여 쌓는다. ScriptProcessor 출력은 0이라 소리에 섞이지 않는다. 컨텍스트는 기본 표본율 —
+  // 16kHz 컨텍스트는 실측에서 시계가 멈추고 영상까지 멈췄다. main이 몇 초마다 __ympCapTake()로 가져간다.
+  // 청크: { t: 그 순간 영상 시각(초, 청크 끝 무렵), vid: 영상 id, b64: Int16 PCM }
+  let capturing = false;
+  let tap = null;
+  const sources = [];
+  let captured = [];
+  let vidCache = { at: 0, vid: '' };
+  const OUT_RATE = 16000;
+
+  function currentVid() {
+    const now = Date.now();
+    if (now - vidCache.at < 1000) return vidCache.vid;
+    let vid = '';
+    try {
+      const p = document.getElementById('movie_player');
+      const d = p && p.getVideoData && p.getVideoData();
+      vid = (d && d.video_id) || '';
+    } catch {}
+    vidCache = { at: now, vid };
+    return vid;
+  }
+
+  function ensureTap() {
+    if (tap) return tap;
+    tap = ctx.createScriptProcessor(4096, 2, 1);
+    const ratio = ctx.sampleRate / OUT_RATE;
+    tap.onaudioprocess = (e) => {
+      if (!capturing) return;
+      let el = null;
+      for (const x of elements) if (routed.has(x) && !x.paused) { el = x; break; }
+      if (!el) return;
+      const player = document.getElementById('movie_player');
+      if (player && player.classList.contains('ad-showing')) return; // 광고 소리는 받지 않는다
+      const a = e.inputBuffer.getChannelData(0);
+      const b = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : a;
+      const n = Math.floor(a.length / ratio);
+      const out = new Int16Array(n);
+      for (let k = 0; k < n; k++) {
+        const s0 = Math.floor(k * ratio);
+        const s1 = Math.min(a.length, Math.floor((k + 1) * ratio));
+        let acc = 0;
+        for (let i = s0; i < s1; i++) acc += a[i] + b[i];
+        const v = acc / (2 * Math.max(1, s1 - s0));
+        out[k] = Math.max(-32768, Math.min(32767, Math.round(v * 32767)));
+      }
+      captured.push({ t: el.currentTime, vid: currentVid(), d: out });
+      if (captured.length > 1500) captured.splice(0, captured.length - 1500); // 안 가져가면 약 2분치만 유지
+    };
+    tap.connect(ctx.destination);
+    return tap;
+  }
+
+  function setCapture(on) {
+    capturing = !!on;
+    if (!capturing) { captured = []; return; }
+    if (!ensureGraph()) return;
+    const t = ensureTap();
+    for (const src of sources) { try { src.connect(t); } catch {} }
+    for (const el of elements) route(el);
+    for (const el of elements) if (routed.has(el) && !el.paused) { ctx.resume().catch(() => {}); break; }
+  }
+
+  // 쌓인 청크를 꺼내 간다(꺼낸 것은 비운다). 같은 영상의 이어지는 청크는 하나로 합쳐 보낸다.
+  window.__ympCapTake = () => {
+    const list = captured;
+    captured = [];
+    const merged = [];
+    for (const c of list) {
+      const last = merged[merged.length - 1];
+      const dur = c.d.length / OUT_RATE;
+      if (last && last.vid === c.vid && Math.abs(c.t - (last.t + dur)) < 0.25) { last.parts.push(c.d); last.t = c.t; continue; }
+      merged.push({ t: c.t, vid: c.vid, parts: [c.d] });
+    }
+    return {
+      rate: OUT_RATE,
+      chunks: merged.map((m) => {
+        const total = m.parts.reduce((s, p) => s + p.length, 0);
+        const all = new Int16Array(total);
+        let o = 0;
+        for (const p of m.parts) { all.set(p, o); o += p.length; }
+        const bytes = new Uint8Array(all.buffer);
+        let s = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+        return { t: m.t, vid: m.vid, b64: btoa(s) };
+      }),
+    };
+  };
 
   function applyEq() {
     if (!eq.enabled) {
@@ -153,6 +248,7 @@
     if (!state || typeof state !== 'object') return;
     if (Number.isFinite(state.cap)) cap = Math.min(1, Math.max(0, state.cap));
     if (state.eq && typeof state.eq === 'object') eq = state.eq;
+    if (typeof state.capture === 'boolean' && state.capture !== capturing) setCapture(state.capture);
     for (const el of elements) {
       if (!el.isConnected && el.paused) { elements.delete(el); continue; }
       enforce(el);

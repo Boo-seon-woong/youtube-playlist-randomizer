@@ -2612,3 +2612,55 @@ body.immersive #fs-exit-btn.reveal {
   font-size: 11px;
   color: var(--text-dim);
 }
+
+/* 가사 종류 표시 — 플레이어 오른쪽 위, 마우스를 움직일 때만 잠깐 (전체화면에선 ✕ 버튼 왼쪽) */
+#lyrics-kind {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 6;
+  max-width: min(360px, 70%);
+  padding: 5px 10px 6px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.62);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: right;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#lyrics-kind.show {
+  opacity: 1;
+  transform: none;
+}
+
+#lk-sync {
+  color: rgba(255, 255, 255, 0.66);
+}
+
+body.immersive #lyrics-kind {
+  top: 12px;
+  right: 64px;
+}
+
+#lyrics-delete-btn {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-sub);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#lyrics-delete-btn:hover {
+  color: #ff8a8a;
+  border-color: rgba(255, 138, 138, 0.5);
+}

@@ -3,7 +3,11 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { hasHangul, buildLyricQueries, resolveLyricCandidate, findLyricsForTrack, searchAllLyrics, lyricFailureCount } = require('./lyrics-search');
+const { hasHangul, buildLyricQueries, resolveLyricCandidate, findLyricsCandidates, searchAllLyrics, lyricFailureCount } = require('./lyrics-search');
+const { LyricsStore, localListIds } = require('./lyrics-store');
+const { SyncEngine } = require('./lyrics-sync');
+const asrRunner = require('./asr');
+const { evenTimes } = require('./lyrics-align');
 const { translateLines: webTranslateLines } = require('./web-translate');
 
 // WSLg의 GPU 합성 버그로 영상이 창 밖에 그려지거나 검게 나오는 문제 방지 (Windows 네이티브에서는 불필요)
@@ -137,7 +141,10 @@ const DEFAULT_LYRICS_SETTINGS = {
   // 한국어 가사가 없는 외국어 가사의 보조 줄: 'pron'(원어+한글 발음) | 'pron+web'·'web'(+웹 번역) | 'pron+tr'·'tr'(+내장 모델 번역) | 'off'(원어만)
   // 발음은 일본어만(사전 기반, 즉시). 웹 번역은 Bing/구글 무료 번역(web-translate.js, 곡당 3~6초), 내장 모델은 오프라인이지만
   // 무겁고(RAM 1.2GB) 느리다. 기본은 발음만. 영어는 발음·번역 모두 하지 않는다.
-  foreignMode: 'pron',
+  foreignMode: 'pron+web',
+  foreignModeV: 2, // 기본값을 pron → pron+web으로 바꾼 버전 표시(예전 기본값 그대로 저장된 설정만 1회 옮긴다)
+  // 자동 싱크: 싱크 없는 텍스트 가사를 재생되는 소리(음성 인식)에 맞추고, 싱크 가사도 소리로 곡이 맞는지·어긋남을 확인한다
+  autoSync: true,
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   videoFit: 'cover', // 영상 맞춤: 'cover'(상하 기준으로 채우고 좌우는 잘림) | 'contain'(전체가 보이도록)
@@ -178,7 +185,12 @@ function normalizeLyricsSettings(value) {
     showVolumeButton: boolean('showVolumeButton'),
     showLyrics: boolean('showLyrics'),
     machineTranslate: boolean('machineTranslate'),
-    foreignMode: FOREIGN_MODES.includes(source.foreignMode) ? source.foreignMode : DEFAULT_LYRICS_SETTINGS.foreignMode,
+    // 사용자가 웹 번역 품질을 확인하고 "번역 없는 가사에는 웹 번역을 더한다"로 정했다(2026-10-04) — 예전 기본값 'pron'을
+    // 그대로 갖고 있던 설정은 한 번 pron+web으로 옮긴다(직접 고른 다른 값은 그대로)
+    foreignMode: source.foreignModeV !== 2 && (source.foreignMode == null || source.foreignMode === 'pron') ? 'pron+web'
+      : FOREIGN_MODES.includes(source.foreignMode) ? source.foreignMode : DEFAULT_LYRICS_SETTINGS.foreignMode,
+    foreignModeV: 2,
+    autoSync: boolean('autoSync'),
     showTrackInfo: boolean('showTrackInfo'),
     coverMode,
     videoFit: VIDEO_FITS.includes(source.videoFit) ? source.videoFit : DEFAULT_LYRICS_SETTINGS.videoFit,
@@ -278,6 +290,8 @@ function lyricStateKey(state) {
 // 마지막 수단으로 이 곡명/아티스트로 다시 검색한다. next 응답의 videoAttributeViewModel에 실려 있다.
 const videoMusicCache = new Map();
 
+// 같은 응답에서 영상 설명란도 함께 받는다 — 설명란에 적힌 가사는 "그 곡의 가사"일 가능성이 가장 높은 텍스트 가사다.
+// 반환: { title, artist, description } (음악 카드가 없으면 title·artist는 빈 문자열)
 async function fetchVideoMusicInfo(videoId) {
   if (!videoId) return null;
   if (videoMusicCache.has(videoId)) return videoMusicCache.get(videoId);
@@ -285,13 +299,15 @@ async function fetchVideoMusicInfo(videoId) {
   try {
     const data = await innertube('next', { videoId });
     const text = (x) => (x && (x.content || x.simpleText || (x.runs || []).map((r) => r.text).join(''))) || '';
+    info = { title: '', artist: '', description: '' };
     (function walk(node) {
-      if (info || !node || typeof node !== 'object') return;
+      if (!node || typeof node !== 'object') return;
       if (Array.isArray(node)) return node.forEach(walk);
+      if (node.attributedDescription && !info.description) info.description = text(node.attributedDescription);
       const vm = node.videoAttributeViewModel;
-      if (vm && vm.title) {
-        info = { title: text(vm.title) || String(vm.title), artist: text(vm.subtitle) || String(vm.subtitle || '') };
-        return;
+      if (vm && vm.title && !info.title) {
+        info.title = text(vm.title) || String(vm.title);
+        info.artist = text(vm.subtitle) || String(vm.subtitle || '');
       }
       for (const value of Object.values(node)) walk(value);
     })(data);
@@ -337,7 +353,7 @@ function getMtWorker() {
 function scheduleMtWorkerStop() {
   clearTimeout(mtWorkerIdleTimer);
   mtWorkerIdleTimer = setTimeout(() => {
-    if (augmentInFlight.size > 0 || !mtWorker) return;
+    if (augmentInFlight.size > 0 || !mtWorker || syncEngine.busy || captureTimer) return;
     try { mtWorker.kill(); } catch {}
     mtWorker = null;
   }, 5 * 60 * 1000);
@@ -397,6 +413,7 @@ function baseLyrics(data) {
 // 설정 foreignMode: pron(원어+발음, 기본) | pron+web | web | pron+tr | tr | off. 영어(라틴 문자) 가사는 둘 다 하지 않는다.
 // 발음은 사전 기반이라 즉시 붙는다. 웹 번역은 묶음(약 400자)마다, 내장 모델 번역은 한 줄씩(줄당 1~2초) 채워진다.
 const augmentInFlight = new Set();
+let mtCacheWrites = 0;
 // 곡마다 세대 번호 — 표시 모드를 바꾸면 세대가 올라가 이전 작업은 화면을 건드리지 못하고, 진행 중 번역은 취소한다
 const augmentGen = new Map(); // key → number
 const mtJobOfKey = new Map(); // key → 진행 중인 번역 잡 id
@@ -431,9 +448,12 @@ async function augmentForeignLyrics(key, data) {
   const originals = base.lines.map((line) => String(line.text || '').split('\n')[0].trim());
   try {
     const { dir, file } = mtCachePath(base);
-    let cache = {};
-    try { cache = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {}
-    const saveCache = () => { try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(cache)); } catch {} };
+    let cache = { ...(base.augmentCache || {}) }; // 가사 저장본에 함께 저장된 발음·번역
+    try { cache = { ...cache, ...(JSON.parse(fs.readFileSync(file, 'utf8')) || {}) }; } catch {}
+    const saveCache = () => {
+      try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, JSON.stringify(cache)); } catch {}
+      if (++mtCacheWrites % 50 === 0) pruneMtCache();
+    };
     let pron = plan.pron && Array.isArray(cache.pron) && cache.pron.length === n ? cache.pron : null;
     const field = plan.web ? 'web' : 'ko'; // 웹 번역과 내장 모델 번역은 따로 캐시한다
     const translating = plan.tr || plan.web;
@@ -445,14 +465,20 @@ async function augmentForeignLyrics(key, data) {
     const publish = (final) => {
       // 그새 모드를 바꿨으면(세대가 올라감) 이 작업은 화면을 건드리지 않는다 — 끈 번역이 다시 나타나지 않게
       if ((augmentGen.get(key) || 0) !== gen || lyricsSettings.foreignMode !== plan.mode) return;
-      const lines = base.lines.map((line, i) => {
+      // 그새 자동 싱크가 시각을 바꿨으면 그 시각을 쓴다(보강이 끝날 때 옛 시각으로 되돌리지 않게)
+      const latest = lyricsCache.get(key);
+      const fresh = latest && !latest.unavailable && latest.lines && latest.lines.length === n && latest.source === base.source
+        && String(latest.id) === String(base.id) ? latest : null;
+      const baseLines = fresh ? (fresh.baseLines || fresh.lines).map((l, i) => ({ ...base.lines[i], time: l.time })) : base.lines;
+      const lines = baseLines.map((line, i) => {
         const parts = [line.text];
         if (pron && pron[i] && pron[i] !== originals[i]) parts.push(pron[i]);
         if (ko && ko[i]) parts.push(ko[i]);
         return { ...line, text: parts.join('\n') };
       });
       const next = {
-        ...base, lines, baseLines: base.lines, augmented: final ? plan.mode : `${plan.mode}…`,
+        ...base, ...(fresh ? { sync: fresh.sync, origin: fresh.origin, fromStore: fresh.fromStore, plain: fresh.plain, roughFor: fresh.roughFor } : {}),
+        lines, baseLines, augmented: final ? plan.mode : `${plan.mode}…`,
         // 한글 줄이 찾은 가사가 아니라 번역이면 가사 창·가사 보기에서 제목 옆에 '번역 결과'로 표시한다
         machineTranslated: !!(ko && ko.some(Boolean)),
         translatedBy: plan.web ? 'web' : 'model',
@@ -520,8 +546,285 @@ function reapplyForeignMode() {
   augmentForeignLyrics(lyricsKey, base);
 }
 
+// ── 텍스트 가사 · 자동 싱크 · 가사 저장소 ──
+// 흐름: 가사가 정해지면 activateLyrics() — 텍스트 가사(싱크 없음)는 곡 전체 길이에 같은 간격으로 놓은 1차(대략) 싱크로
+// 바로 띄우고, 자동 싱크가 켜져 있으면 그 곡을 SyncEngine(lyrics-sync.js)에 올린다. 임베드·직접 재생 웹뷰 안의 오디오
+// 가드(audio-guard.js)가 재생되는 소리를 16kHz로 쌓아 두면 pollCapture()가 2초마다 가져와 엔진에 넣고, 30초 창마다
+// 음성 인식(whisper, 가사 워커) → 가사 후보 정렬(lyrics-align.js) 결과가 applySyncResult()로 온다.
+// - 텍스트 가사: 들은 구간까지 정밀 싱크로 바뀌고(나머지는 대략), 다 들으면 'auto'.
+// - 싱크 가사(DB): 소리로 곡이 맞는지 확인하고, 시각이 통째로 밀려 있으면(뮤비 인트로 등) 그만큼 옮긴다.
+// - 후보가 여럿이면 소리와 맞는 쪽으로 바꾼다(다른 곡 가사는 연속 일치율 0~6%, 맞는 가사 30~85% — 실측).
+// - 게스트 로컬 재생목록 곡이면 결과를 lyrics-store에 저장 → 다음엔 검색·인식 없이 바로.
+const SYNC_CAL_MS = 250; // 정렬 시각 보정: 실측에서 정답보다 0.38초 이르게 나온다(화면은 225ms 앞서 고르므로 조금만 늦춘다)
+let lyricsStore = null;
+let asrReady = false;
+// videoId → { candidates: [보강 전 가사], chosen, userSelected, extras, extrasMerged, doneWindows, complete, fromStore, lastSaveAt }
+const syncMeta = new Map();
+
+function runWorkerJob(payload) {
+  return new Promise((resolve, reject) => {
+    const id = ++mtJobSeq;
+    mtJobs.set(id, { onLine: () => {}, resolve, reject });
+    try { getMtWorker().postMessage({ ...payload, id }); } catch (err) { mtJobs.delete(id); reject(err); }
+  }).finally(() => scheduleMtWorkerStop());
+}
+
+const syncEngine = new SyncEngine({
+  runAsr: (job) => runWorkerJob({ type: 'asr', pcm: job.pcm, lang: job.lang, offsetMs: job.offsetMs, prompt: job.prompt, threads: 2 }),
+  runAlign: (job) => runWorkerJob({ type: 'align', candidates: job.candidates.map((c) => ({ lines: c.lines })), heard: job.heard, durationMs: job.durationMs }),
+  onResult: (vid, r) => applySyncResult(vid, r),
+});
+
+// 가사의 노래 언어(원문 줄 기준) — 음성 인식 언어 지정
+function lyricsLang(data) {
+  const text = (data.lines || []).map((l) => String(l.text || '').split('\n')[0]).join(' ');
+  if (/[぀-ヿ]/.test(text)) return 'ja';
+  if (/[가-힣]/.test(text)) return 'ko';
+  if (/[一-鿿]/.test(text)) return 'zh';
+  return /[a-z]/i.test(text) ? 'en' : 'auto';
+}
+
+// 줄 시각만 바꾼다(보강된 가사면 원본 줄도 같이)
+function withTimes(data, times) {
+  const set = (lines) => lines.map((l, i) => ({ ...l, time: times[i] != null ? Math.max(0, Math.round(times[i])) : l.time }));
+  const out = { ...data, lines: set(data.lines) };
+  if (data.baseLines && data.baseLines.length === data.lines.length) out.baseLines = set(data.baseLines);
+  return out;
+}
+
+// 1차(대략) 싱크: 텍스트 가사를 곡 전체 시간에 같은 간격으로 놓는다(소리 연산 없음). 곡 길이를 알게 되면 다시 놓는다.
+function prepareLyrics(data, durationMs) {
+  if (!data || data.unavailable || !(data.lines || []).length) return data;
+  if (data.plain || (data.origin === 'text' && data.sync && data.sync.kind === 'rough')) {
+    const dur = durationMs > 0 ? durationMs : data.lines.length * 4000;
+    if (!data.plain && data.roughFor === dur) return data;
+    return { ...withTimes(data, evenTimes(data.lines.length, 0, dur)), plain: false, origin: 'text', roughFor: dur, sync: { kind: 'rough', progress: 0 } };
+  }
+  if (!data.origin) return { ...data, origin: 'synced', sync: data.sync || { kind: 'db' } };
+  return data;
+}
+
+// 검색 후보 → 정렬 후보(보강 전, 표시용 꼬리표 제거)
+function candidateOf(c) {
+  const base = baseLyrics(c) || c;
+  const { match, augmented, machineTranslated, translatedBy, fallbackNotice, augmentCache, ...rest } = base;
+  return { ...rest, origin: rest.origin || (rest.plain ? 'text' : 'synced') };
+}
+
+function sameBody(a, b) {
+  const fp = (x) => (x.lines || []).map((l) => String(l.text || '').split('\n')[0]).join('\n');
+  return a.source === b.source && String(a.id) === String(b.id) ? true : fp(a) === fp(b);
+}
+
+// 가사가 정해질 때마다(검색 결과·캐시·저장본·직접 선택) — 1차 싱크 적용 + 자동 싱크 대상 등록
+function activateLyrics(key, data, opts = {}) {
+  const vid = key.startsWith('id:') ? key.slice(3) : '';
+  const prepared = prepareLyrics(data, lyricsState.duration);
+  if (!vid || !prepared || prepared.unavailable || !(prepared.lines || []).length) {
+    syncEngine.setCurrent(vid, null);
+    updateCapture();
+    return prepared;
+  }
+  let meta = syncMeta.get(vid);
+  if (!meta || opts.reset) {
+    const alt = searchAlternatives.get(key) || {};
+    const candidates = [candidateOf(prepared)];
+    for (const c of alt.alternatives || []) { const cc = candidateOf(c); if (!candidates.some((x) => sameBody(x, cc))) candidates.push(cc); }
+    meta = {
+      candidates, chosen: 0, userSelected: !!opts.userSelected, extras: alt.extras || null, extrasMerged: !alt.extras,
+      doneWindows: (meta && meta.doneWindows) || opts.doneWindows || [], complete: !!opts.complete, fromStore: !!opts.fromStore, lastSaveAt: 0,
+    };
+    syncMeta.set(vid, meta);
+    if (!opts.fromStore) saveLyricsToStore(vid, prepared, false, true);
+  }
+  if (lyricsSettings.autoSync && asrReady && !meta.complete) {
+    syncEngine.setCurrent(vid, { durationMs: lyricsState.duration, lang: lyricsLang(meta.candidates[meta.chosen]), candidates: meta.candidates, doneWindows: meta.doneWindows });
+  } else {
+    syncEngine.setCurrent(vid, null);
+  }
+  updateCapture();
+  return prepared;
+}
+
+// 한 후보의 정렬 결과 → 표시할 가사(보강 전)
+function timedFromResult(cand, result, r) {
+  const info = { progress: r.progress, complete: r.complete, verdict: result.verdict, precision: Math.round(result.score.precision * 100) / 100 };
+  if (cand.origin === 'text') {
+    const times = result.times.map((t) => t + SYNC_CAL_MS);
+    return { ...withTimes(cand, times), plain: false, origin: 'text', sync: { kind: r.complete ? 'auto' : 'auto-partial', ...info } };
+  }
+  const base = { ...cand, plain: false, origin: 'synced' };
+  if (result.verdict !== 'match') return { ...base, sync: { kind: 'db', ...info } };
+  // 싱크 가사의 시각과 소리로 맞춘 시각의 차이 — 통째로 밀려 있으면(차이가 고르면) 그만큼 옮긴다
+  const diffs = [];
+  result.anchored.forEach((ok, i) => { if (ok && cand.lines[i]) diffs.push(result.times[i] + SYNC_CAL_MS - cand.lines[i].time); });
+  if (diffs.length < 5) return { ...base, sync: { kind: 'db-verified', ...info } };
+  const sorted = diffs.slice().sort((a, b) => a - b);
+  const med = sorted[sorted.length >> 1];
+  const dev = diffs.map((d) => Math.abs(d - med)).sort((a, b) => a - b);
+  const mad = dev[dev.length >> 1];
+  if (mad > 1500 && diffs.length >= cand.lines.length * 0.4) {
+    // 줄마다 제각각 어긋난 싱크(다른 버전·엉터리 등록본) — 소리로 맞춘 시각을 쓴다
+    const times = result.times.map((t) => t + SYNC_CAL_MS);
+    return { ...withTimes(base, times), sync: { kind: r.complete ? 'auto' : 'auto-partial', ...info, replacedDb: true } };
+  }
+  if (Math.abs(med) >= 500 && mad <= 700) {
+    return { ...withTimes(base, cand.lines.map((l) => l.time + med)), sync: { kind: 'db-shifted', shiftMs: Math.round(med), ...info } };
+  }
+  return { ...base, sync: { kind: 'db-verified', ...info } };
+}
+
+function applySyncResult(vid, r) {
+  const meta = syncMeta.get(vid);
+  if (!meta || !Array.isArray(r.results) || r.results.length !== meta.candidates.length) return; // 그새 후보가 바뀜
+  meta.doneWindows = r.doneWindows;
+  meta.complete = r.complete;
+  let chosen = meta.chosen;
+  const cur = r.results[chosen];
+  if (!meta.userSelected) {
+    let best = -1;
+    let bestP = -1;
+    r.results.forEach((x, i) => { if (i !== chosen && x.verdict === 'match' && x.score.precision > bestP) { best = i; bestP = x.score.precision; } });
+    if (best >= 0 && (cur.verdict === 'mismatch' || (cur.verdict === 'unsure' && bestP >= cur.score.precision + 0.25))) chosen = best;
+  }
+  // 지금 가사가 소리와 안 맞으면 느린 출처(utaten·Genius) 후보까지 더해 다시 맞춰 본다
+  if (r.results[chosen].verdict === 'mismatch' && !meta.extrasMerged && meta.extras) {
+    meta.extrasMerged = true;
+    Promise.resolve(meta.extras).then((list) => {
+      const fresh = (list || []).map(candidateOf).filter((c) => !meta.candidates.some((x) => sameBody(x, c)));
+      if (fresh.length && syncMeta.get(vid) === meta) { meta.candidates.push(...fresh); syncEngine.setCandidates(vid, meta.candidates); }
+    }).catch(() => {});
+  }
+  const switched = chosen !== meta.chosen;
+  meta.chosen = chosen;
+  const cand = meta.candidates[chosen];
+  const res = r.results[chosen];
+  // 소리와 확실히 안 맞고(들은 글자 충분, 연속 일치 5% 미만) 대안도 없으면 틀린 가사를 보여 주지 않는다
+  const strongMismatch = res.verdict === 'mismatch' && res.score.heard >= 400 && res.score.precision < 0.05
+    && cand.source !== 'desc' && !meta.userSelected && meta.extrasMerged;
+  const timed = strongMismatch ? { unavailable: true, mismatch: true, lines: [] } : timedFromResult(cand, res, r);
+  const key = `id:${vid}`;
+  const cached = lyricsCache.get(key);
+  let display = timed;
+  if (!timed.unavailable && !switched && cached && cached.baseLines && cached.baseLines.length === timed.lines.length
+    && cached.source === timed.source && String(cached.id) === String(timed.id)) {
+    // 발음·번역 줄은 그대로 두고 시각만 바꾼다
+    display = { ...cached, sync: timed.sync, origin: timed.origin, plain: false, lines: cached.lines.map((l, i) => ({ ...l, time: timed.lines[i].time })), baseLines: timed.lines };
+  }
+  if (meta.fromStore) display = { ...display, fromStore: true };
+  lyricsCache.set(key, display);
+  if (key === lyricsKey) { lyricsData = display; sendLyricsToWindow(); }
+  if (!display.unavailable && (switched || !display.augmented)) augmentForeignLyrics(key, display);
+  saveLyricsToStore(vid, timed, r.complete);
+  updateCapture();
+}
+
+// 저장용: 표시용 꼬리표 제거
+function stripLyricsForStore(d) {
+  const { baseLines, augmented, machineTranslated, translatedBy, fallbackNotice, match, fromStore, augmentCache, ...rest } = d;
+  return rest;
+}
+
+// 로컬 재생목록 곡이면 가사·싱크·들은 글자를 저장한다(20초마다·다 들었을 때·처음 정해졌을 때)
+function saveLyricsToStore(vid, data, complete, force = false) {
+  if (!lyricsStore || !lyricsStore.isLocalVideo(vid)) return;
+  const meta = syncMeta.get(vid);
+  const now = Date.now();
+  if (!force && !complete && meta && now - (meta.lastSaveAt || 0) < 20000) return;
+  if (meta) meta.lastSaveAt = now;
+  const base = baseLyrics(data) || data;
+  let augment = null;
+  if (!base.unavailable) { try { augment = JSON.parse(fs.readFileSync(mtCachePath(base).file, 'utf8')); } catch {} }
+  lyricsStore.put(vid, {
+    data: base.unavailable ? base : stripLyricsForStore(base),
+    doneWindows: (meta && meta.doneWindows) || [],
+    complete: !!(meta && meta.complete),
+    userSelected: !!(meta && meta.userSelected),
+    augment,
+  });
+}
+
+// 저장본 → 표시 (검색·인식 없이 바로)
+function loadStoredLyrics(state, key) {
+  const stored = lyricsStore && state.id ? lyricsStore.get(state.id) : null;
+  if (!stored || !stored.data) return null;
+  const data = { ...stored.data, fromStore: true, augmentCache: stored.augment || null };
+  syncMeta.delete(state.id);
+  const meta = {
+    candidates: data.unavailable ? [] : [candidateOf(data)], chosen: 0, userSelected: !!stored.userSelected, extras: null, extrasMerged: true,
+    doneWindows: stored.doneWindows || [], complete: !!stored.complete, fromStore: true, lastSaveAt: Date.now(),
+  };
+  syncMeta.set(state.id, meta);
+  return data;
+}
+
+// 사용자가 "가사 삭제" — 저장본·캐시를 지우고 이번 실행에서는 다시 찾지 않는다(다시 찾기로 찾을 수 있다)
+function deleteCurrentLyrics() {
+  const vid = lyricsState.id;
+  if (!vid || !lyricsKey) return false;
+  if (lyricsStore) lyricsStore.remove(vid);
+  syncEngine.drop(vid);
+  syncMeta.delete(vid);
+  searchAlternatives.delete(lyricsKey);
+  const data = { unavailable: true, deleted: true, lines: [] };
+  lyricsCache.set(lyricsKey, data);
+  lyricsData = data;
+  sendLyricsToWindow();
+  updateCapture();
+  return true;
+}
+
+// ── 소리 받기(오디오 가드 → 엔진) ──
+let captureTimer = null;
+
+function wantCapture() {
+  const vid = lyricsState.id;
+  const meta = vid && syncMeta.get(vid);
+  return !!(lyricsSettings.autoSync && asrReady && meta && !meta.complete && meta.candidates.length && syncEngine.videos.has(vid));
+}
+
+function updateCapture() {
+  const want = wantCapture();
+  if (!!audioState.capture !== want) {
+    audioState = { ...audioState, capture: want };
+    pushAudioState();
+  }
+  if (want && !captureTimer) captureTimer = setInterval(pollCapture, 2000);
+  else if (!want && captureTimer) { clearInterval(captureTimer); captureTimer = null; }
+}
+
+async function pollCapture() {
+  for (const f of audioFrames()) {
+    let r = null;
+    try { r = await f.executeJavaScript('window.__ympCapTake ? window.__ympCapTake() : null'); } catch {}
+    if (!r || !Array.isArray(r.chunks)) continue;
+    for (const c of r.chunks) {
+      const vid = c.vid || lyricsState.id;
+      if (!syncEngine.videos.has(vid) || typeof c.b64 !== 'string') continue;
+      const buf = Buffer.from(c.b64, 'base64');
+      const ab = new ArrayBuffer(buf.length - (buf.length % 2));
+      new Uint8Array(ab).set(buf.subarray(0, ab.byteLength));
+      const pcm = new Int16Array(ab);
+      syncEngine.feed(vid, Number(c.t) - pcm.length / (r.rate || 16000), pcm);
+    }
+  }
+}
+
+// 번역 캐시(mt-cache-v3)는 곡마다 파일이 하나씩 쌓인다 — 오래된 것부터 400개만 남긴다(용량이 계속 늘지 않게)
+function pruneMtCache() {
+  try {
+    const dir = path.join(app.getPath('userData'), 'mt-cache-v3');
+    const files = fs.readdirSync(dir).map((name) => {
+      const file = path.join(dir, name);
+      return { file, mtime: fs.statSync(file).mtimeMs };
+    }).sort((a, b) => b.mtime - a.mtime);
+    for (const f of files.slice(400)) { try { fs.unlinkSync(f.file); } catch {} }
+  } catch {}
+}
+
 // 같은 곡을 두 번 찾지 않도록 진행 중인 검색을 공유한다 (미리 찾기 ↔ 재생 시작이 겹칠 때)
 const lyricsInflight = new Map(); // key → Promise<{ data, transient }>
+const searchAlternatives = new Map(); // key → { alternatives: [후보], extras: Promise<[후보]> }
 
 function searchLyricsShared(state, key) {
   if (lyricsInflight.has(key)) return lyricsInflight.get(key);
@@ -529,7 +832,16 @@ function searchLyricsShared(state, key) {
   const promise = (async () => {
     // 유튜브 음악 카드(곡명·아티스트)는 검색과 동시에 받아 넘긴다 — 있으면 검색어 맨 앞에 쓰인다
     const alt = state.altTitle && state.altTitle !== state.title ? [{ title: state.altTitle, artist: state.altArtist || state.artist }] : [];
-    const data = await findLyricsForTrack(state.title, state.artist, state.duration, { musicInfo: fetchVideoMusicInfo(state.id), alt });
+    const info = fetchVideoMusicInfo(state.id);
+    const found = await findLyricsCandidates(state.title, state.artist, state.duration, {
+      musicInfo: info.then((i) => (i && i.title ? i : null)),
+      description: info.then((i) => (i && i.description) || ''),
+      videoId: state.id,
+      alt,
+    });
+    const data = found.best;
+    // 소리 검증·후보 교체용 대안 후보들(본문이 다른 것 위주)과 느린 출처의 추가 후보
+    searchAlternatives.set(key, { alternatives: found.alternatives || [], extras: found.extras });
     // 못 찾았는데 그 사이 요청이 끝내 실패했다면 '없음'이 아니라 '모름'
     return { data, transient: !data && lyricFailureCount() > failuresBefore };
   })().finally(() => lyricsInflight.delete(key));
@@ -544,6 +856,9 @@ async function prefetchLyrics(info) {
   const state = { id: String(info.id), title: String(info.title), artist: String(info.artist || ''), duration: Math.max(0, Number(info.duration) || 0) };
   const key = lyricStateKey(state);
   if (lyricsCache.has(key) || lyricsInflight.has(key)) return;
+  // 저장해 둔 가사(로컬 재생목록 곡)가 있으면 검색하지 않는다 — 저장된 정밀 싱크가 검색 결과에 덮이지 않게
+  const stored = loadStoredLyrics(state, key);
+  if (stored) { lyricsCache.set(key, stored); return; }
   try {
     const { data, transient } = await searchLyricsShared(state, key);
     if (!transient && !lyricsCache.has(key)) {
@@ -576,9 +891,19 @@ function scheduleLyricsRetry(state, key) {
 async function loadLyricsForState(state, key) {
   if (lyricsLoadingKey === key) return;
   if (lyricsCache.has(key)) {
-    lyricsData = lyricsCache.get(key);
+    lyricsData = activateLyrics(key, lyricsCache.get(key));
+    lyricsCache.set(key, lyricsData);
     if (lyricsData.augmented !== lyricsSettings.foreignMode) augmentForeignLyrics(key, lyricsData); // 발음·번역 (필요할 때만)
     sendLyricsToWindow();
+    return;
+  }
+  // 로컬 재생목록 곡으로 저장해 둔 가사(싱크 포함)가 있으면 검색하지 않고 바로
+  const stored = loadStoredLyrics(state, key);
+  if (stored) {
+    const display = stored.unavailable ? stored : activateLyrics(key, stored, { fromStore: true });
+    lyricsCache.set(key, display);
+    if (!display.unavailable) augmentForeignLyrics(key, display);
+    if (key === lyricsKey) { lyricsData = display; sendLyricsToWindow(); }
     return;
   }
   lyricsLoadingKey = key;
@@ -592,7 +917,8 @@ async function loadLyricsForState(state, key) {
       return;
     }
     lyricsRetries.delete(key);
-    const displayData = data || { unavailable: true, lines: [] };
+    // 텍스트 가사는 1차(대략) 싱크로 바로 띄우고, 자동 싱크 대상으로 등록한다
+    const displayData = data ? (key === lyricsKey ? activateLyrics(key, data, { reset: true }) : prepareLyrics(data, state.duration)) : { unavailable: true, lines: [] };
     lyricsCache.set(key, displayData);
     // 한국어 가사를 못 구한 외국어 곡은 한글 발음·기계 번역을 붙인다 (설정 foreignMode)
     augmentForeignLyrics(key, displayData);
@@ -639,8 +965,19 @@ function updateLyricsState(data) {
       }
       augmentForeignLyrics(key, lyricsData);
     }
+    // 미리 찾아 둔 곡: 1차 싱크·자동 싱크 등록 / 가사가 없는 곡: 이전 곡의 소리 받기를 멈춘다
+    if (lyricsData) { lyricsData = activateLyrics(key, lyricsData); lyricsCache.set(key, lyricsData); } else { syncEngine.setCurrent(next.id, null); updateCapture(); }
     sendLyricsToWindow();
     sendLyricsOffset();
+  }
+  // 곡 길이를 늦게 알게 되면 자동 싱크 엔진에도 알린다(길이를 모르면 소리를 받지 못한다)
+  if (next.duration > 0 && syncEngine.videos.has(next.id) && !(syncEngine.videos.get(next.id).durationMs > 0)) {
+    syncEngine.ensure(next.id, { durationMs: next.duration });
+  }
+  if (!keyChanged && lyricsData && lyricsData.origin === 'text' && lyricsData.sync && lyricsData.sync.kind === 'rough'
+    && next.duration > 0 && lyricsData.roughFor !== next.duration) {
+    lyricsData = prepareLyrics(lyricsData, next.duration);
+    lyricsCache.set(key, lyricsData);
   }
   sendLyricsToWindow();
   // 제목을 아직 못 받아 영상 id를 제목 자리에 둔 상태에서는 찾지 않는다 (헛검색이 '없음'으로 남지 않게)
@@ -694,6 +1031,13 @@ function updateLyricsSettings(value, persist = true) {
   const before = lyricsSettings;
   lyricsSettings = normalizeLyricsSettings({ ...lyricsSettings, ...(value || {}) });
   if (lyricsSettings.foreignMode !== before.foreignMode) reapplyForeignMode();
+  if (lyricsSettings.autoSync !== before.autoSync) {
+    // 자동 싱크를 켜면 지금 곡부터 바로, 끄면 소리 받기·인식을 멈춘다(이미 맞춘 싱크는 그대로)
+    syncEngine.enabled = lyricsSettings.autoSync;
+    if (lyricsKey && lyricsData && !lyricsData.unavailable) { lyricsData = activateLyrics(lyricsKey, lyricsData); lyricsCache.set(lyricsKey, lyricsData); }
+    else updateCapture();
+    if (lyricsSettings.autoSync) syncEngine.pump();
+  }
   if (lyricsSettings.width !== before.width || lyricsSettings.height !== before.height) pulseLyricsOutline();
   if (persist) saveLyricsSettings();
   if (lyricsWindow && !lyricsWindow.isDestroyed()) {
@@ -1878,6 +2222,12 @@ app.whenReady().then(async () => {
   loadInitialAudioState();
   loadLyricsOffsets();
   loadLyricsPresets();
+  // 가사 저장소(게스트 로컬 재생목록 곡만) + 자동 싱크(음성 인식 실행 파일·모델이 있을 때만)
+  lyricsStore = new LyricsStore(path.join(app.getPath('userData'), 'lyrics-store'));
+  lyricsStore.load(localListIds(loadPlaylists()));
+  asrReady = asrRunner.available();
+  syncEngine.enabled = lyricsSettings.autoSync;
+  pruneMtCache();
   // 광고/추적 도메인 차단 — **메인 창(앱 UI + 임베드 플레이어)에서 나온 요청만** 막는다.
   // 폴백(워치페이지) 웹뷰까지 막으면 유튜브가 광고 차단으로 감지해 "서비스 약관을 위반하는
   // 광고 차단 프로그램" 화면으로 재생을 통째로 막는다. 예전에는 "웹뷰가 아니면 차단"이라는
@@ -1920,7 +2270,10 @@ app.whenReady().then(async () => {
   );
 
   ipcMain.handle('playlists:load', () => loadPlaylists());
-  ipcMain.handle('playlists:save', (_event, playlists) => savePlaylists(playlists));
+  ipcMain.handle('playlists:save', (_event, playlists) => {
+    savePlaylists(playlists);
+    if (lyricsStore) lyricsStore.setLocalLists(localListIds(playlists)); // 지운 재생목록의 곡 가사는 정리된다
+  });
   // 디자인 설정: 렌더러 localStorage는 서버 포트가 매번 바뀌어(오리진 변경) 유지되지 않으므로 파일로 저장
   ipcMain.handle('settings:load', () => {
     try {
@@ -1934,8 +2287,22 @@ app.whenReady().then(async () => {
     fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(settings, null, 2));
   });
   ipcMain.handle('titles:fetch', (_event, ids) => fetchTitles(ids));
-  ipcMain.handle('playlist:fetchFirst', (_event, listId) => fetchPlaylistFirst(listId));
-  ipcMain.handle('playlist:fetchMore', (_event, cont) => fetchPlaylistMore(cont));
+  // 로컬 재생목록의 곡 목록을 가사 저장소에 알린다(끝까지 받으면 빠진 곡의 가사를 지운다)
+  ipcMain.handle('playlist:fetchFirst', async (_event, listId) => {
+    const r = await fetchPlaylistFirst(listId);
+    if (lyricsStore) {
+      const ids = (r.items || []).map((it) => it && it.id).filter(Boolean);
+      lyricsStore.beginScan(String(listId), ids);
+      if (!r.cont) lyricsStore.addScan(String(listId), [], true);
+    }
+    if (r.cont) r.cont.listId = String(listId);
+    return r;
+  });
+  ipcMain.handle('playlist:fetchMore', async (_event, cont) => {
+    const r = await fetchPlaylistMore(cont);
+    if (lyricsStore && cont && cont.listId) lyricsStore.addScan(cont.listId, (r.items || []).map((it) => it && it.id).filter(Boolean), !r.cont);
+    return r;
+  });
   ipcMain.handle('playlist:meta', (_event, listId) => fetchPlaylistMeta(listId));
   // 구글 계정 연동 + 유튜브 검색
   ipcMain.handle('account:status', () => fetchAccountStatus());
@@ -1991,6 +2358,11 @@ app.whenReady().then(async () => {
   });
   ipcMain.on('lyrics:retry', () => {
     if (!lyricsKey) return;
+    // 다시 찾기 = 저장본·자동 싱크 상태도 버리고 처음부터
+    if (lyricsStore && lyricsState.id) lyricsStore.remove(lyricsState.id);
+    syncEngine.drop(lyricsState.id);
+    syncMeta.delete(lyricsState.id);
+    searchAlternatives.delete(lyricsKey);
     lyricsCache.delete(lyricsKey);
     lyricsData = null;
     sendLyricsToWindow();
@@ -2008,16 +2380,22 @@ app.whenReady().then(async () => {
     String(params && params.title || '').trim(),
     String(params && params.artist || '').trim(),
   ));
+  // 사용자가 다른 가사를 고름 = 저장된 가사를 덮어쓴다. 이미 들은 소리가 있으면 그것으로 바로 다시 맞춘다
+  // (텍스트 가사도 곧바로 정밀 싱크). 사용자가 고른 가사는 소리 판정으로 다른 후보로 바꾸지 않는다.
   ipcMain.handle('lyrics:select', async (_event, candidate) => {
-    const data = await resolveLyricCandidate(candidate);
+    const resolved = await resolveLyricCandidate(candidate);
+    const data = resolved && candidate && candidate.plain ? { ...resolved, plain: true } : resolved;
     if (data) {
-      lyricsData = data;
-      if (lyricsKey) lyricsCache.set(lyricsKey, data);
+      const display = lyricsKey ? activateLyrics(lyricsKey, data, { reset: true, userSelected: true }) : data;
+      lyricsData = display;
+      if (lyricsKey) lyricsCache.set(lyricsKey, display);
       sendLyricsToWindow();
-      if (lyricsKey) augmentForeignLyrics(lyricsKey, data);
+      if (lyricsKey) augmentForeignLyrics(lyricsKey, display);
     }
     return data;
   });
+  // 지금 곡의 가사만 삭제(저장본 포함)
+  ipcMain.handle('lyrics:delete', () => deleteCurrentLyrics());
   // 유튜브가 광고 차단을 감지하면(워치페이지의 차단 화면) 이 세션에서는 차단을 통째로 끈다 —
   // 감지를 피해 다니는 대신 차단을 그만두는 쪽이 재생을 되살리는 확실한 길이다.
   ipcMain.on('adblock:disable', () => { adBlockEnabled = false; });
@@ -2025,6 +2403,7 @@ app.whenReady().then(async () => {
   ipcMain.on('audio:set', (_event, state) => {
     const next = state && typeof state === 'object' ? state : {};
     audioState = {
+      ...audioState, // capture(자동 싱크용 소리 받기)는 main이 정한다
       cap: Number.isFinite(Number(next.cap)) ? Math.min(1, Math.max(0, Number(next.cap))) : audioState.cap,
       eq: next.eq ? normalizeEq(next.eq) : audioState.eq,
     };

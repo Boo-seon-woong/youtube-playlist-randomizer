@@ -1,4 +1,4 @@
-// 기계 번역 전용 유틸리티 프로세스 (main.js가 utilityProcess.fork로 띄운다).
+// 가사 워커 — 내장 모델 번역 · 일본어 발음 · 자동 싱크(음성 인식 + 정렬)를 맡는 유틸리티 프로세스 (main.js가 utilityProcess.fork로 띄운다).
 // 추론을 메인 프로세스에서 분리한 이유: 메인은 UI·오디오 때문에 우선순위를 BELOW_NORMAL까지밖에
 // 못 내리는데, 그걸로는 게임 프레임 드랍(30%+)이 남았다. 이 프로세스는 IDLE 우선순위로 돌아
 // 시스템이 한가할 때만 CPU를 받는다 — 게임 등 전면 앱이 항상 우선한다. 일본어 발음(pronounce.js)도 여기서 한다.
@@ -64,9 +64,42 @@ function cleanTranslation(text, source) {
 // 번역을 끄면 main이 {type:'cancel', id}를 보낸다 — 남은 줄을 바로 그만둔다(CPU를 계속 쓰지 않게)
 const cancelled = new Set();
 
+// ── 자동 싱크: 음성 인식(asr) · 정렬(align) ──
+// asr  {id, type:'asr', pcm: Int16Array(16kHz 모노), lang, offsetMs, prompt} → {type:'done', id, result: [{t0,t1,text,tokens}]}
+//      whisper-cli를 IDLE 우선순위 별도 프로세스로 띄운다(asr.js). 한 번에 하나씩.
+// align {id, type:'align', candidates: [{lines}], heard: [조각], durationMs} → {type:'done', id, result: [{times, anchored, score, verdict}]}
+//      kuromoji(발음 사전)는 발음 표기와 같은 것을 쓴다.
+let asrBusy = Promise.resolve();
+async function handleSyncJob(data) {
+  if (data.type === 'asr') {
+    const asr = require('./asr');
+    const run = asrBusy.then(() => asr.transcribe(Int16Array.from(data.pcm), {
+      lang: data.lang, offsetMs: data.offsetMs, prompt: data.prompt, threads: data.threads || 2, dtw: true,
+    }));
+    asrBusy = run.catch(() => {});
+    return run;
+  }
+  const { getTokenizer } = require('./pronounce');
+  const { alignLyrics, verdict } = require('./lyrics-align');
+  const tokenizer = await getTokenizer();
+  return (data.candidates || []).map((c) => {
+    const r = alignLyrics(c.lines || [], data.heard || [], tokenizer, { durationMs: data.durationMs || 0 });
+    return { ...r, verdict: verdict(r.score) };
+  });
+}
+
 process.parentPort.on('message', async (e) => {
   const { id, lines, type } = e.data || {};
   if (type === 'cancel') { cancelled.add(id); return; }
+  if (type === 'asr-cancel') { try { require('./asr').cancelCurrent(); } catch {} return; }
+  if (type === 'asr' || type === 'align') {
+    try {
+      process.parentPort.postMessage({ type: 'done', id, result: await handleSyncJob(e.data) });
+    } catch (err) {
+      process.parentPort.postMessage({ type: 'done', id, error: String((err && err.message) || err) });
+    }
+    return;
+  }
   if (!id || !Array.isArray(lines)) return;
   if (type === 'pron') {
     try {

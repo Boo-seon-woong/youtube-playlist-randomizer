@@ -127,4 +127,4 @@ async function pronounceLyrics(lines) {
   return originals.map((line) => pronounceLine(tokenizer, line));
 }
 
-module.exports = { pronounceLyrics, kanaToHangul };
+module.exports = { pronounceLyrics, kanaToHangul, getTokenizer };

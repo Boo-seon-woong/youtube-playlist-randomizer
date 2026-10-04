@@ -5,6 +5,7 @@ const http = require('http');
 const ALSong_ENC_DATA = '8456ec35caba5c981e705b0c5d76e4593e020ae5e3d469c75d1c6714b6b1244c0732f1f19cc32ee5123ef7de574fc8bc6d3b6bd38dd3c097f5a4a1aa1b438fea0e413baf8136d2d7d02bfcdcb2da4990df2f28675a3bd621f8234afa84fb4ee9caa8f853a5b06f884ea086fd3ed3b4c6e14f1efac5a4edbf6f6cb475445390b0';
 // main.js의 UA와 같은 값 (모듈이 main을 거꾸로 require할 수 없어 따로 둔다)
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const { extractDescriptionLyrics, fetchBugsCandidates, fetchUtatenCandidates, fetchGeniusCandidates } = require('./lyrics-sources');
 
 function xmlEscape(value) {
   return String(value)
@@ -789,10 +790,13 @@ const withTimeout = (promise, ms) => Promise.race([
 // 가사 고르기 — 출처를 순서대로 기다리지 않고 동시에 조회한다(예전엔 알송 → LRCLIB 조합별 순차라 최대 60초).
 // 우선순위: ① 알송 한글 가사(곡명·가수 모두 일치) — 나오면 다른 출처를 기다리지 않고 바로 돌려준다
 //          ② 알송 한글 가사(제목만 일치) — 다른 출처의 확실한 가사와 본문이 겹칠 때만(동명이곡 차단)
-//          ③ LRCLIB·NetEase 싱크 원어 가사(곡명·가수 일치) → ④ 알송 원어 → ⑤ 나머지 싱크 후보
-//          ⑥ 싱크 없는 가사(본문만) — 화면은 스크롤로 보여 준다
-// opts.musicInfo: 유튜브 음악 카드 {title, artist} 또는 그 Promise (main이 동시에 받아 넘긴다)
-async function findLyricsForTrack(title, artist, targetDuration, opts = {}) {
+//          ③ LRCLIB·NetEase·Bugs 싱크 원어 가사(곡명·가수 일치) → ④ 알송 원어 → ⑤ 나머지 싱크 후보
+//          ⑥ 텍스트 가사(싱크 없음 — 자동 싱크가 맞춘다): 설명란 > 두 출처가 본문이 일치하는 것 > Bugs·utaten·Genius·LRCLIB
+// "진짜 그 곡의 가사"가 최우선: 일본 곡이면 가나가 없는 후보(한글 발음·로마자 표기)는 버리고, 같은 영상 설명란의
+// 가사와 본문이 거의 안 겹치는 싱크 가사는 다른 곡으로 보고 설명란 가사를 쓴다. 최종 판정은 자동 싱크가 소리로 한다
+// (lyrics-align.js — 다른 곡 가사는 연속 일치율 0~6%) — 그래서 후보 목록(alternatives·extras)을 함께 돌려준다.
+// opts.musicInfo: 유튜브 음악 카드 {title, artist} 또는 그 Promise / opts.description: 영상 설명(또는 Promise)
+async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
   // 표시 제목(한국어 현지화일 수 있음)과 임베드가 아는 원어 제목을 함께 검색어로 — 어느 표기로 등록돼 있든 찾게
   let videoQueries = buildLyricQueries(title, artist);
   for (const alt of opts.alt || []) {
@@ -801,56 +805,115 @@ async function findLyricsForTrack(title, artist, targetDuration, opts = {}) {
   const card = await withTimeout(opts.musicInfo, 1500); // 카드는 보통 0.2~0.4초 — 늦으면 영상 제목만으로 간다
   const queries = card && card.title ? mergeQueries(buildCardQueries(card), videoQueries) : videoQueries;
 
+  const kanaRe = /[\u3040-\u30ff]/;
+  // 일본 곡에 가나 없는 가사(한글 발음 표기·로마자)는 그 곡의 "가사 원문"이 아니다
+  const langOk = (c) => !queries.expectJapanese || c.source === 'alsong' || kanaRe.test((c.lines || []).map((l) => l.text).join(''));
+  const strictAccept = (hit) => { const m = lyricMatchScore({ title: hit.title, artist: hit.artist }, queries, 0); return m.accepted && m.artist > 0; };
+  const asCandidate = (c) => ({ ...lyricCandidate(c.source, c), plain: !!c.plain });
+
+  // 설명란 가사 — 같은 영상이라 가장 믿을 만한 텍스트 가사
+  const descPromise = Promise.resolve(opts.description)
+    .then((d) => (d ? extractDescriptionLyrics(d, { lang: queries.expectJapanese ? 'ja' : '' }) : null))
+    .then((d) => (d && d.lines.length >= 8 ? { ...lyricCandidate('desc', { id: opts.videoId || '', title: (card && card.title) || queries.titles[0] || title, artist: (card && card.artist) || queries.artists[0] || artist, lines: d.lines }), plain: true, marked: !!d.marked } : null))
+    .catch(() => null);
+  // 텍스트 가사 출처(utaten·Genius)는 느려서(2~5초) 백그라운드 — 싱크 가사를 못 찾았을 때만 기다린다
+  const extras = Promise.all([
+    queries.expectJapanese || !/[\uac00-\ud7a3]/.test(`${title} ${artist}`) ? fetchUtatenCandidates(queries, strictAccept).catch(() => []) : [],
+    fetchGeniusCandidates(queries, strictAccept).catch(() => []),
+  ]).then((lists) => lists.flat().map(asCandidate).filter(langOk));
+  extras.catch(() => {});
+
   // 보조 출처는 처음부터 병렬로 — 단 알송에서 ①이 먼저 나오면 결과를 쓰지 않는다
   const refsPromise = Promise.all([
     fetchLrclibCandidates(queries, targetDuration),
     fetchNeteaseCandidates(queries, targetDuration),
-  ]).then(([lrclib, netease]) => rankLyricCandidates([...lrclib, ...netease], queries, targetDuration)
+    fetchBugsCandidates(queries, strictAccept).then((list) => list.map(asCandidate)).catch(() => []),
+  ]).then(([lrclib, netease, bugs]) => rankLyricCandidates([...lrclib, ...netease, ...bugs].filter(langOk), queries, targetDuration)
     .filter((c) => c.match.accepted));
 
   const alsong = (await resolveAlsongCandidates(queries, targetDuration)).filter((c) => c.match.accepted);
   const strongKorean = alsong.find((c) => c.hasKorean && c.match.artist > 0);
-  if (strongKorean) {
+  const desc = await withTimeout(descPromise, 1500);
+  // 설명란에 "歌詞/가사/Lyrics"로 표시된 가사와 본문이 거의 안 겹치는 싱크 가사 = 다른 곡일 가능성이 높다.
+  // 표시 없는 덩어리는 곡 소개 글일 수도 있어 이 판단에 쓰지 않는다(맞는 싱크 가사를 밀어낼 수 있다)
+  const conflictsWithDesc = (c) => !!desc && desc.marked && desc.lines.length >= 12 && (c.lines || []).length >= 8 && lyricOverlap(c.lines, desc.lines) < 0.1;
+  const finish = (best, others) => {
+    const pool = [...others, ...(desc && best !== desc ? [desc] : [])].filter((c) => c && c !== best);
+    // 같은 본문(겹침 70% 이상)의 다른 등록본은 한 번만 — 소리 검증에는 본문이 다른 후보가 쓸모 있다
+    const alternatives = [];
+    for (const c of pool) {
+      if (alternatives.length >= 4) break;
+      if (best && lyricOverlap(c.lines, best.lines) >= 0.7 && !!c.plain === !!best.plain) continue;
+      if (alternatives.some((a) => lyricOverlap(c.lines, a.lines) >= 0.7)) continue;
+      alternatives.push(c);
+    }
+    return { best, alternatives, extras };
+  };
+
+  if (strongKorean && !conflictsWithDesc(strongKorean)) {
     refsPromise.catch(() => {});
-    return preferKoreanLabel(strongKorean, alsong, queries);
+    return finish(preferKoreanLabel(strongKorean, alsong, queries), alsong.filter((c) => c !== strongKorean));
   }
 
   const refs = await refsPromise.catch(() => []);
-  const syncedRefs = refs.filter((c) => !c.plain);
+  const syncedRefs = refs.filter((c) => !c.plain && !conflictsWithDesc(c));
   const strongRef = syncedRefs.find((c) => c.match.artist > 0) || null;
+  const others = [...syncedRefs, ...alsong.filter((c) => !conflictsWithDesc(c)), ...refs.filter((c) => c.plain)];
 
-  const weakKorean = alsong.filter((c) => c.hasKorean);
+  const weakKorean = alsong.filter((c) => c.hasKorean && !conflictsWithDesc(c));
   if (weakKorean.length) {
     // 확실한 참조가 없으면 예전처럼 받는다(재생시간·문자 체계 검사는 이미 통과). 참조가 있으면 본문이 겹쳐야 한다.
-    if (!strongRef) return preferKoreanLabel(weakKorean[0], alsong, queries);
+    if (!strongRef) return finish(preferKoreanLabel(weakKorean[0], alsong, queries), others);
     const verified = weakKorean.find((c) => lyricOverlap(c.lines, strongRef.lines) >= 0.3);
     // 본문은 같은 곡인데 가수 칸이 다른 등록본(예: "Lemon / 하츠네 미쿠" = 커버 등록본) — 가사는 쓰고 표기는 참조 곡으로
-    if (verified) return { ...preferKoreanLabel(verified, alsong, queries), artist: strongRef.artist || verified.artist };
+    if (verified) return finish({ ...preferKoreanLabel(verified, alsong, queries), artist: strongRef.artist || verified.artist }, others);
   }
-  if (strongRef) return markLyricLanguage(strongRef, true);
-  const alsongOriginal = alsong.find((c) => c.match.artist > 0);
-  if (alsongOriginal) return markLyricLanguage(alsongOriginal, true);
-  if (syncedRefs.length) return markLyricLanguage(syncedRefs[0], true);
+  if (strongRef) return finish(markLyricLanguage(strongRef, true), others);
+  const alsongOriginal = alsong.find((c) => c.match.artist > 0 && !conflictsWithDesc(c));
+  if (alsongOriginal) return finish(markLyricLanguage(alsongOriginal, true), others);
+  if (syncedRefs.length) return finish(markLyricLanguage(syncedRefs[0], true), others);
   // 이름만 비슷한 다른 곡을 보여주느니 "찾지 못함"이 낫다 — 남은 알송 후보는 동명이곡 검사까지 통과한 것
-  if (alsong.length) return markLyricLanguage(alsong[0], true);
-  const plain = refs.find((c) => c.plain);
-  if (plain) return { ...markLyricLanguage(plain), plain: true, fallbackNotice: '싱크 없는 가사' };
-  return null;
+  const alsongRest = alsong.filter((c) => !conflictsWithDesc(c));
+  if (alsongRest.length) return finish(markLyricLanguage(alsongRest[0], true), others);
+
+  // ⑥ 텍스트 가사: 설명란 → 두 출처가 일치하는 본문 → 나머지(곡명·가수 모두 일치한 것만)
+  const texts = [...(await withTimeout(extras, 9000) || []), ...refs.filter((c) => c.plain)];
+  const plainOut = (c) => ({ ...markLyricLanguage(c), plain: true, fallbackNotice: '싱크 없는 가사' });
+  // 설명란 덩어리는 표시가 있거나, 다른 출처 본문과 겹치거나, 다른 후보가 아예 없을 때만 믿는다
+  const descOk = desc && (desc.marked || !texts.length || texts.some((o) => lyricOverlap(desc.lines, o.lines) >= 0.3));
+  if (descOk) return finish(plainOut(desc), texts);
+  const agreed = texts.find((c) => texts.some((o) => o !== c && o.source !== c.source && lyricOverlap(c.lines, o.lines) >= 0.5));
+  const firstText = agreed || texts[0];
+  if (firstText) return finish(plainOut(firstText), texts.filter((c) => c !== firstText));
+  return finish(null, []);
 }
 
+// 예전 호출 방식(가사 하나) — 측정 하네스 등
+async function findLyricsForTrack(title, artist, targetDuration, opts = {}) {
+  const { best } = await findLyricsCandidates(title, artist, targetDuration, opts);
+  return best;
+}
+
+// 사용자 직접 검색(가사 검색 창) — 고르는 건 사용자라 기준을 느슨하게(제목이 비슷하면) 넓게 보여 준다.
+// 텍스트 가사(Bugs 본문·utaten·Genius)도 함께 — 고르면 자동 싱크가 소리에 맞춘다.
 async function searchAllLyrics(title, artist) {
   const queries = buildLyricQueries(title, artist);
-  const [alsong, lrclib, netease] = await Promise.all([
+  const loose = (hit) => bestCandidateTitleScore({ title: hit.title }, queries.titles) >= 0.5;
+  const asCandidate = (c) => ({ ...lyricCandidate(c.source, c), plain: !!c.plain });
+  const [alsong, lrclib, netease, bugs, utaten, genius] = await Promise.all([
     resolveAlsongCandidates(queries, 0),
     fetchLrclibCandidates(queries, 0),
     fetchNeteaseCandidates(queries, 0),
+    fetchBugsCandidates(queries, loose).catch(() => []),
+    fetchUtatenCandidates(queries, loose).catch(() => []),
+    fetchGeniusCandidates(queries, loose).catch(() => []),
   ]);
-  const others = rankLyricCandidates([...lrclib, ...netease], queries, 0);
+  const others = rankLyricCandidates([...lrclib, ...netease, ...bugs.map(asCandidate), ...utaten.map(asCandidate), ...genius.map(asCandidate)], queries, 0);
   const hasKoreanAlsong = alsong.some((candidate) => candidate.hasKorean);
   return [
     ...alsong.map((candidate) => markLyricLanguage(candidate, !hasKoreanAlsong)),
     ...others.map((candidate) => ({ ...markLyricLanguage(candidate, !hasKoreanAlsong), ...(candidate.plain ? { plain: true, fallbackNotice: '싱크 없는 가사' } : {}) })),
-  ].slice(0, 20);
+  ].slice(0, 24);
 }
 
 // 검색 전후로 읽어 그 사이 요청이 끝내 실패했는지 판단한다 (실패 + 못 찾음 = 캐시하지 말고 나중에 다시)
@@ -867,5 +930,6 @@ module.exports = {
   rankLyricCandidates,
   resolveLyricCandidate,
   findLyricsForTrack,
+  findLyricsCandidates,
   searchAllLyrics,
 };
