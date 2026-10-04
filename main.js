@@ -1,5 +1,6 @@
 const { app, BrowserWindow, session, ipcMain, screen, globalShortcut, webFrameMain } = require('electron');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
@@ -555,6 +556,9 @@ function reapplyForeignMode() {
 // - 싱크 가사(DB): 소리로 곡이 맞는지 확인하고, 시각이 통째로 밀려 있으면(뮤비 인트로 등) 그만큼 옮긴다.
 // - 후보가 여럿이면 소리와 맞는 쪽으로 바꾼다(다른 곡 가사는 연속 일치율 0~6%, 맞는 가사 30~85% — 실측).
 // - 게스트 로컬 재생목록 곡이면 결과를 lyrics-store에 저장 → 다음엔 검색·인식 없이 바로.
+// 음성 인식 스레드: 코어가 넉넉하면 4(IDLE 우선순위라 게임 등 전면 앱이 먼저 CPU를 가져간다) — 4스레드 창당 약 5초,
+// 2스레드 약 8초(실측, 같은 PC의 Windows는 1.4배 느림)
+const ASR_THREADS = os.cpus().length >= 12 ? 4 : os.cpus().length >= 8 ? 3 : 2;
 const SYNC_CAL_MS = 250; // 정렬 시각 보정: 실측에서 정답보다 0.38초 이르게 나온다(화면은 225ms 앞서 고르므로 조금만 늦춘다)
 let lyricsStore = null;
 let asrReady = false;
@@ -570,8 +574,8 @@ function runWorkerJob(payload) {
 }
 
 const syncEngine = new SyncEngine({
-  runAsr: (job) => runWorkerJob({ type: 'asr', pcm: job.pcm, lang: job.lang, offsetMs: job.offsetMs, prompt: job.prompt, threads: 2 }),
-  runAlign: (job) => runWorkerJob({ type: 'align', candidates: job.candidates.map((c) => ({ lines: c.lines })), heard: job.heard, durationMs: job.durationMs }),
+  runAsr: (job) => runWorkerJob({ type: 'asr', pcm: job.pcm, lang: job.lang, offsetMs: job.offsetMs, prompt: job.prompt, durationMs: job.durationMs, threads: ASR_THREADS }),
+  runAlign: (job) => runWorkerJob({ type: 'align', candidates: job.candidates.map((c) => ({ lines: c.lines })), heard: job.heard, durationMs: job.durationMs, heardUntil: job.heardUntil }),
   onResult: (vid, r) => applySyncResult(vid, r),
 });
 

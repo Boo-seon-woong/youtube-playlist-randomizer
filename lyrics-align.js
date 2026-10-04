@@ -190,37 +190,88 @@ function evenTimes(count, start, end) {
   return Array.from({ length: count }, (_, i) => Math.round(start + (span * i) / Math.max(1, count)));
 }
 
-// 맞춘 줄(anchors)은 그대로, 사이의 빈 줄은 앞뒤 맞춘 줄 사이에 고르게, 맨 앞·맨 뒤 빈 줄은 0초·곡 끝까지 고르게.
-// 맞춘 줄끼리 순서가 뒤집히면(잘못 맞춘 경우) 그 줄은 버린다.
-function fillTimes(anchors, durationMs) {
+// 아직 못 맞춘 줄의 시각 예측(중간 단계 싱크) — 맞춘 줄은 그대로 두고:
+// · 맞춘 줄 사이: 줄 길이(발음 글자 수) 비례로 나눈다
+// · 맨 앞(첫 맞춘 줄 이전): 맞춘 구간에서 잰 노래 빠르기(ms/글자)로 거슬러 올라간다(0초 아래면 0~첫 줄에 고르게)
+// · 뒤(아직 안 들은 줄): 마지막 맞춘 줄에서 빠르기대로 이어 간다. 이미 그 뒤를 한참 들었는데(heardUntil) 가사가 안
+//   나왔으면(간주) 들은 지점 뒤에서 시작한다. 곡 끝을 넘으면 남은 시간에 맞춰 줄인다.
+// · 맞춘 줄이 하나도 없음: 들은 구간엔 목소리가 없었다(전주) → 들은 지점부터 목소리 끝 추정까지 줄 길이 비례.
+//   예전엔 곡 전체(0초~끝)에 같은 간격이라 전주·후주만큼 어긋났다(사용자 지적: 목소리 시작~끝 구간으로).
+// 맞춘 줄끼리 순서가 뒤집히거나 0.25초 안으로 붙으면 그 줄은 버린다(같은 시각에 쌓이지 않게).
+const DEFAULT_PACE = 90; // ms/발음 글자 — 맞춘 줄이 2개 미만일 때
+function fillTimes(anchors, durationMs, opts = {}) {
   const n = anchors.length;
+  const w = (opts.letters || new Array(n).fill(12)).map((x) => Math.max(4, x || 0)); // 줄 무게(짧은 줄도 최소 시간)
   const a = anchors.slice();
-  // 앞 줄보다 0.25초 이상 늦지 않은 맞춤은 버린다(같은 시각에 줄이 겹쳐 쌓이지 않게)
   let last = -Infinity;
   for (let i = 0; i < n; i++) {
     if (a[i] == null) continue;
     if (a[i] < last + 250) a[i] = null; else last = a[i];
   }
+  const dur = durationMs > 0 ? durationMs : 0;
+  const vocalEnd = dur > 0 ? dur - Math.min(10000, dur * 0.06) : 0;
+  const heardUntil = Math.max(0, opts.heardUntil || 0);
+  const spread = (from, to, list) => { // list = 줄 번호들 — [from, to)에 무게 비례
+    const total = list.reduce((s, i) => s + w[i], 0) || 1;
+    let acc = 0;
+    for (const i of list) { times[i] = Math.round(from + ((to - from) * acc) / total); acc += w[i]; }
+  };
   const times = new Array(n);
   const idx = [];
   for (let i = 0; i < n; i++) if (a[i] != null) idx.push(i);
-  if (!idx.length) return evenTimes(n, 0, durationMs);
+  const all = [...Array(n).keys()];
+  if (!idx.length) {
+    // 들은 지 20초가 안 됐으면 아직 모른다(첫 10초 창은 whisper가 목소리가 있어도 못 알아듣는 일이 있다) — 0초부터
+    const from = heardUntil >= 20000 ? Math.min(heardUntil, Math.max(0, (vocalEnd || n * 3000) - n * 1500)) : 0;
+    spread(from, Math.max(from + n * 1500, vocalEnd || from + n * 3000), all);
+    return times;
+  }
   for (const i of idx) times[i] = Math.round(a[i]);
-  // 앞쪽
-  const first = idx[0];
-  evenTimes(first, 0, a[first]).forEach((t, i) => { times[i] = t; });
+  // 빠르기: 이웃한 맞춘 줄 사이(간주가 낀 쌍은 빼고)의 ms/글자 중앙값
+  const rates = [];
+  for (let k = 0; k + 1 < idx.length; k++) {
+    const p = idx[k];
+    const q = idx[k + 1];
+    let weight = 0;
+    for (let i = p; i < q; i++) weight += w[i];
+    const gap = a[q] - a[p];
+    if (gap > 0 && gap < 8000 * (q - p)) rates.push(gap / weight);
+  }
+  rates.sort((x, y) => x - y);
+  const pace = rates.length >= 2 ? rates[rates.length >> 1] : DEFAULT_PACE;
   // 사이
   for (let k = 0; k + 1 < idx.length; k++) {
     const p = idx[k];
     const q = idx[k + 1];
-    for (let i = p + 1; i < q; i++) times[i] = Math.round(a[p] + ((a[q] - a[p]) * (i - p)) / (q - p));
+    if (q - p > 1) {
+      const list = [];
+      for (let i = p; i < q; i++) list.push(i);
+      spread(a[p], a[q], list);
+      times[p] = Math.round(a[p]);
+    }
   }
-  // 뒤쪽: 마지막 맞춘 줄 다음부터 곡 끝까지
+  // 앞쪽
+  const first = idx[0];
+  if (first > 0) {
+    let t = a[first];
+    for (let i = first - 1; i >= 0; i--) { t -= pace * w[i]; times[i] = Math.round(t); }
+    if (times[0] < 0) spread(0, a[first], [...Array(first).keys()]);
+  }
+  // 뒤쪽(아직 안 들은 줄)
   const lastIdx = idx[idx.length - 1];
-  const tailStart = a[lastIdx];
-  const tailEnd = Math.max(tailStart + 1000, durationMs || tailStart + 4000 * (n - lastIdx));
-  const tailCount = n - lastIdx;
-  evenTimes(tailCount, tailStart, tailEnd).forEach((t, i) => { if (i > 0) times[lastIdx + i] = t; });
+  if (lastIdx < n - 1) {
+    let t = a[lastIdx] + pace * w[lastIdx];
+    if (heardUntil > t + 6000) t = heardUntil; // 들은 구간 끝까지 가사가 없었다 = 간주 — 그 뒤에서 이어 간다
+    const tail = [];
+    for (let i = lastIdx + 1; i < n; i++) tail.push(i);
+    const need = tail.reduce((s, i) => s + pace * w[i], 0);
+    const limit = dur > 0 ? dur - 2000 : Infinity;
+    if (t + need <= limit) {
+      for (const i of tail) { times[i] = Math.round(t); t += pace * w[i]; }
+    } else {
+      spread(Math.min(t, limit - 1000 * tail.length), limit, tail);
+    }
+  }
   return times;
 }
 
@@ -231,11 +282,13 @@ function alignLyrics(lines, heard, tokenizer, opts = {}) {
   const H = Array.isArray(heard) && heard.length && heard[0].ch != null ? heard : heardSequence(heard || [], tokenizer);
   const match = align(L, H);
   const anchors = anchorLines(lines.length, L, H, match);
+  const letters = new Array(lines.length).fill(0);
+  for (const x of L) letters[x.line] += 1;
   const run = runMatched(match);
   // 들은 글자 중 연속 일치 비율 — 맞는 가사 80%대, 다른 곡 0~6%(실측). 들은 게 적으면 판단 보류
   const precision = H.length ? run / H.length : 0;
   // 가사 글자 중 지금까지 들은 구간에 해당하는 부분 대비
-  const times = fillTimes(anchors, opts.durationMs || 0);
+  const times = fillTimes(anchors, opts.durationMs || 0, { letters, heardUntil: opts.heardUntil || 0 });
   return {
     times,
     anchored: anchors.map((x) => x != null),

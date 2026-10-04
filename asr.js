@@ -88,7 +88,11 @@ function transcribe(pcm, opts = {}) {
     const base = path.join(os.tmpdir(), `ymp-asr-${process.pid}-${++seq}`);
     const wav = `${base}.wav`;
     try { fs.writeFileSync(wav, wavBuffer(pcm)); } catch (err) { reject(err); return; }
-    const args = ['-m', MODEL, '-f', wav, '-l', opts.lang || 'auto', '-t', String(opts.threads || 2), '-ojf', '-of', base, '-np'];
+    // -bs 1 -bo 1: 탐욕 디코딩(빔 5 대비 30초 창 17.0→12.9초, 정확도 차이 없음 — 실측)
+    const args = ['-m', MODEL, '-f', wav, '-l', opts.lang || 'auto', '-t', String(opts.threads || 2), '-ojf', '-of', base, '-np', '-bs', '1', '-bo', '1'];
+    // -d: 이 길이까지만 처리 — whisper는 마지막 조각이 창 끝보다 일찍 끝나면 남은 몇 초를 위해 인코더를 한 번 더(30초 분량)
+    // 돌린다(실측: 30초 창마다 인코더 2회). 창의 앞부분만 확정하고 다음 창을 그 지점부터 시작하면 그 낭비가 거의 없다.
+    if (opts.durationMs > 0) args.push('-d', String(Math.round(opts.durationMs)));
     if (opts.prompt) args.push('--prompt', String(opts.prompt).slice(0, 400));
     if (opts.dtw) args.push('-dtw', 'small', '-nfa'); // DTW는 flash attention과 함께 못 쓴다(켜져 있으면 t_dtw가 -1)
     const child = spawn(bin, args, { env, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });

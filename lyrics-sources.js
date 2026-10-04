@@ -178,7 +178,9 @@ async function geniusSearch(q) {
   const hits = (((data || {}).response || {}).sections || []).flatMap((s) => s.hits || []);
   return hits.map((h) => h.result).filter(Boolean)
     .filter((r) => !/Genius (?:Romanizations|English Translations|Translations|Korea|Japan)/i.test(r.artist_names || (r.primary_artist || {}).name || ''))
-    .map((r) => ({ id: String(r.id), title: r.title || '', artist: r.artist_names || (r.primary_artist || {}).name || '', url: r.url }))
+    // 가수는 피처링을 뺀 주 가수 이름으로 — artist_names("東京真中 (Tokyo Manaka) (Ft. 重音テト (Kasane Teto))")는
+    // 40자를 넘어 채택 판정에서 '가수 미상' 쓰레기 항목으로 걸렸다(실측: Pop & Cute를 못 찾음)
+    .map((r) => ({ id: String(r.id), title: r.title || '', artist: ((r.primary_artist || {}).name || r.artist_names || '').replace(/\s*\((?:Ft|Feat)\.?[^)]*\)\s*$/i, ''), url: r.url }))
     .slice(0, 5);
 }
 

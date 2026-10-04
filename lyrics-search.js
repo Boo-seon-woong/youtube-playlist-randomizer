@@ -358,9 +358,17 @@ function bestTitleScore(value, titles) {
 // DB 항목 제목도 유튜브 제목처럼 "아티스트 - 제목 feat.X" 꼴로 올라온 것이 많다("Chenomio - フィクションです。feat.重音テト").
 // 그대로 비교하면 우리 제목(フィクションです。)과 길이 비율이 낮아 걸러지므로, 항목 쪽도 같은 정제를 거쳐
 // 아티스트 조각·feat·잡음을 뗀 '핵심 제목'을 함께 비교한다.
-function candidateTitleVariants(candidate) {
+function candidateTitleVariants(candidate, withBrackets = false) {
   const raw = String(candidate.title || '');
   const out = [raw, ...(candidate.altTitles || [])]; // NetEase 별칭·번역 제목
+  // 괄호 속 병기 제목("ポッペンキュート (Pop & Cute)" — Genius·NetEase의 원제+영문 표기). 비교용 정규화가 괄호 속을
+  // 지우므로 따로 꺼낸다. 아티스트까지 맞아야 하는 비교에서만 쓴다(이름만 같은 다른 곡 방지).
+  if (withBrackets) {
+    for (const m of raw.matchAll(/[\(\[（［【]([^()\[\]（）［］【】]+)[\)\]）］】]/g)) {
+      const inner = m[1].trim();
+      if (inner && !NOISE_BRACKET_RE.test(inner)) out.push(inner);
+    }
+  }
   const cleaned = stripFeat(stripTitleNoise(raw));
   if (cleaned && cleaned !== raw) out.push(cleaned);
   const artistKey = normalizeMatch(candidate.artist);
@@ -383,12 +391,12 @@ function candidateTitleVariants(candidate) {
   return out.filter(Boolean);
 }
 
-function bestCandidateTitleScore(candidate, titles) {
-  return candidateTitleVariants(candidate).reduce((best, variant) => Math.max(best, bestTitleScore(variant, titles)), 0);
+function bestCandidateTitleScore(candidate, titles, withBrackets = false) {
+  return candidateTitleVariants(candidate, withBrackets).reduce((best, variant) => Math.max(best, bestTitleScore(variant, titles)), 0);
 }
 
 function lyricMatchScore(candidate, queries, targetDuration = 0) {
-  const title = bestCandidateTitleScore(candidate, queries.titles);
+  const title = bestCandidateTitleScore(candidate, queries.titles, true); // 채택에 아티스트 일치가 필요한 비교 — 괄호 병기 제목 포함
   const primary = bestCandidateTitleScore(candidate, queries.primaryTitles || queries.titles);
   const artist = bestMatchScore(candidate.artist, queries.artists);
   const hasArtistQuery = (queries.artists || []).length > 0;

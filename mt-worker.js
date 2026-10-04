@@ -74,7 +74,7 @@ async function handleSyncJob(data) {
   if (data.type === 'asr') {
     const asr = require('./asr');
     const run = asrBusy.then(() => asr.transcribe(Int16Array.from(data.pcm), {
-      lang: data.lang, offsetMs: data.offsetMs, prompt: data.prompt, threads: data.threads || 2, dtw: true,
+      lang: data.lang, offsetMs: data.offsetMs, prompt: data.prompt, threads: data.threads || 2, dtw: true, durationMs: data.durationMs || 0,
     }));
     asrBusy = run.catch(() => {});
     return run;
@@ -83,7 +83,7 @@ async function handleSyncJob(data) {
   const { alignLyrics, verdict } = require('./lyrics-align');
   const tokenizer = await getTokenizer();
   return (data.candidates || []).map((c) => {
-    const r = alignLyrics(c.lines || [], data.heard || [], tokenizer, { durationMs: data.durationMs || 0 });
+    const r = alignLyrics(c.lines || [], data.heard || [], tokenizer, { durationMs: data.durationMs || 0, heardUntil: data.heardUntil || 0 });
     return { ...r, verdict: verdict(r.score) };
   });
 }
