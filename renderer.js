@@ -3029,6 +3029,23 @@ function updateTranslatedBadges() {
   npTrBadge.title = tip;
 }
 
+// ── 미리 듣기: 자동 싱크용 숨은 분석 임베드 — main(분석 관리자)이 곡 id를 주면 띄우고 null이면 치운다.
+// 거의 투명한 작은 iframe(소리는 analysis-capture.js가 스피커로 내보내지 않는다). 화면 배치·조작에 영향 없음.
+window.ympAnalysis.onLoad((id) => {
+  let f = document.getElementById('analysis-frame');
+  if (!id) { if (f) f.remove(); return; }
+  if (!f) {
+    f = document.createElement('iframe');
+    f.id = 'analysis-frame';
+    f.allow = 'autoplay';
+    f.tabIndex = -1;
+    f.setAttribute('aria-hidden', 'true');
+    f.style.cssText = 'position:fixed;left:0;top:0;width:200px;height:112px;opacity:0.01;pointer-events:none;z-index:-1;border:0';
+    document.body.append(f);
+  }
+  f.src = `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&rel=0&playsinline=1&ymp=analysis`;
+});
+
 // ── 가사 종류 표시: 싱크 가사/텍스트 가사 · 번역 출처 · 자동 싱크 상태를 플레이어 오른쪽 위에 작게 ──
 // 마우스를 움직일 때만 잠깐 보인다(전체화면의 ✕처럼). 플로팅 창에는 띄우지 않는다(사용자 명세).
 const lyricsKindEl = document.getElementById('lyrics-kind');

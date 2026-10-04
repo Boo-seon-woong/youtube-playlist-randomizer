@@ -177,8 +177,17 @@ class SyncEngine {
     }
     const prev = v.windows[v.windows.length - 1];
     const prompt = prev && prev.segs.length ? prev.segs.slice(-3).map((x) => x.text).join(' ').slice(-200) : '';
-    const segs = (await this.runAsr({ pcm, lang: v.lang, offsetMs: w.from, prompt, durationMs: w.last ? 0 : w.span }))
+    let segs = (await this.runAsr({ pcm, lang: v.lang, offsetMs: w.from, prompt, durationMs: w.last ? 0 : w.span }))
       .filter((seg) => !w.tile || seg.t0 < w.from + w.span); // 이어 붙인 뒷부분(반복)은 버린다
+    // whisper가 소리가 있는데도 "♪~"만 내는 실패 — 0.5초 밀고 프롬프트("歌詞")를 주면 풀린다(실측) — 한 번만 다시
+    const letters = segs.map((x) => x.text).join('').replace(/[\s\p{P}\p{S}]/gu, '');
+    let energy = 0;
+    for (let i = 0; i < pcm.length; i += 16) energy += pcm[i] * pcm[i];
+    if (letters.length < 2 && Math.sqrt(energy / Math.max(1, pcm.length / 16)) > 800 && !w.tile) {
+      const shift = Math.round(0.5 * SR);
+      const again = await this.runAsr({ pcm: pcm.subarray(shift), lang: v.lang, offsetMs: w.from + 500, prompt: v.lang === 'ko' ? '가사' : '歌詞', durationMs: w.last ? 0 : Math.max(1000, w.span - 500) });
+      if (again.map((x) => x.text).join('').replace(/[\s\p{P}\p{S}]/gu, '').length > letters.length) segs = again;
+    }
     // 창 끝 근처(1.5초)의 낱말은 잘렸을 수 있어 다음 창에서 다시 — 확정은 토큰 단위로 그 앞까지.
     // (조각 단위로 자르면 창 전체가 한 조각으로 나온 경우 — 이어 붙인 첫 창에서 실측 — 통째로 버려졌다)
     const cut = w.from + w.span;

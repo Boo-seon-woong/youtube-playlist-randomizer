@@ -50,6 +50,11 @@ contextBridge.exposeInMainWorld('lyrics', {
 
 });
 
+// 미리 듣기(자동 싱크용 숨은 분석 임베드) — main이 곡 id를 주면 띄우고 null이면 치운다
+contextBridge.exposeInMainWorld('ympAnalysis', {
+  onLoad: (callback) => ipcRenderer.on('analysis:load', (_event, id) => callback(id)),
+});
+
 contextBridge.exposeInMainWorld('lyricsctl', {
   toggle: () => ipcRenderer.send('lyrics:toggle'),
 });
