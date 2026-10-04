@@ -4,7 +4,7 @@ const os = require('os');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { hasHangul, buildLyricQueries, resolveLyricCandidate, findLyricsCandidates, searchAllLyrics, lyricFailureCount } = require('./lyrics-search');
+const { hasHangul, buildLyricQueries, resolveLyricCandidate, findLyricsCandidates, searchAllLyrics, lyricFailureCount, parseLrc, parsePlainLyrics } = require('./lyrics-search');
 const { LyricsStore, localListIds } = require('./lyrics-store');
 const { SyncEngine } = require('./lyrics-sync');
 const asrRunner = require('./asr');
@@ -2545,6 +2545,47 @@ app.whenReady().then(async () => {
   });
   // 지금 곡의 가사만 삭제(저장본 포함)
   ipcMain.handle('lyrics:delete', () => deleteCurrentLyrics());
+  // 사용자가 붙여넣은 가사 — 본문이면 대략 싱크 → 자동 싱크, "[00:12.34]" 꼴이면 싱크 가사로(그래도 소리로 확인·보정)
+  ipcMain.handle('lyrics:paste', (_event, text) => {
+    const raw = String(text || '').slice(0, 20000);
+    if (!lyricsKey || !raw.trim()) return null;
+    const synced = /\[\d{1,3}:\d{2}/.test(raw) ? parseLrc(raw) : [];
+    const lines = synced.length >= 3 ? synced : parsePlainLyrics(raw);
+    if (lines.length < 2) return null;
+    const data = {
+      source: 'user', id: `${lyricsState.id || 'x'}-${Date.now()}`, title: lyricsState.title, artist: lyricsState.artist,
+      lines, plain: synced.length < 3, hasKorean: lines.some((l) => hasHangul(l.text)),
+    };
+    const display = activateLyrics(lyricsKey, data, { reset: true, userSelected: true });
+    lyricsData = display;
+    lyricsCache.set(lyricsKey, display);
+    sendLyricsToWindow();
+    augmentForeignLyrics(lyricsKey, display);
+    return { lines: lines.length, plain: data.plain };
+  });
+  // "싱크 가사 무시하고 텍스트 가사 찾기" — 텍스트 출처만 다시 찾아 자동 싱크로 맞춘다(이미 들은 소리가 있으면 즉시)
+  ipcMain.handle('lyrics:text-only', async () => {
+    if (!lyricsKey || !lyricsState.id) return null;
+    const state = { ...lyricsState };
+    const key = lyricsKey;
+    const info = fetchVideoMusicInfo(state.id);
+    const alt = state.altTitle && state.altTitle !== state.title ? [{ title: state.altTitle, artist: state.altArtist || state.artist }] : [];
+    let found = null;
+    try {
+      found = await findLyricsCandidates(state.title, state.artist, state.duration, {
+        musicInfo: info.then((i) => (i && i.title ? i : null)), description: info.then((i) => (i && i.description) || ''),
+        videoId: state.id, alt, textOnly: true,
+      });
+    } catch {}
+    if (!found || !found.best || key !== lyricsKey) return null;
+    searchAlternatives.set(key, { alternatives: found.alternatives || [], extras: null });
+    const display = activateLyrics(key, found.best, { reset: true });
+    lyricsData = display;
+    lyricsCache.set(key, display);
+    sendLyricsToWindow();
+    augmentForeignLyrics(key, display);
+    return { source: found.best.source, title: found.best.title, lines: found.best.lines.length };
+  });
   // 유튜브가 광고 차단을 감지하면(워치페이지의 차단 화면) 이 세션에서는 차단을 통째로 끈다 —
   // 감지를 피해 다니는 대신 차단을 그만두는 쪽이 재생을 되살리는 확실한 길이다.
   ipcMain.on('adblock:disable', () => { adBlockEnabled = false; });

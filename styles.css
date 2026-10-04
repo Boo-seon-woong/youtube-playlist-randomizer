@@ -2680,3 +2680,10 @@ body.immersive #lyrics-kind {
   color: #ff8a8a;
   border-color: rgba(255, 138, 138, 0.5);
 }
+
+/* 가사 검색 창: 텍스트 가사로 다시 찾기 + 직접 붙여넣기 */
+#lyrics-manual { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+#lyrics-paste { width: 100%; box-sizing: border-box; resize: vertical; min-height: 84px; padding: 8px 10px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 8px; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 13px; }
+#lyrics-paste:focus { outline: none; border-color: var(--accent); }
+#lyrics-textonly-btn, #lyrics-paste-btn { align-self: flex-start; padding: 6px 12px; border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 999px; background: transparent; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+#lyrics-textonly-btn:hover, #lyrics-paste-btn:hover { border-color: var(--accent); color: var(--accent); }

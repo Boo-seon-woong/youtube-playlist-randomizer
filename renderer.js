@@ -3056,7 +3056,7 @@ const lyricsKindEl = document.getElementById('lyrics-kind');
 const lkMain = document.getElementById('lk-main');
 const lkSync = document.getElementById('lk-sync');
 let lyricsKindTimer = null;
-const LYRIC_SOURCE_LABELS = { alsong: '알송', lrclib: 'LRCLIB', netease: 'NetEase', bugs: 'Bugs', utaten: 'utaten', genius: 'Genius', desc: '영상 설명란' };
+const LYRIC_SOURCE_LABELS = { alsong: '알송', lrclib: 'LRCLIB', netease: 'NetEase', bugs: 'Bugs', utaten: 'utaten', genius: 'Genius', uta5: 'uta5', desc: '영상 설명란', user: '직접 입력' };
 
 function lyricsKindText(d) {
   if (!lyricsPublishedState.id) return null;
@@ -3143,6 +3143,29 @@ function closeLyricsSearch() {
 document.getElementById('lyrics-search-btn').addEventListener('click', openLyricsSearch);
 document.getElementById('lyrics-retry-btn').addEventListener('click', () => { window.lyricsOverlay.retry(); showToast('가사를 다시 찾는 중…'); });
 document.getElementById('lyrics-search-close').addEventListener('click', closeLyricsSearch);
+document.getElementById('lyrics-textonly-btn').addEventListener('click', async () => {
+  lyricsSearchStatus.textContent = '텍스트 가사를 찾는 중…';
+  let r = null;
+  try { r = await window.lyricsOverlay.textOnlySearch(); } catch {}
+  if (r) {
+    closeLyricsSearch();
+    showToast(`텍스트 가사를 적용했습니다 (${LYRIC_SOURCE_LABELS[r.source] || r.source}) — 소리에 맞춰 싱크를 잡습니다`);
+  } else {
+    lyricsSearchStatus.textContent = '텍스트 가사를 찾지 못했습니다 — 가사를 직접 붙여넣을 수 있습니다.';
+  }
+});
+document.getElementById('lyrics-paste-btn').addEventListener('click', async () => {
+  const text = document.getElementById('lyrics-paste').value;
+  let r = null;
+  try { r = await window.lyricsOverlay.pasteLyrics(text); } catch {}
+  if (r) {
+    document.getElementById('lyrics-paste').value = '';
+    closeLyricsSearch();
+    showToast(r.plain ? `가사 ${r.lines}줄을 적용했습니다 — 소리에 맞춰 싱크를 잡습니다` : `싱크 가사 ${r.lines}줄을 적용했습니다`);
+  } else {
+    lyricsSearchStatus.textContent = '붙여넣은 가사가 비었거나 너무 짧습니다(두 줄 이상).';
+  }
+});
 document.getElementById('lyrics-delete-btn').addEventListener('click', async () => {
   let ok = false;
   try { ok = await window.lyricsOverlay.deleteLyrics(); } catch {}

@@ -913,6 +913,20 @@ async function findLyricsCandidates(title, artist, targetDuration, opts = {}) {
     return { best, alternatives, extras };
   };
 
+  // 사용자가 "싱크 가사 무시하고 텍스트 가사 찾기"를 누름 — 싱크 가사가 엉터리이거나 다른 곡일 때. 텍스트 출처(설명란·utaten·
+  // Genius·웹 검색·LRCLIB 본문)만 보고, 하나도 없으면 싱크 가사의 본문만 쓴다(시각은 버림 — 자동 싱크가 소리로 다시 맞춘다)
+  if (opts.textOnly) {
+    const refsAll = await refsPromise.catch(() => []);
+    const plainOut = (c) => ({ ...markLyricLanguage(c), plain: true, fallbackNotice: '싱크 없는 가사' });
+    const asText = (c) => ({ ...c, plain: true, hasKorean: undefined, lines: (c.lines || []).map((l) => ({ time: 0, text: String(l.text).split('\n')[0] })) });
+    let pool = [...(await withTimeout(extras(), 12000) || []), ...refsAll.filter((c) => c.plain)];
+    if (desc && (desc.marked || !pool.length || pool.some((o) => lyricOverlap(desc.lines, o.lines) >= 0.3))) pool.unshift(desc);
+    if (!pool.length) pool = [...refsAll.filter((c) => !c.plain), ...alsong].map(asText);
+    const agreed = pool.find((c) => pool.some((o) => o !== c && o.source !== c.source && lyricOverlap(c.lines, o.lines) >= 0.5));
+    const pick = agreed || pool[0];
+    return pick ? finish(plainOut(pick), pool.filter((c) => c !== pick)) : finish(null, []);
+  }
+
   if (strongKorean && !conflictsWithDesc(strongKorean)) {
     refsPromise.catch(() => {});
     return finish(preferKoreanLabel(strongKorean, alsong, queries), alsong.filter((c) => c !== strongKorean));
@@ -998,6 +1012,7 @@ function lyricFailureCount() {
 }
 
 module.exports = {
+  parsePlainLyrics,
   lyricFailureCount,
   hasHangul,
   parseLrc,

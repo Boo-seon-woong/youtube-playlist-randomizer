@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   parse: (params) => ipcRenderer.invoke('lyrics:parse', params),
   select: (candidate) => ipcRenderer.invoke('lyrics:select', candidate),
   deleteLyrics: () => ipcRenderer.invoke('lyrics:delete'), // 지금 곡의 가사만 삭제(저장본 포함)
+  pasteLyrics: (text) => ipcRenderer.invoke('lyrics:paste', text), // 붙여넣은 가사를 지금 곡의 가사로
+  textOnlySearch: () => ipcRenderer.invoke('lyrics:text-only'), // 싱크 가사 무시하고 텍스트 가사만 다시 찾기
   openSettings: () => ipcRenderer.send('lyrics:settings:open'),
   closeSettings: () => ipcRenderer.send('lyrics:settings:close'),
   setHit: (flag) => ipcRenderer.send('lyrics:hit', flag),
