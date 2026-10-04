@@ -5,12 +5,35 @@
 // 28초) 줄 99%가 ±1초 안이었다. large-v3-turbo는 조금 더 정확하지만 4배 무거워 실시간 처리에 맞지 않는다.
 // 바이너리: asr/win-x64(whisper.cpp b5130 공식 whisper-bin-x64.zip — MSVC 런타임은 Windows에 기본 설치된 것을 쓴다),
 // 개발용 리눅스는 asr/linux-x64(직접 빌드, LD_LIBRARY_PATH로 .so를 찾는다).
+// 그래픽카드 판: asr/win-x64-vk = CrispASR v0.8.41(whisper.cpp 파생, MIT) crispasr-windows-x86_64-vulkan.zip — whisper-cli와
+// 같은 인자·같은 -ojf 결과. 실측(RTX 4060 노트북): 30초 창 CPU 6.5~8.6초 → 1.1초(인코더 2.3초 → 0.08초), 글자 같고 DTW
+// 시각 차이 최대 20ms. 첫 실행만 셰이더 준비로 약 26초(드라이버가 캐시). 내장 그래픽(Radeon 780M)은 이 판에서 처리 중
+// 죽어(exit 9) 외장(gpu)만 쓴다. 더 가벼운 최신 모델은 노래에 못 쓴다(실측: SenseVoice-Small 14배 빠르지만 78줄 중 2줄,
+// Qwen3-ForcedAligner는 60초 넘으면 정렬이 무너지고 메모리 4.7GB).
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 const MODEL = path.join(__dirname, 'models', 'ggml-small-q8_0.bin');
+const GPU_BIN = path.join(__dirname, 'asr', 'win-x64-vk', 'crispasr.exe');
+let gpuDevice; // undefined = 아직 모름, null = 없음(또는 이번 실행에서 실패), { index, name }
+let gpuProbe = null;
+
+// 외장 그래픽카드 찾기: --diagnostics의 "[1] gpu    name=Vulkan1 desc=NVIDIA GeForce RTX 4060 Laptop GPU mem=…" 줄
+function probeGpu() {
+  if (gpuDevice !== undefined) return Promise.resolve(gpuDevice);
+  if (gpuProbe) return gpuProbe;
+  if (process.platform !== 'win32' || !fs.existsSync(GPU_BIN)) { gpuDevice = null; return Promise.resolve(null); }
+  gpuProbe = new Promise((resolve) => {
+    execFile(GPU_BIN, ['--diagnostics'], { windowsHide: true, timeout: 20000 }, (_err, stdout, stderr) => {
+      const m = `${stdout || ''}\n${stderr || ''}`.match(/\]\s+gpu\s+name=Vulkan(\d+)\s+desc=(.*?)\s+mem=/);
+      gpuDevice = m ? { index: Number(m[1]), name: m[2].trim() } : null;
+      resolve(gpuDevice);
+    });
+  });
+  return gpuProbe;
+}
 
 function binPaths() {
   if (process.platform === 'win32') {
@@ -35,8 +58,35 @@ function wavBuffer(pcm, sampleRate = 16000) {
   return Buffer.concat([hdr, data]);
 }
 
+// 토큰 조각을 바이트로 이어 붙여 완성된 글자만 내보낸다. whisper는 한자 한 글자를 바이트 단위 토큰 둘셋으로 내기도 해
+// ("緒" = e7 b7 92가 두 토큰에 나뉨) 토큰마다 따로 UTF-8로 읽으면 "一��に"가 되고 발음으로 못 바꿔 맞춘 줄이 줄었다
+// (실측: 그래픽카드 판에서 자주 — 生命性シンドロウム ±1초 66% → 31%; CPU 판에서도 가끔). 글자 시각은 첫 바이트가 든 토큰의 것.
+function joinTokenBytes(tokens) {
+  const out = [];
+  let pending = Buffer.alloc(0);
+  let pendingT = 0;
+  for (const tok of tokens) {
+    if (!pending.length) pendingT = tok.t;
+    pending = Buffer.concat([pending, Buffer.from(tok.text, 'latin1')]);
+    // 끝에서 잘린 글자(이어지는 바이트가 모자란 것)는 다음 토큰을 기다린다
+    let i = pending.length - 1;
+    while (i > 0 && pending.length - i < 4 && (pending[i] & 0xc0) === 0x80) i--;
+    const lead = pending[i];
+    const need = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+    const done = pending.length - i >= need ? pending.length : i;
+    if (done > 0) {
+      out.push({ text: pending.subarray(0, done).toString('utf8'), t: pendingT });
+      pending = pending.subarray(done);
+      pendingT = tok.t;
+    }
+  }
+  if (pending.length) out.push({ text: pending.toString('utf8'), t: pendingT });
+  return out;
+}
+
 // whisper-cli의 -ojf 결과 → [{t0, t1, text, tokens:[{text, t}]}] (offsetMs를 더해 곡 기준 시각으로)
-function parseWhisperJson(json, offsetMs = 0) {
+// opts.latin1: JSON을 latin1로 읽은 것(토큰 text의 한 글자 = 한 바이트) — 토큰 바이트를 이어 글자를 완성한다
+function parseWhisperJson(json, offsetMs = 0, opts = {}) {
   const out = [];
   for (const seg of (json && json.transcription) || []) {
     const segFrom = seg.offsets.from;
@@ -52,6 +102,9 @@ function parseWhisperJson(json, offsetMs = 0) {
         const ok = dtw >= 0 && dtw >= segFrom - 1000 && dtw <= segTo + 1000;
         return { text: t.text, t: offsetMs + (ok ? dtw : from) };
       });
+    const joined = opts.latin1 ? joinTokenBytes(tokens) : tokens;
+    tokens.length = 0;
+    tokens.push(...joined);
     const text = tokens.map((t) => t.text).join('').trim();
     if (!text) continue;
     out.push({ t0: offsetMs + seg.offsets.from, t1: offsetMs + seg.offsets.to, text, tokens });
@@ -81,15 +134,33 @@ function dropRepeats(segs) {
 let seq = 0;
 let current = null; // 지금 돌고 있는 whisper 프로세스(취소용)
 
-// pcm: Int16Array(16kHz 모노). opts: { lang, threads, offsetMs, prompt }
+// pcm: Int16Array(16kHz 모노). opts: { lang, threads, offsetMs, prompt, dtw, durationMs, gpu }
+// gpu: 외장 그래픽카드가 있으면 그쪽으로 — 실패하면(취소 제외) 이번 실행 동안은 CPU 판만 쓰고 이 창도 CPU로 다시 한다.
 function transcribe(pcm, opts = {}) {
+  return (opts.gpu ? probeGpu() : Promise.resolve(null)).then((dev) => {
+    if (!dev) return runWhisper(pcm, opts, null);
+    return runWhisper(pcm, opts, dev).catch((err) => {
+      if (err && err.cancelled) throw err;
+      gpuDevice = null;
+      return runWhisper(pcm, opts, null);
+    });
+  });
+}
+
+function runWhisper(pcm, opts, gpu) {
   return new Promise((resolve, reject) => {
-    const { bin, env } = binPaths();
+    const { bin, env } = gpu
+      // 보이는 Vulkan 장치를 그 하나로 줄이고 -dev 0 (여럿 보이면 -dev 번호가 CPU로 빠졌다 — 실측)
+      ? { bin: GPU_BIN, env: { ...process.env, GGML_VK_VISIBLE_DEVICES: String(gpu.index) } }
+      : binPaths();
     const base = path.join(os.tmpdir(), `ymp-asr-${process.pid}-${++seq}`);
     const wav = `${base}.wav`;
     try { fs.writeFileSync(wav, wavBuffer(pcm)); } catch (err) { reject(err); return; }
     // -bs 1 -bo 1: 탐욕 디코딩(빔 5 대비 30초 창 17.0→12.9초, 정확도 차이 없음 — 실측)
-    const args = ['-m', MODEL, '-f', wav, '-l', opts.lang || 'auto', '-t', String(opts.threads || 2), '-ojf', '-of', base, '-np', '-bs', '1', '-bo', '1'];
+    // 그래픽카드 판은 CPU를 멜 계산·토큰 고르기에만 쓴다 — 2스레드면 충분
+    const threads = gpu ? 2 : opts.threads || 2;
+    const args = ['-m', MODEL, '-f', wav, '-l', opts.lang || 'auto', '-t', String(threads), '-ojf', '-of', base, '-np', '-bs', '1', '-bo', '1'];
+    if (gpu) args.push('-dev', '0');
     // -d: 이 길이까지만 처리 — whisper는 마지막 조각이 창 끝보다 일찍 끝나면 남은 몇 초를 위해 인코더를 한 번 더(30초 분량)
     // 돌린다(실측: 30초 창마다 인코더 2회). 창의 앞부분만 확정하고 다음 창을 그 지점부터 시작하면 그 낭비가 거의 없다.
     if (opts.durationMs > 0) args.push('-d', String(Math.round(opts.durationMs)));
@@ -105,16 +176,21 @@ function transcribe(pcm, opts = {}) {
     child.on('close', (code) => {
       current = null;
       let json = null;
-      try { json = JSON.parse(fs.readFileSync(`${base}.json`, 'utf8')); } catch {}
+      try { json = JSON.parse(fs.readFileSync(`${base}.json`).toString('latin1')); } catch {}
       cleanup();
-      if (!json) { reject(new Error(`whisper exit ${code}: ${err.slice(-300)}`)); return; }
-      resolve(parseWhisperJson(json, opts.offsetMs || 0));
+      if (!json) {
+        const e = new Error(`whisper exit ${code}: ${err.slice(-300)}`);
+        e.cancelled = !!child.cancelled;
+        reject(e);
+        return;
+      }
+      resolve(parseWhisperJson(json, opts.offsetMs || 0, { latin1: true }));
     });
   });
 }
 
 function cancelCurrent() {
-  if (current) { try { current.kill(); } catch {} }
+  if (current) { current.cancelled = true; try { current.kill(); } catch {} }
 }
 
 module.exports = { available, transcribe, cancelCurrent, parseWhisperJson, wavBuffer, MODEL };

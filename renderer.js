@@ -1507,6 +1507,7 @@ const lsToggleInputs = {
   alwaysOnTop: document.getElementById('ls-topmost'),
   clickThrough: document.getElementById('ls-lock'),
   autoSync: document.getElementById('ls-autosync'),
+  asrGpu: document.getElementById('ls-asrgpu'),
 };
 
 function paintLyricsSettings(next) {

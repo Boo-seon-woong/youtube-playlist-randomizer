@@ -146,6 +146,8 @@ const DEFAULT_LYRICS_SETTINGS = {
   foreignModeV: 2, // 기본값을 pron → pron+web으로 바꾼 버전 표시(예전 기본값 그대로 저장된 설정만 1회 옮긴다)
   // 자동 싱크: 싱크 없는 텍스트 가사를 재생되는 소리(음성 인식)에 맞추고, 싱크 가사도 소리로 곡이 맞는지·어긋남을 확인한다
   autoSync: true,
+  // 자동 싱크 음성 인식을 외장 그래픽카드(Vulkan)로 — 30초 구간 CPU 7~9초 → 1초 남짓(실측). 게임이 끊기면 끈다
+  asrGpu: true,
   showTrackInfo: true,
   coverMode: 'art', // 왼쪽 사각형: 'none' | 'art'(앨범 이미지) | 'video'(영상 작게 — 음소거 미러 임베드)
   videoFit: 'cover', // 영상 맞춤: 'cover'(상하 기준으로 채우고 좌우는 잘림) | 'contain'(전체가 보이도록)
@@ -192,6 +194,7 @@ function normalizeLyricsSettings(value) {
       : FOREIGN_MODES.includes(source.foreignMode) ? source.foreignMode : DEFAULT_LYRICS_SETTINGS.foreignMode,
     foreignModeV: 2,
     autoSync: boolean('autoSync'),
+    asrGpu: boolean('asrGpu'),
     showTrackInfo: boolean('showTrackInfo'),
     coverMode,
     videoFit: VIDEO_FITS.includes(source.videoFit) ? source.videoFit : DEFAULT_LYRICS_SETTINGS.videoFit,
@@ -574,7 +577,7 @@ function runWorkerJob(payload) {
 }
 
 const syncEngine = new SyncEngine({
-  runAsr: (job) => runWorkerJob({ type: 'asr', pcm: job.pcm, lang: job.lang, offsetMs: job.offsetMs, prompt: job.prompt, durationMs: job.durationMs, threads: ASR_THREADS }),
+  runAsr: (job) => runWorkerJob({ type: 'asr', pcm: job.pcm, lang: job.lang, offsetMs: job.offsetMs, prompt: job.prompt, durationMs: job.durationMs, threads: ASR_THREADS, gpu: lyricsSettings.asrGpu }),
   runAlign: (job) => runWorkerJob({ type: 'align', candidates: job.candidates.map((c) => ({ lines: c.lines })), heard: job.heard, durationMs: job.durationMs, heardUntil: job.heardUntil }),
   onResult: (vid, r) => applySyncResult(vid, r),
 });
