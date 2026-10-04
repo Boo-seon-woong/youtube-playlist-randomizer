@@ -1866,6 +1866,22 @@ body.seeking #progress-fill::after {
   color: rgba(255, 255, 255, 0.9);
 }
 
+/* 영어가 아닌 외국어: 원문은 작게, 발음·번역을 크게(사용자 요청 — 읽는 건 발음·번역) */
+.lo-block.foreign .lo-main {
+  font-size: calc(clamp(12px, 1.3vw, 20px) * var(--lv-scale, 1));
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.72);
+}
+.lo-block.foreign .lo-sub {
+  font-size: calc(clamp(15px, 1.9vw, 30px) * var(--lv-scale, 1));
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+.lo-block.foreign .lo-sub:last-child {
+  font-size: calc(clamp(18px, 2.3vw, 36px) * var(--lv-scale, 1));
+  color: #fff;
+}
+
 #lyrics-overlay-msg {
   position: absolute;
   right: 5%;

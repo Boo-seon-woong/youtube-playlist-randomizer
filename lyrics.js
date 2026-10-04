@@ -157,15 +157,19 @@ function formatTime(ms) {
 }
 
 // 한 블록 = 같은 시각의 줄 묶음(원문·발음·번역). 줄마다 칩 배경을 두른다.
+// 영어가 아닌 외국어 원문(가나·한자·키릴 등, 한글 없음)에 발음·번역 줄이 딸린 블록은 원문을 작게 — 읽는 건 발음·번역이다(사용자 요청)
+const FOREIGN_RE = /[\u3040-\u30ff\u4e00-\u9fff\u0400-\u04ff\u0e00-\u0e7f]/;
 function lineElement(line, className) {
   const el = document.createElement('div');
-  el.className = `lyric-block ${className}${line ? '' : ' empty'}`;
-  for (const text of (line ? String(line.text).split('\n') : ['♪'])) {
+  const parts = line ? String(line.text).split('\n') : ['♪'];
+  const foreign = parts.length > 1 && FOREIGN_RE.test(parts[0]) && !/[\uac00-\ud7a3]/.test(parts[0]);
+  el.className = `lyric-block ${className}${line ? '' : ' empty'}${foreign ? ' foreign' : ''}`;
+  parts.forEach((text, i) => {
     const chip = document.createElement('span');
-    chip.className = 'lyric-chip';
+    chip.className = i === 0 && foreign ? 'lyric-chip orig' : 'lyric-chip';
     chip.textContent = text;
     el.append(chip);
-  }
+  });
   return el;
 }
 

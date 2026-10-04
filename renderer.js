@@ -2961,8 +2961,12 @@ function renderLyricsView() {
   const lines = (lyricsViewData && lyricsViewData.lines) || [];
   for (const line of lines) {
     const li = document.createElement('li');
-    li.className = 'lo-block far';
-    String(line.text).split('\n').forEach((part, i) => {
+    const parts = String(line.text).split('\n');
+    // 영어가 아닌 외국어 원문에 발음·번역 줄이 딸리면 원문을 작게(사용자 요청 — 플로팅 창과 같은 규칙)
+    const foreign = parts.length > 1 && /[\u3040-\u30ff\u4e00-\u9fff\u0400-\u04ff\u0e00-\u0e7f]/.test(parts[0]) && !/[\uac00-\ud7a3]/.test(parts[0]);
+    li.className = foreign ? 'lo-block far foreign' : 'lo-block far';
+    li.dataset.foreign = foreign ? '1' : '';
+    parts.forEach((part, i) => {
       const el = document.createElement('div');
       el.className = i === 0 ? 'lo-main' : 'lo-sub';
       el.textContent = part;
@@ -2977,7 +2981,7 @@ function renderLyricsView() {
   lyricsViewMsg.textContent = msg;
   lyricsViewMsg.hidden = !msg;
   if (plain) {
-    for (const li of lyricsViewList.children) li.className = 'lo-block plain';
+    for (const li of lyricsViewList.children) li.className = `lo-block plain${li.dataset.foreign ? ' foreign' : ''}`;
     lyricsPlainScroll = lyricsViewport.clientHeight * 0.18;
     applyPlainScroll();
   }
@@ -3009,7 +3013,7 @@ function tickLyricsView(force) {
   const center = Math.max(index, 0);
   for (let i = 0; i < blocks.length; i++) {
     const d = Math.abs(i - center);
-    blocks[i].className = `lo-block ${i === index ? 'current' : d <= 1 ? 'd1' : d === 2 ? 'd2' : d === 3 ? 'd3' : 'far'}`;
+    blocks[i].className = `lo-block ${i === index ? 'current' : d <= 1 ? 'd1' : d === 2 ? 'd2' : d === 3 ? 'd3' : 'far'}${blocks[i].dataset.foreign ? ' foreign' : ''}`;
   }
   const target = blocks[center];
   const y = lyricsViewport.clientHeight / 2 - target.offsetTop - target.offsetHeight / 2;

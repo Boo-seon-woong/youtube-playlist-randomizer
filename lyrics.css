@@ -305,6 +305,16 @@ body.video-cover #lyrics-video {
 
 .lyric-block.empty .lyric-chip { color: rgba(255, 255, 255, 0.34); }
 
+/* 영어가 아닌 외국어 원문은 발음·번역보다 작게(사용자 요청) — lyrics.js lineElement가 .foreign/.orig를 붙인다 */
+.lyric-block.foreign .lyric-chip.orig {
+  font-size: calc(var(--lyrics-font-size) * 0.72);
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.78);
+}
+.lyric-block.foreign.previous .lyric-chip.orig, .lyric-block.foreign.next .lyric-chip.orig {
+  font-size: calc(var(--lyrics-font-size) * 0.56);
+}
+
 
 /* ── 마우스를 올렸을 때만 보이는 동작 버튼 ── */
 
