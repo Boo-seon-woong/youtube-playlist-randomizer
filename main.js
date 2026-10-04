@@ -254,13 +254,26 @@ function sendLyricsToMain() {
   mainWindow.webContents.send('lyrics:data', lyricsData);
 }
 
+// 재생 상태(진행 위치)는 250ms마다 오지만 가사·설정은 바뀔 때만 보낸다. 예전엔 셋을 매번 보내 플로팅 창이
+// 초당 4번 설정 전체를 다시 적용(문서 전체 스타일 재계산)하고 가사 줄 DOM을 새로 만들었다 — 게임 프레임 저하 원인.
+// 가사·설정은 바뀔 때 늘 새 객체로 교체되므로(제자리 수정 없음) 참조 비교로 충분하다.
+// 창은 곡(id·제목·아티스트)이 바뀐 상태를 받으면 가사를 비우므로 그때는 가사를 다시 보낸다.
 function sendLyricsToWindow() {
   sendLyricsToMain();
   if (!lyricsWindow || lyricsWindow.isDestroyed() || lyricsWindow.webContents.isLoading()) return;
   if (appTheme && !lyricsWindow.__themeSent) { lyricsWindow.__themeSent = true; lyricsWindow.webContents.send('lyrics:theme', appTheme); }
+  const sent = lyricsWindow.__sent || (lyricsWindow.__sent = {});
+  const trackKey = `${lyricsState.id}\u0000${lyricsState.title}\u0000${lyricsState.artist}`;
   lyricsWindow.webContents.send('lyrics:state', lyricsState);
-  lyricsWindow.webContents.send('lyrics:data', lyricsData);
-  lyricsWindow.webContents.send('lyrics:settings', lyricsSettings);
+  if (sent.data !== lyricsData || sent.trackKey !== trackKey) {
+    sent.data = lyricsData;
+    sent.trackKey = trackKey;
+    lyricsWindow.webContents.send('lyrics:data', lyricsData);
+  }
+  if (sent.settings !== lyricsSettings) {
+    sent.settings = lyricsSettings;
+    lyricsWindow.webContents.send('lyrics:settings', lyricsSettings);
+  }
 }
 
 // 메인 앱 테마(포인트·배경·패널 색)를 가사 창과 설정 팝업에도 뿌린다 — 재생바·슬라이더·카드 배경이 따라간다
@@ -860,6 +873,8 @@ async function pollAnalysis() {
     const frame = findAnalysisFrame(vid);
     if (!frame) { if (now - analysis.startedAt > 15000) finishAnalysis(false); return; }
     if (!analysis.injected) {
+      // 소리만 받으면 되므로 영상은 최저 화질(144p) — 5.5배속 디코딩 부담을 줄인다
+      capEmbedQuality(frame, 'tiny');
       try { await frame.executeJavaScript(ANALYSIS_CODE); analysis.injected = true; } catch {}
       return;
     }
@@ -1594,11 +1609,24 @@ function showLyricsWindow() {
       saveLyricsBounds();
     });
     lyricsWindow.on('closed', () => { lyricsWindow = null; });
-    lyricsWindow.webContents.on('did-finish-load', sendLyricsToWindow);
-    // '영상 작게 표시'의 미러 임베드도 메인 창과 똑같이 유튜브 자체 UI를 지운다
+    // 숨겨도(Alt+3) 백그라운드 절전을 꺼 둬 미러 영상이 계속 디코딩·합성된다 — 창에 알려 멈추게 한다
+    const win = lyricsWindow;
+    const sendVisible = (flag) => { if (!win.isDestroyed()) win.webContents.send('lyrics:visible', flag); };
+    win.on('show', () => sendVisible(true));
+    win.on('hide', () => sendVisible(false));
+    lyricsWindow.webContents.on('did-finish-load', () => {
+      // 새로 뜬 페이지는 아무것도 받지 않은 상태 — 바뀔 때만 보내기 기록을 지운다
+      if (lyricsWindow && !lyricsWindow.isDestroyed()) lyricsWindow.__sent = null;
+      sendLyricsToWindow();
+    });
+    // '영상 작게 표시'의 미러 임베드도 메인 창과 똑같이 유튜브 자체 UI를 지운다(+ 작은 칸이라 240p로)
     lyricsWindow.webContents.on('did-frame-finish-load', (_event, isMainFrame, frameProcessId, frameRoutingId) => {
       if (isMainFrame) return;
-      try { hideEmbedChrome(webFrameMain.fromId(frameProcessId, frameRoutingId)); } catch {}
+      try {
+        const frame = webFrameMain.fromId(frameProcessId, frameRoutingId);
+        hideEmbedChrome(frame);
+        capEmbedQuality(frame, 'small');
+      } catch {}
     });
     lyricsWindow.loadURL(`http://127.0.0.1:${lyricsServerPort}/lyrics.html`);
   }
@@ -2164,6 +2192,34 @@ const EMBED_CHROME_CSS = `
   }
 `;
 
+// 작게 보이거나(가사 창 미러, 약 200px) 아예 안 보이는(미리 듣기) 임베드는 낮은 화질로 고정한다 — 유튜브 자동 화질은
+// 200px 미러에도 480p를 골랐다(실측). 디코딩·합성 부담이 화질에 비례하고, 미리 듣기는 5.5배속이라 더 크다.
+// setPlaybackQualityRange는 고른 화질을 localStorage 'yt-player-quality'(유튜브 프레임 공통, 1년)에 저장해 메인 창 영상까지
+// 240p로 떨어뜨린다(실측) — 이 프레임에서만 그 저장을 막는다. 곡이 바뀌면(loadedmetadata) 다시 건다.
+function qualityCapSnippet(quality) {
+  return `(() => {
+    window.__ympQualityCap = ${JSON.stringify(quality)};
+    const apply = () => {
+      const p = document.getElementById('movie_player');
+      const cap = window.__ympQualityCap;
+      if (!p || typeof p.setPlaybackQualityRange !== 'function' || p.getPlaybackQuality() === cap) return;
+      try { p.setPlaybackQualityRange(cap, cap); } catch (e) {}
+    };
+    if (!window.__ympQualityHook) {
+      window.__ympQualityHook = true;
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (k, v) { if (k === 'yt-player-quality') return; return setItem.call(this, k, v); };
+      document.addEventListener('loadedmetadata', apply, true);
+    }
+    apply();
+  })()`;
+}
+
+function capEmbedQuality(frame, quality) {
+  if (!frame || typeof frame.url !== 'string' || !/youtube(-nocookie)?\.com\/embed\//.test(frame.url)) return;
+  frame.executeJavaScript(qualityCapSnippet(quality)).catch(() => {});
+}
+
 function refreshEmbedChrome(wc) {
   if (!wc || wc.isDestroyed()) return;
   // 곡마다 불린다 — 임베드 iframe이 그 사이 새로 로드됐어도 가드를 다시 심어 둔다(이미 있으면 무시됨).
@@ -2172,6 +2228,7 @@ function refreshEmbedChrome(wc) {
   try {
     for (const frame of wc.mainFrame.framesInSubtree) {
       if (isMain) installAudioGuard(frame);
+      else capEmbedQuality(frame, 'small');
       hideEmbedChrome(frame);
     }
   } catch {}

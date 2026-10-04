@@ -96,6 +96,8 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
   },
   onDragging: (callback) => ipcRenderer.on('lyrics:dragging', (_event, flag) => callback(flag)),
   onFlash: (callback) => ipcRenderer.on('lyrics:flash', (_event, text) => callback(text)),
+  // 플로팅 창이 숨겨졌는지(Alt+3) — 숨은 동안 미러 영상을 멈춘다
+  onVisible: (callback) => ipcRenderer.on('lyrics:visible', (_event, flag) => callback(flag)),
   // 곡별 가사 싱크 보정(ms) — Alt+A/D
   onOffset: (callback) => ipcRenderer.on('lyrics:offset', (_event, ms) => callback(ms)),
   onScroll: (callback) => ipcRenderer.on('lyrics:scroll', (_event, delta) => callback(delta)), // Alt+Z/X

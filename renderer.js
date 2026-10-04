@@ -2810,15 +2810,21 @@ function fractionFromEvent(e) {
   return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
 }
 
+// 같은 글자는 다시 쓰지 않는다 — 같은 값이라도 다시 쓰면 레이아웃·다시 그리기가 일어난다(주기적으로 도는 표시용)
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+let progressBarWidth = '';
+
 function paintProgressBar() {
   const duration = lyricsPublishedState.duration;
   const progress = seekPreview != null ? seekPreview * duration : lyricsProgressNow();
-  progressFill.style.width = duration > 0 ? `${Math.min(100, Math.max(0, progress / duration * 100))}%` : '0%';
-  pbElapsed.textContent = formatClock(progress);
-  pbDuration.textContent = formatClock(duration);
+  const width = duration > 0 ? `${Math.min(100, Math.max(0, progress / duration * 100)).toFixed(2)}%` : '0%';
+  if (width !== progressBarWidth) { progressBarWidth = width; progressFill.style.width = width; }
+  setText(pbElapsed, formatClock(progress));
+  setText(pbDuration, formatClock(duration));
   const playing = lyricsPublishedState.status === 'playing';
   playBtn.classList.toggle('paused', !playing);
-  playBtn.title = playing ? '일시정지' : '재생';
+  const tip = playing ? '일시정지' : '재생';
+  if (playBtn.title !== tip) playBtn.title = tip;
 }
 
 progressTrack.addEventListener('pointerdown', (e) => {
@@ -2991,13 +2997,13 @@ function renderLyricsView() {
 
 function tickLyricsView(force) {
   const s = lyricsPublishedState;
-  loTitle.textContent = s.title || '';
-  loArtist.textContent = s.artist || '';
+  setText(loTitle, s.title || '');
+  setText(loArtist, s.artist || '');
   if (loThumb.dataset.src !== (s.coverUrl || '')) {
     loThumb.dataset.src = s.coverUrl || '';
     loThumb.src = s.coverUrl || '';
   }
-  loTime.textContent = `${formatClock(lyricsProgressNow())} / ${formatClock(s.duration)}`;
+  setText(loTime, `${formatClock(lyricsProgressNow())} / ${formatClock(s.duration)}`);
   loPause.classList.toggle('paused', s.status !== 'playing');
 
   const blocks = lyricsViewList.children;
@@ -3035,7 +3041,9 @@ function updateTranslatedBadges() {
 }
 
 // ── 미리 듣기: 자동 싱크용 숨은 분석 임베드 — main(분석 관리자)이 곡 id를 주면 띄우고 null이면 치운다.
-// 거의 투명한 작은 iframe(소리는 analysis-capture.js가 스피커로 내보내지 않는다). 화면 배치·조작에 영향 없음.
+// 화면 밖에 둔 작은 iframe(소리는 analysis-capture.js가 스피커로 내보내지 않는다). 화면 배치·조작에 영향 없음.
+// 예전엔 화면 안(왼쪽 위, 투명도 0.01)에 두어 5.5배속 영상 프레임마다 창 전체가 다시 합성됐다 — 화면 밖이면 합성할
+// 것이 없다(실측: 화면 밖에서도 소리 받기·5.5배속 재생 그대로).
 window.ympAnalysis.onLoad((id) => {
   let f = document.getElementById('analysis-frame');
   if (!id) { if (f) f.remove(); return; }
@@ -3045,7 +3053,7 @@ window.ympAnalysis.onLoad((id) => {
     f.allow = 'autoplay';
     f.tabIndex = -1;
     f.setAttribute('aria-hidden', 'true');
-    f.style.cssText = 'position:fixed;left:0;top:0;width:200px;height:112px;opacity:0.01;pointer-events:none;z-index:-1;border:0';
+    f.style.cssText = 'position:fixed;left:-10000px;top:0;width:200px;height:112px;pointer-events:none;z-index:-1;border:0';
     document.body.append(f);
   }
   f.src = `https://www.youtube.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&rel=0&playsinline=1&ymp=analysis`;

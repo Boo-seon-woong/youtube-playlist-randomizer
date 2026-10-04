@@ -229,10 +229,18 @@ function miniLive() {
   return !!(mini && miniReady && playback.id && miniId === playback.id && !miniBlocked.has(playback.id));
 }
 
+// 창이 숨겨진 동안(Alt+3)은 미러를 멈춘다 — 보이지 않는 영상을 계속 디코딩·합성하지 않게. 다시 보이면 지금 위치에서 다시 띄운다.
+let windowShown = true;
+window.lyricsOverlay.onVisible((flag) => {
+  windowShown = !!flag;
+  syncMiniVideo();
+  render();
+});
+
 function syncMiniVideo() {
   if (!mini || !miniReady) return;
   const id = playback.id;
-  if (!id || miniBlocked.has(id) || playback.status === 'idle') {
+  if (!id || miniBlocked.has(id) || playback.status === 'idle' || !windowShown) {
     if (miniId) { miniId = ''; try { mini.stopVideo(); } catch {} }
     return;
   }
@@ -262,6 +270,12 @@ function translatedTip(data) {
     : '한글 가사를 찾지 못해 내장 모델로 번역한 가사입니다';
 }
 
+// 같은 값은 다시 쓰지 않는다 — 같은 글자·속성이라도 다시 쓰면 레이아웃·다시 그리기가 일어난다
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+function setHidden(el, flag) { if (el.hidden !== flag) el.hidden = flag; }
+function setTitle(el, text) { if (el.title !== text) el.title = text; }
+let progressWidth = '';
+
 function render() {
   // 가사를 찾았으면 유튜브 제목 대신 가사 DB의 곡명·아티스트를 보여준다.
   // 단, 지금 표시 중인 유튜브 제목이 한글인데 DB 제목이 원어라면 한글 쪽을 유지한다
@@ -269,32 +283,53 @@ function render() {
   const ko = (t) => /[가-힣]/.test(String(t || ''));
   const matched = lyricData && !lyricData.unavailable && lyricData.title;
   const useDbTitle = matched && (ko(lyricData.title) || !ko(playback.title));
-  title.textContent = useDbTitle ? lyricData.title : (playback.title || '');
-  artist.textContent = matched && (ko(lyricData.artist) || !ko(playback.artist))
-    ? (lyricData.artist || playback.artist || '') : (playback.artist || '');
+  setText(title, useDbTitle ? lyricData.title : (playback.title || ''));
+  setText(artist, matched && (ko(lyricData.artist) || !ko(playback.artist))
+    ? (lyricData.artist || playback.artist || '') : (playback.artist || ''));
   // 한글 가사를 못 찾아 번역으로 채운 경우 — 찾은 가사로 오해하지 않게 제목 옆에 표시
-  trBadge.hidden = !(lyricData && lyricData.machineTranslated);
-  trBadge.title = translatedTip(lyricData);
+  setHidden(trBadge, !(lyricData && lyricData.machineTranslated));
+  setTitle(trBadge, translatedTip(lyricData));
   if (cover.dataset.src !== (playback.coverUrl || '')) {
     cover.dataset.src = playback.coverUrl || '';
     cover.src = playback.coverUrl || '';
   }
   const live = miniLive();
-  videoWrap.hidden = !live;
-  cover.hidden = !playback.coverUrl || lyricsSettings.coverMode === 'none' || live;
+  setHidden(videoWrap, !live);
+  setHidden(cover, !playback.coverUrl || lyricsSettings.coverMode === 'none' || live);
   card.classList.toggle('paused', playback.status === 'paused');
   const progress = currentProgress();
-  elapsedEl.textContent = formatTime(progress);
-  durationEl.textContent = formatTime(playback.duration);
-  progressFill.style.width = playback.duration > 0 ? `${Math.min(100, Math.max(0, progress / playback.duration * 100))}%` : '0%';
-  pauseButton.textContent = playback.status === 'playing' ? 'Ⅱ' : '▶';
-  pauseButton.title = playback.status === 'playing' ? '일시정지' : '재생';
+  setText(elapsedEl, formatTime(progress));
+  setText(durationEl, formatTime(playback.duration));
+  // 재생바는 경과 시간 글자와 같이 1초 단위로 움직인다(창 폭에서 1초는 1px 안팎) — 상태가 올 때마다(250ms) 다시 그리지 않게
+  const shown = Math.floor(progress / 1000) * 1000;
+  const width = playback.duration > 0 ? `${Math.min(100, Math.max(0, shown / playback.duration * 100)).toFixed(2)}%` : '0%';
+  if (width !== progressWidth) { progressWidth = width; progressFill.style.width = width; }
+  setText(pauseButton, playback.status === 'playing' ? 'Ⅱ' : '▶');
+  setTitle(pauseButton, playback.status === 'playing' ? '일시정지' : '재생');
   if (!volumeDragging) {
-    volumeSlider.value = Math.round(playback.volume);
-    volumeValue.textContent = String(Math.round(playback.volume));
+    const volume = String(Math.round(playback.volume));
+    if (volumeSlider.value !== volume) volumeSlider.value = volume;
+    setText(volumeValue, volume);
   }
 
-  renderLines(currentIndex(progress));
+  const index = currentIndex(progress);
+  renderLines(index);
+  scheduleRender(progress, index);
+}
+
+// 다음 그리기 예약. 예전엔 매 프레임(rAF — 고주사율 화면이면 초당 144~165번) 전체를 다시 그려, 게임 위에 떠 있는
+// 투명 창이 쉬지 않고 합성되며 게임 프레임을 깎았다. 이제 화면이 실제로 바뀌는 때만 그린다: 다음 가사 줄이
+// 시작되는 순간과 경과 시간 글자가 바뀌는 순간(1초마다, 재생바도 함께). 재생 상태가 올 때(250ms마다)도 render()가 돌지만
+// 바뀐 값이 없으면 아무것도 쓰지 않는다. 일시정지·대기 중에는 예약 없이 상태가 올 때만 그린다.
+let renderTimer = null;
+function scheduleRender(progress, index) {
+  clearTimeout(renderTimer);
+  renderTimer = null;
+  if (panelMode || playback.status !== 'playing') return;
+  let wait = 1000 - (progress % 1000);
+  const lines = lyricData && !lyricData.plain && lyricData.lines;
+  if (lines && index + 1 < lines.length) wait = Math.min(wait, lines[index + 1].time - 225 - lyricsOffset - progress);
+  renderTimer = setTimeout(render, Math.max(20, Math.min(1000, wait + 5)));
 }
 
 // 가사 줄: 예전엔 이전·현재·다음 3블록 고정이라 창을 키우고 글씨를 줄여도 3줄뿐이었다.
@@ -374,13 +409,13 @@ function renderLines(index) {
   }
 }
 
-function animate() {
-  if (!panelMode) render();
-  requestAnimationFrame(animate);
-}
-
-// 미러 동기화는 rAF가 아니라 인터벌로 — 창이 가려져 rAF가 멈춰도 곡 전환·시킹을 따라간다
-setInterval(() => { if (!panelMode) syncMiniVideo(); }, 500);
+// 미러 동기화는 rAF가 아니라 인터벌로 — 창이 가려져 rAF가 멈춰도 곡 전환·시킹을 따라간다.
+// 미러가 준비되거나 막혀 영상/앨범 표시가 바뀌어야 하면 그때 한 번 그린다(매 프레임 그리기는 없앴다).
+setInterval(() => {
+  if (panelMode) return;
+  syncMiniVideo();
+  if (videoWrap.hidden === miniLive()) render();
+}, 500);
 
 // ── 재생바 클릭 → 곡의 해당 지점으로 이동 (메인 창이 seek 수행) ──
 progressTrack.addEventListener('click', (event) => {
@@ -495,7 +530,7 @@ window.lyricsOverlay.onOffset((ms) => {
 });
 window.lyricsOverlay.getOffset().then((ms) => { lyricsOffset = Number(ms) || 0; }).catch(() => {});
 // 창 크기가 바뀌면 들어가는 줄 수도 바뀐다
-window.addEventListener('resize', () => { linesKey = ''; });
+window.addEventListener('resize', () => { linesKey = ''; render(); });
 
 // 탐색·새로고침·숨기기 버튼은 제거(가사 검색은 메인 창에서) — 설정 톱니만 남긴다
 document.getElementById('lyrics-search-close').addEventListener('click', hideSearch);
@@ -565,4 +600,3 @@ window.lyricsOverlay.onSettings(applyLyricsSettings);
 window.lyricsOverlay.getSettings().then(applyLyricsSettings).catch(() => applyLyricsSettings(lyricsSettings));
 
 render();
-requestAnimationFrame(animate);
