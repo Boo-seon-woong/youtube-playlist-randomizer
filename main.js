@@ -589,8 +589,46 @@ function runWorkerJob(payload) {
   }).finally(() => scheduleMtWorkerStop());
 }
 
+// ── 게임 중 양보 ──
+// 전체 화면 프로그램(게임 등)이 앞에 있으면 자동 싱크 계산을 조용히 돌린다: 음성 인식은 그래픽카드 대신 CPU 2스레드(IDLE),
+// 미리 듣기는 약 3배속. 실측(RTX 4060 노트북, DJMAX 실행 중): 그래픽카드 판은 30초 창마다 VRAM을 +817MB 올렸다 내리고
+// GPU 사용률 50→70%·전력 35→49W가 1초쯤 치솟는다(곡당 8~9번) — 게임 프레임이 끊기는 형태다. CPU 2스레드는 창당
+// 12.5초(CPU 23초)로 느리지만 우선순위가 가장 낮아 게임이 먼저 가져가고 순간 치솟음이 없다(28초 소리/12.5초 — 재생보다는 빠르다).
+// 판정: Windows가 알림을 미루는 '전체 화면 앱 실행 중'(SHQueryUserNotificationState = BUSY·D3D 전체 화면)이고 앞 창이
+// 우리 앱이 아닐 것(몰입 모드의 우리 창도 BUSY로 잡힌다). 2초마다, 호출 0.07ms. Windows 외에는 늘 꺼짐.
+let gameActive = false;
+
+function startGameWatch() {
+  if (process.platform !== 'win32') return;
+  let api;
+  try {
+    const koffi = require('koffi');
+    const user32 = koffi.load('user32.dll');
+    const shell32 = koffi.load('shell32.dll');
+    api = {
+      foreground: user32.func('void *GetForegroundWindow()'),
+      windowPid: user32.func('uint32_t GetWindowThreadProcessId(void *hWnd, _Out_ uint32_t *pid)'),
+      notifyState: shell32.func('int32_t SHQueryUserNotificationState(_Out_ int32_t *state)'),
+    };
+  } catch { return; }
+  const check = () => {
+    let active = false;
+    try {
+      const state = [0];
+      if (api.notifyState(state) === 0 && (state[0] === 2 || state[0] === 3)) {
+        const pid = [0];
+        api.windowPid(api.foreground(), pid);
+        active = pid[0] !== process.pid;
+      }
+    } catch {}
+    gameActive = active;
+  };
+  check();
+  setInterval(check, 2000);
+}
+
 const syncEngine = new SyncEngine({
-  runAsr: (job) => runWorkerJob({ type: 'asr', pcm: job.pcm, lang: job.lang, offsetMs: job.offsetMs, prompt: job.prompt, durationMs: job.durationMs, threads: ASR_THREADS, gpu: lyricsSettings.asrGpu }),
+  runAsr: (job) => runWorkerJob({ type: 'asr', pcm: job.pcm, lang: job.lang, offsetMs: job.offsetMs, prompt: job.prompt, durationMs: job.durationMs, threads: gameActive ? 2 : ASR_THREADS, gpu: lyricsSettings.asrGpu && !gameActive }),
   runAlign: (job) => runWorkerJob({ type: 'align', candidates: job.candidates.map((c) => ({ lines: c.lines })), heard: job.heard, durationMs: job.durationMs, heardUntil: job.heardUntil }),
   onResult: (vid, r) => applySyncResult(vid, r),
 });
@@ -875,8 +913,17 @@ async function pollAnalysis() {
     if (!analysis.injected) {
       // 소리만 받으면 되므로 영상은 최저 화질(144p) — 5.5배속 디코딩 부담을 줄인다
       capEmbedQuality(frame, 'tiny');
-      try { await frame.executeJavaScript(ANALYSIS_CODE); analysis.injected = true; } catch {}
+      try {
+        await frame.executeJavaScript(`window.__ympAnalysisSlow = ${gameActive};\n${ANALYSIS_CODE}`);
+        analysis.injected = true;
+        analysis.slow = gameActive;
+      } catch {}
       return;
+    }
+    // 게임이 앞에 오거나 빠지면 배속도 따라 바꾼다(게임 중 약 3배속 — 음성 인식이 CPU라 그보다 빨리 받아도 쓰지 못한다)
+    if (analysis.slow !== gameActive) {
+      analysis.slow = gameActive;
+      frame.executeJavaScript(`window.__ympAnalysisSetSlow && window.__ympAnalysisSetSlow(${gameActive})`).catch(() => {});
     }
     let r = null;
     try { r = await frame.executeJavaScript('window.__ympAnalysisTake ? window.__ympAnalysisTake() : null'); } catch {}
@@ -2436,6 +2483,7 @@ app.whenReady().then(async () => {
   lyricsStore.load(localListIds(loadPlaylists()));
   asrReady = asrRunner.available();
   syncEngine.enabled = lyricsSettings.autoSync;
+  startGameWatch();
   pruneMtCache();
   // 광고/추적 도메인 차단 — **메인 창(앱 UI + 임베드 플레이어)에서 나온 요청만** 막는다.
   // 폴백(워치페이지) 웹뷰까지 막으면 유튜브가 광고 차단으로 감지해 "서비스 약관을 위반하는
