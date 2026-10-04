@@ -16,16 +16,19 @@ npm start        # 내부적으로 electron . --no-sandbox
 ```bash
 npm run package:win
 # → dist/YouTube Music Player-win32-x64/YouTube Music Player.exe
-# node_modules는 지우면 안 된다 — 런타임 의존성(@huggingface/transformers, 동봉 번역 모델용)이 들어있다.
-# electron-packager --prune이 devDependencies를 알아서 뺀다. 다른 플랫폼 바이너리만 정리:
-rm -rf "dist/YouTube Music Player-win32-x64/resources/app/node_modules/onnxruntime-node/bin/napi-v6/linux" \
-       "dist/YouTube Music Player-win32-x64/resources/app/node_modules/onnxruntime-node/bin/napi-v6/darwin" \
-       "dist/YouTube Music Player-win32-x64/resources/app/node_modules/@img/sharp-linux-x64" \
-       "dist/YouTube Music Player-win32-x64/resources/app/node_modules/@img/sharp-libvips-linux-x64"
-# 사전 준비(1회): sharp의 win32 바이너리 강제 설치 — npm install --no-save --force --os=win32 --cpu=x64 sharp
-# 번역 모델은 ./models/(gitignore, 611MB)에 동봉된다. 없으면:
-#   node --input-type=module -e "import {pipeline,env} from '@huggingface/transformers'; env.cacheDir='./models'; await pipeline('translation','Xenova/m2m100_418M',{dtype:'q8'})"
-# (env.allowRemoteModels 기본값이 true인 상태로 위를 실행하면 HuggingFace에서 받아 models/에 캐시된다)
+# node_modules는 지우면 안 된다 — 런타임 의존성(node-llama-cpp: 내장 번역 엔진, kuromoji: 일본어 발음 사전)이 들어있다.
+# electron-packager --prune이 devDependencies를 알아서 뺀다. 다른 플랫폼 바이너리·테스트 파일만 정리:
+APP="dist/YouTube Music Player-win32-x64/resources/app/node_modules"
+find "$APP/@node-llama-cpp" -mindepth 1 -maxdepth 1 ! -name win-x64 -exec rm -rf {} +   # Windows CPU판(30MB)만 남김
+rm -rf "$APP/kuromoji/test" "$APP/kuromoji/demo"
+# 사전 준비(1회): node-llama-cpp의 Windows 바이너리는 리눅스 npm이 받지 않는다 —
+#   mkdir -p node_modules/@node-llama-cpp/win-x64 && curl -sL https://registry.npmjs.org/@node-llama-cpp/win-x64/-/win-x64-<버전>.tgz | tar xz -C node_modules/@node-llama-cpp/win-x64 --strip-components=1
+# 동봉 파일(gitignore — 저장소에는 없다, 없으면 그 기능만 꺼진다):
+#   models/Hy-MT2-1.8B-IQ4_XS.gguf(986MB, 내장 번역) — https://huggingface.co/unsloth/Hy-MT2-1.8B-GGUF 의 IQ4_XS
+#   models/ggml-small-q8_0.bin(264MB, 자동 싱크 음성 인식) — https://huggingface.co/ggerganov/whisper.cpp
+#   asr/win-x64 — whisper.cpp b5130 whisper-bin-x64.zip의 Release/에서 whisper-cli.exe, whisper.dll, ggml*.dll
+#   asr/win-x64-vk(그래픽카드 판) — CrispASR v0.8.41 crispasr-windows-x86_64-vulkan.zip의 crispasr.exe·crispasr.dll·ggml*.dll(+LICENSE)
+#   (asr/linux-x64는 개발용 — package:win이 뺀다)
 ```
 
 만들어진 폴더를 통째로 Windows 쪽에 복사하면 `YouTube Music Player.exe` 더블클릭으로 실행됩니다.
