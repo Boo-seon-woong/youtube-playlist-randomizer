@@ -955,6 +955,11 @@ function updateLyricsState(data) {
   lyricsState = next;
   if (keyChanged) {
     lyricsKey = key;
+    // 저장된 가사(로컬 재생목록 곡)는 영상 id만으로 바로 — 제목을 아직 못 받았어도 기다리지 않는다
+    if (!lyricsCache.has(key) && next.id) {
+      const stored = loadStoredLyrics(next, key);
+      if (stored) lyricsCache.set(key, stored);
+    }
     lyricsData = lyricsCache.has(key) ? lyricsCache.get(key) : null;
     // 미리 찾아 둔 곡, 보강이 덜 끝난 곡, 다른 표시 모드로 보강했던 곡 → 지금 모드로 (다시) 붙인다.
     // (캐시에 있는 곡은 loadLyricsForState를 거치지 않아, 미리 찾은 외국어 곡에 발음이 안 붙던 문제가 있었다)

@@ -39,13 +39,37 @@ function wavBuffer(pcm, sampleRate = 16000) {
 function parseWhisperJson(json, offsetMs = 0) {
   const out = [];
   for (const seg of (json && json.transcription) || []) {
+    const segFrom = seg.offsets.from;
+    const segTo = seg.offsets.to;
     const tokens = (seg.tokens || [])
       .filter((t) => t && typeof t.text === 'string' && !/^\[_/.test(t.text))
-      // -dtw를 켜면 t_dtw(10ms 단위)가 실제 발음 시점에 더 가깝다 — 없으면 토큰 구간 시작
-      .map((t) => ({ text: t.text, t: offsetMs + (t.t_dtw >= 0 ? t.t_dtw * 10 : ((t.offsets && t.offsets.from) || 0)) }));
+      // -dtw를 켜면 t_dtw(10ms 단위)가 실제 발음 시점에 더 가깝다 — 없으면 토큰 구간 시작.
+      // 단 whisper가 같은 줄을 되풀이(환각)한 창에서는 DTW가 통째로 어긋나(실측: 0~3초 조각의 토큰이 10~28초로 찍힘)
+      // 조각 범위 ±1초를 벗어난 DTW 시각은 버리고 토큰 구간 시작을 쓴다
+      .map((t) => {
+        const from = (t.offsets && t.offsets.from) || 0;
+        const dtw = t.t_dtw >= 0 ? t.t_dtw * 10 : -1;
+        const ok = dtw >= 0 && dtw >= segFrom - 1000 && dtw <= segTo + 1000;
+        return { text: t.text, t: offsetMs + (ok ? dtw : from) };
+      });
     const text = tokens.map((t) => t.text).join('').trim();
     if (!text) continue;
     out.push({ t0: offsetMs + seg.offsets.from, t1: offsetMs + seg.offsets.to, text, tokens });
+  }
+  return dropRepeats(out);
+}
+
+// whisper의 되풀이 환각: 한 창 안에서 앞 조각과 똑같은 긴 조각(8글자 이상)이 다시 나오는 것(실측: 0~6초의 두 줄이
+// 13~18초에 그대로 다시 찍힘 — 정렬이 뒤의 복사본에 붙어 줄 시각이 13초 밀렸다). 진짜 반복 가사("抜け出せない
+// 抜け出せない")는 대개 한 조각에 함께 들어오므로, 바로 앞이 아닌 앞 조각과 같은 긴 조각만 버린다.
+function dropRepeats(segs) {
+  const norm = (t) => t.replace(/[\s\p{P}\p{S}]/gu, '');
+  const out = [];
+  for (const seg of segs) {
+    const key = norm(seg.text);
+    const earlier = out.slice(0, -1).some((o) => norm(o.text) === key);
+    if (key.length >= 8 && earlier) continue;
+    out.push(seg);
   }
   return out;
 }

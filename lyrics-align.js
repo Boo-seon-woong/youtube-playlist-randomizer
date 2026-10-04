@@ -100,8 +100,10 @@ function lyricSequence(lines, tokenizer) {
 
 const VOWELS = new Set('aeiou');
 
-// 양끝이 모두 자유로운 정렬(겹침 정렬): 가사의 앞뒤(아직 안 들은 부분)도, 들은 쪽의 앞뒤(군더더기)도 벌점 없음.
-// 같은 글자 +3, 모음끼리 0, 다른 글자 -1, 틈 -1. 반환: 가사 글자마다 맞춘 들은 글자 번호(-1 = 없음)
+// 겹침 정렬: 가사의 앞뒤(아직 안 들은 부분)와 들은 쪽의 뒤(끝 군더더기)는 벌점 없음. 들은 쪽 앞부분을 건너뛰는 데는
+// 작은 벌점(틈의 1/4)을 준다 — 완전히 공짜면 whisper가 같은 줄을 되풀이(환각)했을 때 진짜 첫 부분을 버리고 뒤의 복사본에
+// 맞춰 버린다(실측: 0초부터 부른 줄이 13초로 잡힘). 점수(×4 정수): 같은 글자 +12, 모음끼리 0, 다른 글자 -4, 틈 -4, 앞 건너뛰기 -1.
+// 반환: 가사 글자마다 맞춘 들은 글자 번호(-1 = 없음)
 function align(L, H) {
   const n = L.length;
   const m = H.length;
@@ -111,19 +113,19 @@ function align(L, H) {
   const score = new Int32Array((n + 1) * W);
   const back = new Uint8Array((n + 1) * W); // 1=대각, 2=가사만, 3=들은 쪽만
   for (let i = 1; i <= n; i++) back[i * W] = 2;
-  for (let j = 1; j <= m; j++) back[j] = 3;
+  for (let j = 1; j <= m; j++) { back[j] = 3; score[j] = -j; }
   for (let i = 1; i <= n; i++) {
     const a = L[i - 1].ch;
     const row = i * W;
     const prev = (i - 1) * W;
     for (let j = 1; j <= m; j++) {
       const b = H[j - 1].ch;
-      const sub = a === b ? 3 : (VOWELS.has(a) && VOWELS.has(b)) ? 0 : -1;
+      const sub = a === b ? 12 : (VOWELS.has(a) && VOWELS.has(b)) ? 0 : -4;
       let best = score[prev + j - 1] + sub;
       let bk = 1;
-      const up = score[prev + j] - 1;
+      const up = score[prev + j] - 4;
       if (up > best) { best = up; bk = 2; }
-      const left = score[row + j - 1] - 1;
+      const left = score[row + j - 1] - 4;
       if (left > best) { best = left; bk = 3; }
       score[row + j] = best;
       back[row + j] = bk;
@@ -161,14 +163,22 @@ function runMatched(match) {
 
 const RATE_MS = 70; // 노래에서 로마자 한 글자에 걸리는 평균 시간(근사) — 줄 앞쪽이 안 들렸을 때 시작 시각을 거슬러 잡는 데 쓴다
 
-// 줄마다 시작 시각을 정한다. 일치가 적은 줄(25% 미만)은 비워 두고(null) 나중에 채운다.
+// 줄마다 시작 시각을 정한다. 일치가 적은 줄(25% 미만)이나 3글자 이상 연속으로 맞은 곳이 없는 줄은 비워 두고(null)
+// 나중에 채운다 — 거의 못 들은 줄이 흩어진 낱글자 일치로 엉뚱한 곳에 몰리는 것을 막는다(실측: 첫 5줄이 같은 시각에 겹침)
 function anchorLines(lineCount, L, H, match) {
   const per = Array.from({ length: lineCount }, () => []);
   const totals = new Array(lineCount).fill(0);
   for (const x of L) totals[x.line] += 1;
-  L.forEach((x, idx) => { if (match[idx] >= 0) per[x.line].push({ k: x.k, t: H[match[idx]].t }); });
+  L.forEach((x, idx) => { if (match[idx] >= 0) per[x.line].push({ k: x.k, j: match[idx], t: H[match[idx]].t }); });
   return per.map((ms, li) => {
     if (!totals[li] || ms.length < Math.max(2, totals[li] * 0.25)) return null;
+    let longest = 1;
+    let run = 1;
+    for (let i = 1; i < ms.length; i++) {
+      run = ms[i].k === ms[i - 1].k + 1 && ms[i].j === ms[i - 1].j + 1 ? run + 1 : 1;
+      longest = Math.max(longest, run);
+    }
+    if (longest < Math.min(3, totals[li])) return null;
     const head = ms.slice(0, Math.min(5, ms.length)).map((x) => x.t - x.k * RATE_MS).sort((a, b) => a - b);
     return Math.max(0, head[Math.floor(head.length / 2)]);
   });
@@ -185,10 +195,11 @@ function evenTimes(count, start, end) {
 function fillTimes(anchors, durationMs) {
   const n = anchors.length;
   const a = anchors.slice();
+  // 앞 줄보다 0.25초 이상 늦지 않은 맞춤은 버린다(같은 시각에 줄이 겹쳐 쌓이지 않게)
   let last = -Infinity;
   for (let i = 0; i < n; i++) {
     if (a[i] == null) continue;
-    if (a[i] < last) a[i] = null; else last = a[i];
+    if (a[i] < last + 250) a[i] = null; else last = a[i];
   }
   const times = new Array(n);
   const idx = [];
