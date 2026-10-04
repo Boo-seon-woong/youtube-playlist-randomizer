@@ -999,6 +999,27 @@ function updateLyricsState(data) {
   if (next.status !== 'idle' && next.title && next.title !== next.id && next.duration > 0 && !lyricsCache.has(key)) {
     loadLyricsForState(next, key).catch(() => {});
   }
+  ensureAugmented();
+}
+
+// 지금 곡의 발음·번역이 덜 붙어 있으면(웹 번역이 일시 실패·일부만 됨, 다른 경로가 보강 전 가사로 바꿔 놓음) 스스로 다시 붙인다.
+// 예전엔 그 곡을 떠났다 돌아와야 다시 시도돼, "번역이 끝났는데 원어만 뜬다 → 다른 곡 갔다 오면 붙는다"(사용자 보고)였다.
+// 진행 중인 보강이 있으면 기다리고, 실패가 반복되면 8초 → 20초 → 60초 간격으로 최대 4번까지만(오프라인에서 계속 두드리지 않게).
+const augmentRetry = new Map(); // key → { at, tries }
+const AUGMENT_RETRY_GAPS = [8000, 20000, 60000, 60000];
+
+function ensureAugmented() {
+  if (!lyricsKey || !lyricsData || lyricsData.unavailable) return;
+  const mode = lyricsSettings.foreignMode;
+  if (lyricsData.augmented === mode) { augmentRetry.delete(lyricsKey); return; }
+  if (augmentInFlight.has(`${lyricsKey}|${mode}`) || !foreignPlan(baseLyrics(lyricsData))) return;
+  const now = Date.now();
+  const st = augmentRetry.get(lyricsKey) || { at: now + 3000, tries: 0 }; // 처음 본 순간엔 3초 여유(막 시작한 보강이 곧 붙는다)
+  if (!augmentRetry.has(lyricsKey)) augmentRetry.set(lyricsKey, st);
+  if (now < st.at || st.tries >= AUGMENT_RETRY_GAPS.length) return;
+  st.at = now + AUGMENT_RETRY_GAPS[st.tries];
+  st.tries += 1;
+  augmentForeignLyrics(lyricsKey, lyricsData);
 }
 
 function loadLyricsBounds() {

@@ -290,7 +290,7 @@ function splitArtistTitle(input, channel = '') {
 function buildLyricQueries(rawTitle, rawAuthor) {
   const cleanedChannel = cleanChannelName(rawAuthor);
   // 끝의 커버 표기("　Cover. LOLUET", "（cover）", "covered by X")는 곡명이 아니다 — 떼고 해석한다
-  const coverless = String(rawTitle || '').replace(/[\s\u3000]*[(（\[【]?\s*(?<![A-Za-z])(?:covered\s+by|cover(?:ed)?(?:\s+by)?|歌ってみた|カバー|커버)(?![A-Za-z])\s*[.:：]?[^)）\]】]{0,40}[)）\]】]?\s*$/i, '').trim() || String(rawTitle || '');
+  const coverless = String(rawTitle || '').replace(/[\s\u3000]*[(（\[【]?\s*(?<![A-Za-z])(?:covered\s+by|cover(?:ed)?(?:\s+by)?|歌ってみた|唄ってみた|うたってみた|うたった|歌った|唄った|カバー|커버)(?![A-Za-z])\s*[.:：]?[^)）\]】]{0,40}[)）\]】]?\s*$/i, '').trim() || String(rawTitle || '');
   const splits = splitArtistTitle(stripTitleNoise(coverless), primaryArtist(cleanedChannel));
   // "Crazy (feat. Yina) by chomin" — 피처링 표기 뒤의 "by 가수"는 가수 표기(잡음 제거 전 원래 제목으로 판단 —
   // "Stand by Me"처럼 제목 속 by는 그대로 둔다)
@@ -337,8 +337,21 @@ function buildLyricQueries(rawTitle, rawAuthor) {
   // 원어 표기가 섞여 있으면(가나) 일본 곡이다 — 동명의 한국 곡을 걸러내는 데 쓴다
   const expectJapanese = /[ぁ-んァ-ン]/.test(String(rawTitle || ''));
   // 커버 영상("Cover. LOLUET", "歌ってみた", "커버") — 가수 칸은 커버한 사람이라 원곡 가사와 가수가 안 맞는다
-  const cover = /\bcover(?:ed)?\b|歌ってみた|カバー|커버|불러\s*보았다/i.test(String(rawTitle || ''));
-  return { pairs, titles: matchTitles.length > 0 ? matchTitles : allTitles, primaryTitles, artists: [...allArtists, ...channel], expectJapanese, cover };
+  const cover = /\bcover(?:ed)?\b|歌ってみた|唄ってみた|うたってみた|うたった|歌った|唄った|カバー|커버|불러\s*보?았다|불러\s*봤다/i.test(String(rawTitle || ''));
+  const outTitles = matchTitles.length > 0 ? matchTitles : allTitles;
+  // "곡명 - 커버 가수 Cover": 커버 표기 바로 앞 이름은 커버한 사람이고 앞쪽이 곡명. 괄호 속 원제("메구미노히토(め組のひと)")도
+  // 곡명 후보 — 둘째 검색어와 비교용 제목에 넣는다
+  if (cover && coverless !== String(rawTitle || '').trim()) {
+    const cm = stripTitleNoise(coverless).match(/^(.+?)\s+[-–—]\s+([^-–—]{1,30})$/);
+    if (cm) {
+      const head = cm[1].replace(/^\s*[\[［【][^\]］】]*[\]］】]\s*/, '').replace(/[「」『』]/g, '').trim();
+      const inner = (head.match(/[(（]([^()（）]+)[)）]/) || [])[1];
+      const extra = [inner, head.replace(/[(（][^()（）]*[)）]/g, '').trim()].filter(Boolean).map((t) => t.trim());
+      extra.slice().reverse().forEach((t) => { if (!pairs.some((p) => p.title === t && !p.artist)) pairs.splice(1, 0, { title: t, artist: '' }); });
+      for (const t of extra) { if (!outTitles.includes(t)) outTitles.push(t); if (!primaryTitles.includes(t)) primaryTitles.push(t); }
+    }
+  }
+  return { pairs, titles: outTitles, primaryTitles, artists: [...allArtists, ...channel], expectJapanese, cover };
 }
 
 function hasKana(text) {
