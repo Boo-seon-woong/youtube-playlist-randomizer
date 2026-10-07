@@ -1,4 +1,4 @@
-const { app, BrowserWindow, session, ipcMain, screen, globalShortcut, webFrameMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen, globalShortcut, webFrameMain, webContents } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -10,6 +10,7 @@ const { SyncEngine } = require('./lyrics-sync');
 const asrRunner = require('./asr');
 const { evenTimes } = require('./lyrics-align');
 const { translateLines: webTranslateLines } = require('./web-translate');
+const { attachAdNetPrune } = require('./ad-netprune');
 
 // WSLg의 GPU 합성 버그로 영상이 창 밖에 그려지거나 검게 나오는 문제 방지 (Windows 네이티브에서는 불필요)
 if (process.platform === 'linux') app.disableHardwareAcceleration();
@@ -39,8 +40,8 @@ const LYRICS_OFFSETS_FILE = () => path.join(app.getPath('userData'), 'lyrics-off
 const LYRICS_PRESETS_FILE = () => path.join(app.getPath('userData'), 'lyrics-presets.json'); // 플로팅 창 레이아웃 프리셋
 
 // 추적 도메인만 막는다. **광고 송출 도메인(doubleclick·googlesyndication 등)은 더 이상 막지 않는다** —
-// 요청 실패는 유튜브의 광고 차단 감지에 그대로 걸려 재생 자체가 막히기 때문이다. 광고는 대신
-// adprune-preload.js / AD_PRUNE_SNIPPET이 플레이어 응답에서 광고 데이터를 걷어내 없앤다.
+// 요청 실패는 유튜브의 광고 차단 감지에 그대로 걸려 재생 자체가 막히기 때문이다. 광고는 대신 플레이어 응답에서
+// 광고 데이터를 걷어내 없앤다 — 직접 재생은 ad-netprune.js(네트워크 단계), 임베드는 AD_PRUNE_SNIPPET.
 const AD_URL_PATTERNS = [
   '*://*.google-analytics.com/*',
   '*://*.googletagmanager.com/*',
@@ -2335,14 +2336,14 @@ function pushAudioState() {
   for (const f of audioFrames()) f.executeJavaScript(code).catch(() => {});
 }
 
-// 직접 재생 웹뷰용 프리로드: 광고 프루닝 + 오디오 가드를 페이지 스크립트보다 먼저 실행한다.
-// 웹뷰는 샌드박스라 프리로드에서 로컬 파일을 require할 수 없으므로 두 파일을 하나로 합쳐 userData에 쓴다.
+// 직접 재생 웹뷰용 프리로드: 오디오 가드를 페이지 스크립트보다 먼저 실행한다. 광고는 페이지 안에서 손대지 않는다
+// (페이지 안 가로채기는 유튜브 감지기에 걸린다 — ad-netprune.js가 네트워크 단계에서 걷어낸다).
+// 웹뷰는 샌드박스라 프리로드에서 로컬 파일을 require할 수 없으므로 가드 코드를 userData의 파일로 써서 붙인다.
 // 초기 상태는 동기 IPC로 받아 둔다 — 첫 영상이 재생되기 전에 상한이 걸려 있어야 한다.
 function buildWebviewPreload() {
   const file = path.join(app.getPath('userData'), 'webview-preload.js');
   const body = [
     "try { window.__ympAudioInit = require('electron').ipcRenderer.sendSync('audio:state'); } catch (e) {}",
-    fs.readFileSync(path.join(__dirname, 'adprune-preload.js'), 'utf8'),
     AUDIO_GUARD_CODE,
   ].join('\n;\n');
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -2444,12 +2445,11 @@ function createWindow(port) {
   // 렌더러의 몰입 모드(사이드바 숨김·해제 버튼)가 따라오도록 상태를 알린다
   win.on('enter-full-screen', () => win.webContents.send('window:fullscreen', true));
   win.on('leave-full-screen', () => win.webContents.send('window:fullscreen', false));
-  // 폴백 웹뷰(워치페이지)에 광고 프루닝 프리로드를 붙인다 — 요청을 막는 대신 플레이어 응답에서
-  // 광고 데이터를 걷어내는 방식이라 감지되지 않고 광고 대기 시간도 생기지 않는다.
-  // 전역(ytInitialPlayerResponse)과 JSON.parse를 가로채야 하므로 페이지와 같은 월드가 필요하다.
+  // 폴백 웹뷰(워치페이지)에 오디오 가드 프리로드를 붙인다. 가드는 HTMLMediaElement.prototype을 가로채야 하므로
+  // 페이지와 같은 월드가 필요하다(contextIsolation 끔, nodeIntegration은 끈 채).
   win.webContents.on('will-attach-webview', (_event, webPreferences) => {
     if (!webviewPreloadPath) {
-      try { webviewPreloadPath = buildWebviewPreload(); } catch { webviewPreloadPath = path.join(__dirname, 'adprune-preload.js'); }
+      try { webviewPreloadPath = buildWebviewPreload(); } catch { return; } // 못 쓰면 가드 없이 붙는다(볼륨은 주입 인터벌이 맞춘다)
     }
     webPreferences.preload = webviewPreloadPath;
     webPreferences.contextIsolation = false;
@@ -2465,6 +2465,14 @@ function createWindow(port) {
 
 let webviewWC = null; // 폴백 웹뷰의 webContents (창에 하나뿐)
 let adBlockEnabled = true; // 유튜브가 광고 차단을 감지하면 false로 내려간다 (adblock:disable)
+
+// 직접 재생 웹뷰마다 네트워크 단계 광고 제거(ad-netprune.js)를 한 번만 건다. 실패해도(다른 디버거가 붙어 있는 등)
+// 재생은 그대로 된다 — 광고가 남을 뿐이고, 그 소리는 호스트 오디오 게이트가 막는다.
+const adNetPruneReady = new Map(); // webContents id → 준비 프라미스
+function adNetPruneFor(wc) {
+  if (!adNetPruneReady.has(wc.id)) adNetPruneReady.set(wc.id, attachAdNetPrune(wc).then(() => true, () => false));
+  return adNetPruneReady.get(wc.id);
+}
 
 app.whenReady().then(async () => {
   const port = await startServer();
@@ -2726,6 +2734,9 @@ app.whenReady().then(async () => {
   app.on('web-contents-created', (_event, wc) => {
     if (wc.getType() !== 'webview') return;
     webviewWC = wc;
+    adNetPruneFor(wc); // 첫 유튜브 탐색 전에 걸어 둔다 — 렌더러는 fallback:prepare로 끝나기를 기다린 뒤 곡을 연다
+    const wcId = wc.id;
+    wc.once('destroyed', () => adNetPruneReady.delete(wcId));
     wc.setBackgroundThrottling(false); // 최소화 중 광고 스킵·종료 감지 인터벌이 늦춰지지 않도록
     wc.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && input.key.toLowerCase() === 'f'
@@ -2734,6 +2745,17 @@ app.whenReady().then(async () => {
         if (wc.hostWebContents) wc.hostWebContents.send('window:fs-key');
       }
     });
+  });
+
+  // 직접 재생 웹뷰에 곡을 열기 직전 준비: ① 광고 제거 가로채기가 걸렸는지 기다리고 ② 유튜브 서비스 워커 등록을 지운다.
+  // 첫 방문 뒤에는 서비스 워커가 다음 워치페이지 탐색을 대신 응답해 페이지 쪽 가로채기를 건너뛴다(실측 — 두 번째 곡부터
+  // 광고가 그대로 나왔다). 등록만 지우므로 페이지에서는 워커 등록이 평소처럼 성공한다(요청 차단 같은 흔적이 없다).
+  ipcMain.handle('fallback:prepare', async (_event, id) => {
+    const wc = webContents.fromId(Number(id));
+    if (!wc || wc.isDestroyed() || wc.getType() !== 'webview') return false;
+    const ok = await adNetPruneFor(wc);
+    try { await wc.session.clearStorageData({ origin: 'https://www.youtube.com', storages: ['serviceworkers'] }); } catch {}
+    return ok;
   });
 
   // 광고 스킵 버튼을 신뢰된 네이티브 마우스 입력으로 클릭 —

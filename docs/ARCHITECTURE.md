@@ -5,6 +5,7 @@
 | 파일 | 역할 |
 |---|---|
 | `main.js` | Electron 메인 프로세스 — 창 생성, 로컬 정적 서버, 재생목록 전곡 수집, 재생목록 메타(첫 곡·곡 수) 조회, 곡 제목 조회(oEmbed), 플레이리스트·디자인 설정 저장 IPC, 광고 도메인 차단(웹뷰 제외), 구글 계정 연동(로그인 창·계정 재생목록·곡 추가)·유튜브 검색·가사 DB 조회·가사 창 |
+| `ad-netprune.js` | 직접 재생 광고 제거 — 웹뷰에 CDP Fetch를 걸어 워치페이지 HTML·`/player` 응답의 광고를 페이지가 받기 전에 '광고 없음' 자리표시로 바꾼다(페이지 안 무조작, 유튜브 감지기 0건 실측). 순수 변환 함수는 `test/ad-netprune.test.js` |
 | `preload.js` | contextBridge — 렌더러에 `store` / `titles` / `playlist` / `uiSettings` / `winctl` / `account` / `ytsearch` / `lyrics` API 노출 |
 | `renderer.js` | UI와 재생 로직 전부 — 자체 대기열, iframe 플레이어 제어, 폴백 재생, 몰입 모드, 사이드바 폴더 관리, 우클릭 컨텍스트 메뉴, 계정 섹션·검색 패널·가사 재생 위치 전달, 영상 위 가사 보기 오버레이, 디자인 설정 안의 플로팅 가사 창 설정 |
 | `index.html`, `styles.css` | Spotify를 참고한 다크 테마 — 상단 바(로고·검색·계정) + 검은 프레임 위 패널 3개(저장 목록 / 플레이어 / 대기열) + 하단 전폭 재생 바 |
@@ -205,8 +206,9 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
 
 ## 폴백 재생 (임베드 차단 곡)
 
-임베드가 차단된 곡(오류 150)은 `<webview>`(같은 세션)로 **유튜브 워치페이지를 직접 열어**
-재생한다. 브라우저로 youtube.com을 보는 것과 동일한 경로라 차단이 적용되지 않는다.
+임베드가 차단된 곡(오류 150)은 `<webview>`로 **유튜브 워치페이지를 직접 열어** 재생한다.
+브라우저로 youtube.com을 보는 것과 동일한 경로라 차단이 적용되지 않는다. 웹뷰는 계정과 분리된
+**메모리 전용 게스트 파티션**(`guest-playback`)에서 연다 — 아래 "v1.41.0" 항목 참고.
 
 - 종료 감지: 1초 폴링으로 페이지 `<video>`의 `ended` / URL의 videoId 변경(자동재생 이탈)을
   감시. `.ad-showing`(광고 중)일 때는 종료 판정 보류 — 광고 종료를 곡 종료로 오인 방지.
@@ -215,41 +217,34 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   그대로면 몰입(전체화면) 시 화면을 꽉 채우지 못한다. 크기 강제 후에는 주입 스크립트가
   `resize` 이벤트를 디스패치해 유튜브가 영상/컨트롤 크기를 다시 계산하게 한다.
 - 워치페이지에서도 10초간 재생 시작 실패(삭제/비공개) → 재생 불가로 표시하고 스킵.
-- 광고 자동 스킵: 100ms 인터벌 주입 스크립트 — `.ad-showing` 감지 시 무음 + 16배속 +
-  광고 끝으로 점프(끝 시각을 모르는 광고도 배속으로 빨리 소진되고 스킵 카운트다운도 같이
-  줄어든다), 프리미엄 팝업·"계속 시청" 확인창 자동 처리.
-  광고 중에는 `insertCSS`의 `.ad-showing .html5-main-video { visibility: hidden }`로
-  광고 영상 자체를 화면에서 숨긴다(검은 화면).
-- 스킵 버튼 클릭은 **2중 경로**: 클래스 셀렉터에 더해 플레이어 안 버튼의 텍스트/aria-label
-  ("건너뛰기"/"Skip")로도 찾아 클릭하고(전면 스폰서 카드처럼 영상이 없어 배속이 안 통하는
-  형태 대비), 페이지 내 `click()`은 유튜브가 신뢰되지 않은 이벤트로 무시할 수 있으므로
-  버튼 좌표를 `__skipRect`에 남기면 렌더러가 300ms 폴링으로 소비해 main이
-  `webContents.sendInputEvent`로 **신뢰된 실제 마우스 클릭**을 보낸다. 클릭 직전
-  `elementFromPoint`로 그 좌표가 여전히 스킵 버튼인지 재검증해 낡은 좌표 오클릭을 막는다.
-  DOM 셀렉터 기반이므로 유튜브 마크업 변경 시 갱신 필요.
+- 100ms 인터벌 주입 스크립트: 프리미엄 팝업·"계속 시청" 확인창 자동 처리, 볼륨 강제, 재생 상태 보고.
+  구식 '광고 강제 스킵'(설정 `ls-adblock`, 기본 꺼짐)을 켰을 때만 `.ad-showing` 감지 시 무음 + 16배속 +
+  광고 끝으로 점프하고 `.ad-showing .html5-main-video { visibility: hidden }`으로 광고 영상을 가린다 —
+  플레이어가 프리롤 시청 비율(40% 미만)로 이걸 감지하므로 기본값이 아니다.
+- 스킵 버튼(네트워크 단계 제거를 빠져나온 광고 — 서버가 스트림에 끼워 넣는 광고 등): 클래스 셀렉터와
+  플레이어 안 버튼의 텍스트/aria-label("건너뛰기"/"Skip")로 찾아 좌표를 `__skipRect`에 남기면, 광고가
+  보이는 동안 렌더러가 300ms 폴링으로 소비해 main이 `webContents.sendInputEvent`로 **신뢰된 실제 마우스
+  클릭**을 보낸다. 페이지 안 `click()`은 쓰지 않는다(구식 강제 스킵에서만) — 플레이어가 건너뛰기 클릭의
+  `isTrusted`를 검사해 거짓이면 이상 감지로 보고한다(base.js 실측). 클릭 직전 `elementFromPoint`로 그
+  좌표가 여전히 스킵 버튼인지 재검증해 낡은 좌표 오클릭을 막는다. DOM 셀렉터 기반이므로 마크업 변경 시 갱신 필요.
 - **광고 도메인 차단은 메인 창 요청에만 적용한다.** `onBeforeRequest`가 `details.webContentsId`가
   메인 창과 같을 때만 취소한다(앱 UI + 임베드). 예전 조건은 "웹뷰가 아니면 취소"라는 반대 형태였는데,
   워치페이지의 광고 요청 중 서비스 워커/워커에서 나가는 것들은 `webContentsId`가 비어 있어 그 조건에
   걸려 차단됐고, 그 결과 유튜브가 세션을 광고 차단으로 판정해 **닫을 수 없는 전면 차단 화면**
   ("서비스 약관을 위반하는 광고 차단 프로그램")으로 직접 재생을 통째로 막았다(2026-09-20 사용자 보고).
-  **최종 방식은 요청 차단이 아니라 응답 프루닝이다(Brave·uBO와 같은 방식).** `adprune-preload.js`를
-  `will-attach-webview`로 폴백 웹뷰에 붙여(페이지와 같은 JS 월드가 필요해 `contextIsolation:false`,
-  `nodeIntegration`은 꺼둔 채) 플레이어가 응답을 읽기 **전에** `adPlacements`/`playerAds`/`adSlots`/
-  `adBreakHeartbeatParams`를 지운다. 최초 로드의 인라인 `var ytInitialPlayerResponse`는 전역에 접근자를
-  먼저 정의해 두면 `var` 선언이 기존 접근자를 덮지 않고 대입만 setter로 들어오는 성질을 이용해 잡고,
-  곡 전환의 `/youtubei/v1/player` XHR은 `JSON.parse`·`Response.prototype.json` 후킹으로 잡는다.
-  같은 코드(main.js의 `AD_PRUNE_SNIPPET`)를 `hideEmbedChrome`에서 임베드 프레임에도 주입한다 —
-  임베드의 최초 인라인 응답은 놓치지만 곡 전환은 전부 `loadVideoById` → XHR이라 실제 곡은 덮인다.
-  플레이어가 광고의 존재 자체를 모르므로 광고가 재생되지 않고 **기다릴 시간도 생기지 않으며**,
-  차단된 요청도 조작된 재생도 없어 유튜브가 감지할 거리가 없다. 그래서 광고 송출 도메인은
-  `AD_URL_PATTERNS`에서 **제거**했다(analytics·moat만 남음) — 그걸 막는 것이 바로 감지의 원인이다.
-  유튜브가 응답 구조를 바꾸면 조용히 무력화되어 광고가 다시 보이는 것이 이 방식의 유지비용이다.
-  **감지 판정은 요소의 존재가 아니라 "보이는지"로 해야 한다.** `yt-playability-error-supported-renderers`는
+  그 뒤 방식은 요청 차단이 아니라 응답 프루닝이었다(v1.30.0, Brave·uBO와 같은 방식): 페이지 안 프리로드
+  (`adprune-preload.js`, `contextIsolation:false`)가 인라인 `var ytInitialPlayerResponse`를 전역 접근자로,
+  `/youtubei/v1/player` 응답을 `JSON.parse`·`Response.prototype.json` 후킹으로 잡아 광고 필드를 지웠다.
+  **v1.41.0에서 이 페이지 안 방식을 버렸다** — 유튜브 감지기에 매 페이지 걸렸다(아래 v1.41.0 항목).
+  임베드 프레임에는 같은 코드(main.js의 `AD_PRUNE_SNIPPET`)를 `hideEmbedChrome`에서 그대로 주입한다 —
+  임베드 플레이어(`player_embed_es6`)에는 아래의 13개 감지기 묶음이 없다(시험 JSON·미끼 선택자 0건, 실측).
+  광고 송출 도메인은 `AD_URL_PATTERNS`에서 **제거**했다(analytics·moat만 남음) — 막는 것이 감지의 원인이다.
+  **옛 요소 이름의 감지 판정은 요소의 존재가 아니라 "보이는지"로 해야 한다.** `yt-playability-error-supported-renderers`는
   아무 문제가 없어도 숨겨진 채 DOM에 상주한다(실제 워치페이지 측정: `enfInDom: true, enfVisible: false`).
-  존재만 보고 판단하던 첫 구현은 프루닝이 정상 동작하는 빌드에서도 멀쩡한 곡을 "차단됨"으로 오판해
-  건너뛰었다(사용자 보고). 지금은 ① 실제로 렌더링돼 있고(`getClientRects().length > 0 && offsetParent`)
-  ② 음악이 재생 중이 아니며(`__playReported !== true`) ③ 그 상태가 연속 2틱(약 200ms) 유지될 때만
-  확정한다. 오탐으로 저장된 설정을 되돌리기 위해 저장 키도 `adEnforced` → `adEnforcedV2`로 바꿨다.
+  존재만 보고 판단하던 첫 구현은 멀쩡한 곡을 "차단됨"으로 오판해 건너뛰었다(사용자 보고). 그래서 옛 이름은
+  ① 실제로 렌더링돼 있고(`getClientRects().length > 0 && offsetParent`) ② 음악이 재생 중이 아니며
+  (`__playReported !== true`) ③ 연속 2틱(약 200ms) 유지될 때만 확정한다. 오탐으로 저장된 설정을 되돌리기 위해
+  저장 키도 `adEnforced` → `adEnforcedV2`로 바꿨다. (지금의 안내 요소 이름은 v1.41.0 항목 참고.)
 - **(경위) 네트워크 범위만 고친 뒤에도 차단이 계속됐다(사용자 재보고) — 워치페이지는 **페이지 안에서의
   광고 조작**도 함께 본다. 그래서 `__ymp_enforced:1`이 오면 앱은 회피를 강화하는 대신 **광고에 손대는 것을
   전부, 영구히 그만둔다**(`handleAdBlockEnforcement`): 메인의 `adBlockEnabled=false`, 광고 숨김 CSS 제거
@@ -257,26 +252,59 @@ API 키 불필요 (페이지에 내장된 공개 키 사용).
   페이지 내 무음·16배속·끝점프·스킵 클릭과 호스트의 `pollSkipClick`까지 중단, `precisePlaybackActive`도 해제해
   정밀 볼륨 때문에 멀쩡한 곡이 워치페이지로 가지 않게 한다. 이 상태는 settings.json의 `adEnforced`로 남아
   다음 실행에서 다시 무장하지 않으며, 설정의 `ls-adblock` 체크박스로 노출된다(다시 켜면 재시작 후 적용).
-  **v1.30.2:** 계정 세션의 직접 재생에서만 차단되고 게스트에서는 재생되는 사용자 관측에 따라,
-  기본 세션의 차단 감지 시 먼저 같은 곡을 메모리 전용 `guest-playback` partition에서 재시도한다.
-  `selectFallbackSession`은 웹뷰를 교체하고 이벤트를 다시 연결한다(탐색 후 partition 변경 불가).
-  기본 세션 쿠키·계정 API는 유지하며, `guestFallbackIds`에 기록한 곡에만 게스트를 사용한다.
-  다른 곡은 기본 세션으로 복귀하므로 로그인 필요한 영상의 기존 재생 경로도 유지된다.
-  교체 전 비동기 폴링 결과는 무시한다. 게스트에서도 차단된 경우에만 아래 기존 복구를 실행한다.
-  검증: `node --test test/fallback-session.test.js`.
-  기존 곡 단위 복구 순서: 정밀 볼륨 때문에 워치페이지로 갔던 곡은 임베드로 되돌리고, 진짜 임베드 차단 곡은
-  한 번 새로고침한 뒤에도 막히면 다음 곡으로 넘긴다. 사용자는 광고를 **듣지는** 않지만(호스트 오디오 게이트는
-  유튜브가 감지할 수 없다) 광고 시간만큼 **기다리게** 된다.
+  (v1.41.0부터 이 '영구히 그만둠'은 구식 강제 스킵을 켜 둔 경우에만 일어난다.)
+  **v1.30.2:** 계정 세션의 직접 재생에서만 차단되고 게스트에서는 재생되는 사용자 관측에 따라, 차단 감지 시
+  같은 곡을 메모리 전용 `guest-playback` partition에서 재시도했다. 그러나 감지 조건(옛 요소 이름 + 재생이
+  멈췄을 것)이 지금의 팝업(영상이 뒤에서 계속 재생되는 `ytd-enforcement-message-view-model`)을 잡지 못해
+  재시도가 한 번도 일어나지 않았다(2026-10-07 사용자 보고: 화면을 가리는 팝업). v1.41.0에서 대체.
+- **v1.41.0 — 네트워크 단계 광고 제거 + 게스트 신원 (2026-10-07, 실측 근거)**
+  - **왜 감지됐나**: 유튜브 www 앱(ytmainappweb)은 페이지마다 클라이언트 감지기 13개를 돌려 결과
+    (`biscottiBasedDetection {detected, source}`)를 `/youtubei/v1/log_event`로 보낸다. 하나라도 감지되면 서버가 미리
+    넣어 둔 안내문(`auxiliaryUi…enforcementMessageViewModel`, 표시된 신원에만 옴)을 `LOCKED_MODAL` 팝업이나
+    플레이어 안 차단 화면으로 띄운다. 앱의 옛 방식은 **매 페이지 4개에 걸렸다**(하네스로 업로드를 가로채 실측):
+    `e.h_` — 미끼 `<div id="player-ads">` 등을 만들어 숨겨지는지 보는데 앱이 `#player-ads`·`#masthead-ad`·
+    `ytd-ad-slot-renderer`를 항상 숨겼다 / `j.s_` — 광고 필드가 든 시험 JSON의 `JSON.parse` 왕복 / `f.i_` — `data:` 요청을
+    `/player`로 위장한 `Response.json` 왕복 / `r.s_`. 화면 배치 CSS(#masthead-container·#secondary 숨김, #movie_player
+    고정)만으로는 0건. 그 밖의 감지기: Object.prototype 함정(`o.p_`), Array.push 가로채기(`o.a_`), 알려진 주입
+    스크립트 문자열(`s.i_`), 응답 무결성(`trackingParam`에 담긴 경로·값과 대조 — 안내문 필드를 고치면 재생 차단),
+    플레이어 쪽 이상 감지(건너뛰기 클릭 `isTrusted`, 프리롤 시청 40% 미만, SABR 문맥 유형 5인데 프리롤 자리 없음).
+  - **광고 제거를 페이지 밖으로**(`ad-netprune.js`): main이 웹뷰 webContents에 CDP `Fetch`(Fetch 도메인만 — 페이지에서
+    보이지 않음)를 걸어 워치페이지 HTML의 인라인 `ytInitialPlayerResponse`와 `/youtubei/v1/player` 응답을 **페이지가 받기
+    전에** 고친다. 실제 광고는 유튜브가 광고 없을 때 보내는 자리표시(`clientForecastingAdRenderer`)로 바꾸고 프리롤
+    자리(`AD_PLACEMENT_KIND_START`)는 남긴다(SABR 유형 5 대조 통과), `adSlots`는 지우고 `playerAds`·
+    `adBreakHeartbeatParams`는 둔다(uBO와 같음). 인라인 JSON은 `<`·`>`를 `<`·`>`로 되돌려 넣는다.
+    웹뷰 프리로드에는 오디오 가드만 남겼다. 광고 요소 숨김 CSS도 뺐다.
+  - **서비스 워커 함정**: 첫 방문 뒤 유튜브 서비스 워커가 다음 워치페이지 탐색을 대신 응답해 페이지 쪽 가로채기를
+    건너뛴다(두 번째 곡부터 광고가 그대로 나옴, 실측). CDP `Network.setBypassServiceWorker`는 응답하지 않았다.
+    그래서 렌더러가 곡을 열기 직전 `fallback:prepare`로 ① 가로채기 준비 완료를 기다리고 ② 그 세션의
+    `https://www.youtube.com` 서비스 워커 등록만 지운다(`loadFallbackPage`). 페이지에서는 워커 등록이 평소처럼 성공한다.
+    기다리는 동안 이전 곡 페이지는 about:blank로 내리고, 폴링은 이 곡의 페이지를 실제로 본 뒤에만(`fallbackSeenId`)
+    '다른 영상으로 넘어감'을 판정한다(전체 HTML을 받은 뒤에 넘기므로 커밋이 늦어 이전 곡을 읽을 수 있다).
+  - **게스트 신원**: 직접 재생은 늘 `guest-playback`(메모리 전용 — 실행마다 새 방문자)에서 연다. 계정(또는 오래 쓴
+    방문자)이 이미 표시돼 있으면 서버가 안내문을 미리 넣어 보내므로, 감지를 없애도 그 신원에서는 팝업이 남는다.
+    연령 제한처럼 게스트로는 `LOGIN_REQUIRED`인 곡만, 로그인돼 있으면 계정 세션(`accountFallbackIds`)으로 다시 연다.
+  - **안내가 떠도 화면을 가리지 않게**: `ytd-enforcement-message-view-model`/`yt-enforcement-message-view-model`과 그걸 담은
+    `tp-yt-paper-dialog`, `tp-yt-iron-overlay-backdrop`를 CSS로 늘 가린다. 주입 스크립트는 이 요소가 **내용을 가진 채**
+    있으면(띄울 때만 만들어진다 — 재생 여부와 무관, 영상이 뒤에서 계속 재생되는 팝업도 잡는다) 연속 2틱 뒤
+    `__ymp_enforced:1`을 보내고, 호스트는 `guestIdentity`를 올려 새 파티션(`guest-playback-N` = 새 신원)으로 같은 곡을
+    다시 연다. 곡당 2번까지, 그래도 막히면 다음 곡(`enforcementRetries`). 임베드로 되는 곡(정밀 볼륨으로 왔던 곡)은 임베드로.
+  - **검증**: 하네스(`/root/adtest/harness.js`, Xvfb·소리 끔·새 파티션, `log_event` 업로드를 가로채 감지 결과 집계)로
+    실제 광고가 잡힌 곡을 포함해 40여 번 열어 **광고 0건·오류 화면 0건·감지 0건**(앱의 프리로드·CSS·주입 스크립트
+    원문을 넣은 모드 포함, 13개 감지기 91건 기록 모두 '감지 안 됨'). 옛 방식은 같은 조건에서 매 페이지 4개 감지.
+    실제 앱(격리 프로필)에서 10곡 연속 재생·곡 전환·안내 흉내 → 새 신원 전환 확인. 광고가 잡혔던 곡은 본편이
+    몇 초 늦게 시작한다(5~10초, 광고를 그대로 두면 15~30초). 단위 시험: `node --test test/fallback-session.test.js
+    test/ad-netprune.test.js` (`node --test test/`로 돌리면 test/lyrics-eval의 평가 스크립트까지 실행되니 주의).
+  - 유지비용: 유튜브가 인라인 응답 이름(`var ytInitialPlayerResponse = `)이나 응답 구조를 바꾸면 조용히 통과(광고가
+    다시 보임, 소리는 오디오 게이트가 막음)한다. 감지기 목록이 바뀌면 하네스로 다시 잰다.
 - **오디오 게이트(호스트 단) — "실제 음악이 재생 중"일 때만 소리를 연다.** 페이지 안에서 광고 클래스를
   보고 `video.muted`를 켜는 방식은 클래스가 붙기까지의 찰나·광고 묶음 사이·주입 전 프리롤에서 소리가
   샜다. 그래서 웹뷰 오디오를 `setAudioMuted(true)`로 **기본 차단**하고, 주입 스크립트가
   `console.log('__ymp_playing:1')`(광고 아님 + 영상 재생 중 + readyState≥2 + currentTime>0.2)을 보낼 때만
   250ms 뒤에 연다. 재생/정지/emptied/loadstart 이벤트와 100ms 인터벌 양쪽에서 상태 변화를 보고한다.
   정지·로딩·광고 구간은 전부 '재생 아님'이라 조용하다. 페이지 안 `video.muted`는 이중 안전장치로 유지.
-- **광고 차단 감지 팝업 대응(2중)**: ① 광고 도메인 차단을 웹뷰 요청에는 적용하지 않아
-  감지 자체를 피하고(main의 `onBeforeRequest`가 `webContentsId`로 웹뷰를 예외 처리),
-  ② 그래도 팝업(`ytd-enforcement-message-view-renderer`)이 뜨면 주입 스크립트가 닫기 버튼을
-  자동 클릭하고 5초 안에 재생을 재개한다. 팝업은 닫힐 때까지 CSS로 숨긴다.
+- **광고 차단 감지 팝업 대응**: 감지를 일으키지 않는 것이 1차(네트워크 단계 제거 + 페이지 안 무조작 + 게스트 신원),
+  그래도 뜨면 CSS로 가리고 새 게스트 신원으로 다시 연다(위 v1.41.0). 팝업의 닫기 버튼 자동 클릭은 구식 강제
+  스킵을 켰을 때만 남아 있다 — 지금의 팝업에는 닫기 버튼이 없다(사용자 스크린샷: '광고 허용'·'Premium'만).
 
 ## 몰입 모드 (앱이 직접 관리하는 전체화면)
 
@@ -718,7 +746,7 @@ disable-backgrounding-occluded-windows / disable-features=IntensiveWakeUpThrottl
   가로채 `min(요청값, cap)`만 실제로 적용한다 — 쓰는 순간 동기적으로 잘리므로 틈이 없다. getter는 요청값을 돌려줘
   유튜브가 계속 다시 쓰려 들지 않게 하고, `play()` 직전에도 상한을 걸어 기본 볼륨 1.0인 새 요소를 막는다.
   주입 위치: 메인 창 임베드 iframe(`did-frame-finish-load`·곡마다 `refreshEmbedChrome`에서 `webFrameMain.executeJavaScript`),
-  직접 재생 웹뷰(`buildWebviewPreload`가 광고 프루닝과 합쳐 `userData/webview-preload.js`로 써 둔 프리로드 —
+  직접 재생 웹뷰(`buildWebviewPreload`가 `userData/webview-preload.js`로 써 둔 프리로드 — v1.41.0부터 가드만 담는다,
   샌드박스라 로컬 파일 require가 안 되기 때문. 초기 상한은 `sendSync('audio:state')`로 페이지 스크립트보다 먼저 받는다).
   렌더러는 `onReady`에서 `audio:guard`로 임베드에 가드가 심긴 것을 확인한 뒤에야 재생을 허용하고, 가드가 있으면
   임베드에 올림값을 줘 가드가 소수점까지 정확한 상한으로 자르게 한다 — 그래서 정밀 볼륨 때문에 곡을 워치페이지로

@@ -21,10 +21,15 @@ let watchdogTimer = null;
 let stallTimer = null; // 임베드가 버퍼링(state 3)에서 진행 없이 멈춘 경우의 2차 워치독
 let fallbackActive = false;
 let fallbackVideoId = '';   // 지금 워치페이지로 재생 중인 영상 id
-let fallbackEnforcedId = ''; // 광고 차단 감지로 이미 한 번 재시도한 영상 id
-const guestFallbackIds = new Set(); // 로그인 세션에서 차단되어 게스트로 재시도한 곡
+let fallbackSeenId = '';    // 폴링이 이 곡의 워치페이지를 실제로 본 영상 id — 열리기 전 이전 곡 페이지를 '곡이 바뀜'으로 오인하지 않게
+let fallbackAdShowing = false; // 마지막 폴링에서 광고가 보이고 있었는가(스킵 버튼 폴링은 그때만 돈다)
+// 직접 재생은 계정과 분리된 메모리 전용 게스트 신원으로 한다. 앱 실행마다 새 방문자라 유튜브의 광고 차단 판정이 쌓이지 않고,
+// 계정이 이미 표시돼 있어도(서버가 차단 안내문을 미리 넣어 보내는 상태) 영향이 없다. 로그인이 필요한 곡만 계정 세션으로 연다.
 const GUEST_PLAYBACK_PARTITION = 'guest-playback'; // 메모리 전용, 계정 쿠키와 분리
-// 광고는 이제 플레이어 응답에서 광고 데이터를 걷어내는 방식(adprune-preload.js)으로 없앤다 —
+let guestIdentity = 0; // 차단 안내가 뜨면 올려 새 파티션(= 새 방문자 신원)으로 바꾼다
+const accountFallbackIds = new Set(); // 게스트로는 로그인이 필요하다고 나온 곡(연령 제한 등)
+const enforcementRetries = new Map(); // 곡 id → 차단 안내 때문에 다시 연 횟수(곡당 2번까지)
+// 광고는 main이 네트워크 단계에서 플레이어 응답의 광고 데이터를 걷어내 없앤다(ad-netprune.js — 페이지 안에는 손대지 않는다).
 // 재생 중인 광고를 조작하는 구식 방식은 유튜브에 감지돼 재생 자체가 막히므로 기본값이 꺼짐이다.
 let adEvasionEnabled = false; // 워치페이지에서 광고를 조작(무음·배속·점프·스킵 클릭)할지
 let adEnforcementSeen = false; // 이 세션에서 광고 차단 감지 화면을 본 적이 있는가
@@ -277,8 +282,12 @@ window.winctl.onFsKey(() => toggleImmersive());
 
 // ── 폴백 재생: 임베드가 차단된 곡을 앱 내장 브라우저 뷰(유튜브 워치페이지)로 재생 ──
 
-function selectFallbackSession(guest) {
-  const partition = guest ? GUEST_PLAYBACK_PARTITION : '';
+function guestPartition() {
+  return guestIdentity ? `${GUEST_PLAYBACK_PARTITION}-${guestIdentity}` : GUEST_PLAYBACK_PARTITION;
+}
+
+// partition: '' = 기본(계정) 세션, 그 외 = 게스트 파티션 이름
+function selectFallbackSession(partition) {
   if ((fallbackView.getAttribute('partition') || '') === partition) return;
   // Electron의 partition은 첫 탐색 이후 변경할 수 없으므로 웹뷰를 새로 만든다.
   const view = document.createElement('webview');
@@ -296,9 +305,11 @@ function selectFallbackSession(guest) {
 
 function startFallback(id) {
   absorbElementFullscreen();
-  selectFallbackSession(guestFallbackIds.has(id));
+  selectFallbackSession(accountFallbackIds.has(id) ? '' : guestPartition());
   fallbackActive = true;
   fallbackVideoId = id;
+  fallbackSeenId = '';
+  fallbackAdShowing = false;
   fallbackStall = 0;
   clearTimeout(watchdogTimer);
   clearTimeout(stallTimer);
@@ -308,7 +319,7 @@ function startFallback(id) {
   // 광고 소리 차단은 호스트 단에서: 워치페이지가 뜨는 순간부터 웹뷰 오디오를 통째로 막고,
   // 주입 스크립트가 "광고 아님"을 알려올 때만 연다 → 주입 전 프리롤·광고 사이 전환 구간도 새지 않는다
   fallbackAdGate(true);
-  fallbackView.src = `https://www.youtube.com/watch?v=${id}`;
+  loadFallbackPage(fallbackView, id);
   updateQueueHighlight();
   const info = titleCache.get(id);
   setNowPlaying(id, (info && info.title) || id, (info && info.author) || '', true);
@@ -316,6 +327,24 @@ function startFallback(id) {
   fallbackPollTimer = setInterval(() => pollFallback(id), 1000);
   clearInterval(skipPollTimer);
   skipPollTimer = setInterval(pollSkipClick, 300);
+}
+
+// 웹뷰가 붙고 main이 광고 제거(네트워크 단계) 준비와 서비스 워커 정리를 끝낸 뒤에 곡을 연다 — 먼저 열면 첫 응답을 놓치고,
+// 서비스 워커가 응답한 탐색은 가로채지 못한다. 기다리는 동안 이전 곡 페이지는 about:blank로 내려 소리가 섞이지 않게 한다.
+async function loadFallbackPage(view, id) {
+  let wcId = null;
+  try {
+    wcId = view.getWebContentsId();
+    if (view.getURL() !== 'about:blank') view.src = 'about:blank';
+  } catch {
+    // 막 만든 웹뷰는 붙기 전까지 webContents가 없다
+    await new Promise((resolve) => view.addEventListener('did-attach', resolve, { once: true }));
+    try { wcId = view.getWebContentsId(); } catch {}
+  }
+  // 준비가 3초 안에 안 끝나면 그냥 연다 — 곡이 영영 안 열리는 것보다 광고가 남는 편이 낫다(소리는 오디오 게이트가 막는다)
+  try { await Promise.race([window.fallbackctl.prepare(wcId), new Promise((resolve) => setTimeout(resolve, 3000))]); } catch {}
+  if (view !== fallbackView || !fallbackActive || fallbackVideoId !== id) return; // 그 사이 다른 곡·세션으로 바뀌었다
+  view.src = `https://www.youtube.com/watch?v=${id}`;
 }
 
 function stopFallback() {
@@ -361,24 +390,15 @@ function onFallbackConsoleMessage(e) {
 }
 fallbackView.addEventListener('console-message', onFallbackConsoleMessage);
 
-// 유튜브가 "서비스 약관을 위반하는 광고 차단 프로그램" 화면을 띄우면 재생이 통째로 막힌다.
-// 감지를 피해 다니는 대신 광고 차단을 이 세션 동안 끄고 한 번만 다시 시도하고,
-// 그래도 막히면 큐가 그 곡에서 멈추지 않도록 다음 곡으로 넘긴다.
+// 유튜브가 "서비스 약관을 위반하는 광고 차단 프로그램" 안내(화면을 가리는 팝업·플레이어 안 차단 화면)를 띄웠다
+// = 이 재생 신원이 표시됐다. 안내는 CSS로 가려 둔 채 그 신원을 버리고 새 게스트 신원으로 같은 곡을 다시 연다.
+// 곡당 2번까지 — 그래도 막히면 큐가 그 곡에서 멈추지 않도록 다음 곡으로 넘긴다.
 function handleAdBlockEnforcement() {
   if (!fallbackActive) return;
   const id = fallbackVideoId;
-  if (fallbackView.getAttribute('partition') !== GUEST_PLAYBACK_PARTITION) {
-    guestFallbackIds.add(id);
-    fallbackEnforcedId = '';
-    showToast('로그인 세션에서 재생이 제한되어 이 곡을 게스트로 다시 재생합니다');
-    startFallback(id);
-    return;
-  }
-  const first = !adEnforcementSeen;
-  if (first) {
-    // 회피를 강화하는 대신 **광고에 손대는 것을 전부 그만둔다** — 네트워크 차단(메인 창),
-    // 광고 숨김 CSS, 페이지 내 무음·16배속·끝점프·스킵 클릭까지. 이렇게 해야 유튜브가
-    // 감지할 거리가 없어져 재생이 다시 열린다. 사용자 귀는 호스트 오디오 게이트가 계속 막는다.
+  if (adEvasionEnabled) {
+    // 구식 '광고 강제 스킵'을 켜 둔 상태였다면 그것부터 영구히 끈다 — 재생 중인 광고를 조작하는 방식
+    // (무음·16배속·끝점프·페이지 안 스킵 클릭)은 플레이어가 직접 감지한다. 사용자 귀는 호스트 오디오 게이트가 막는다.
     adEnforcementSeen = true;
     adEvasionEnabled = false;
     precisePlaybackActive = false; // 정밀 볼륨 때문에 멀쩡한 곡까지 워치페이지로 보내지 않는다
@@ -393,28 +413,32 @@ function handleAdBlockEnforcement() {
   }
   // 임베드로 재생할 수 있는 곡이었다면(정밀 볼륨 때문에 워치페이지로 갔던 경우) 임베드로 되돌린다
   if (!fallbackIds.has(id)) {
-    showToast('유튜브 광고 차단 감지 — 광고 차단을 끄고 임베드 재생으로 되돌립니다');
+    precisePlaybackActive = false; // 다시 워치페이지로 보내 같은 안내를 되풀이하지 않게
+    showToast('유튜브 광고 차단 안내 — 임베드 재생으로 되돌립니다');
     stopFallback();
     playCurrent();
     return;
   }
-  if (fallbackEnforcedId === id) {
-    showToast('유튜브가 이 곡의 재생을 막았습니다 — 다음 곡으로 넘어갑니다');
-    stopFallback();
-    nextTrack();
+  const tries = enforcementRetries.get(id) || 0;
+  if (tries < 2) {
+    enforcementRetries.set(id, tries + 1);
+    if (!accountFallbackIds.has(id)) guestIdentity++; // 계정 세션(로그인이 필요한 곡)은 바꿀 신원이 없다 — 같은 세션으로 한 번 더
+    showToast('유튜브 광고 차단 안내 — 새 게스트 신원으로 다시 엽니다');
+    startFallback(id);
     return;
   }
-  fallbackEnforcedId = id;
-  showToast('유튜브 광고 차단 감지 — 광고 차단을 끄고 다시 시도합니다');
-  try { fallbackView.reload(); } catch {}
+  showToast('유튜브가 이 곡의 재생을 막았습니다 — 다음 곡으로 넘어갑니다');
+  stopFallback();
+  nextTrack();
 }
 
-// 광고 스킵 버튼 네이티브 클릭: 주입 스크립트의 click()이 신뢰되지 않은 이벤트라 무시되는
-// 경우를 대비해, 주입 스크립트가 남긴 버튼 좌표(__skipRect)를 소비해 main이 실제 마우스
-// 입력을 보낸다. 클릭 직전 elementFromPoint로 그 자리가 여전히 스킵 버튼인지 재검증해
-// 좌표가 낡았을 때의 오클릭(영상 일시정지 등)을 방지한다.
+// 광고 스킵 버튼 네이티브 클릭: 네트워크 단계 제거를 빠져나온 광고(서버가 영상 스트림에 끼워 넣는 광고 등)에
+// 건너뛰기 버튼이 뜨면, 주입 스크립트가 남긴 버튼 좌표(__skipRect)를 소비해 main이 실제 마우스 입력을 보낸다.
+// 사람이 누른 것과 같은 신뢰된 클릭이라 감지되지 않는다(플레이어는 건너뛰기 클릭의 isTrusted를 검사한다 —
+// 페이지 안 click()은 그래서 쓰지 않는다). 클릭 직전 elementFromPoint로 그 자리가 여전히 스킵 버튼인지 재검증해
+// 좌표가 낡았을 때의 오클릭(영상 일시정지 등)을 방지한다. 광고가 보이는 동안에만 돈다.
 async function pollSkipClick() {
-  if (!fallbackActive || !adEvasionEnabled) return; // 감지 이후에는 스킵 클릭도 보내지 않는다
+  if (!fallbackActive || !fallbackAdShowing) return;
   let rect = null;
   try {
     rect = await fallbackView.executeJavaScript(`(() => {
@@ -438,12 +462,24 @@ async function pollFallback(id) {
   let st = null;
   try {
     st = await fallbackView.executeJavaScript(
-      "(() => { const v = document.querySelector('video'); const m = location.href.match(/[?&]v=([\\w-]{11})/); return { vid: m ? m[1] : null, ended: v ? v.ended : false, paused: v ? v.paused : true, t: v ? v.currentTime : 0, d: v ? v.duration || 0 : 0, ad: !!document.querySelector('.ad-showing') }; })()"
+      "(() => { const v = document.querySelector('video'); const m = location.href.match(/[?&]v=([\\w-]{11})/); let ps = null; try { const mp = document.getElementById('movie_player'); const r = mp && mp.getPlayerResponse ? mp.getPlayerResponse() : null; ps = r && r.playabilityStatus ? r.playabilityStatus.status : null; } catch (e) {} return { vid: m ? m[1] : null, ended: v ? v.ended : false, paused: v ? v.paused : true, t: v ? v.currentTime : 0, d: v ? v.duration || 0 : 0, ad: !!document.querySelector('.ad-showing'), ps }; })()"
     );
   } catch {}
   // 세션 교체 전에 시작한 비동기 폴링 결과로 새 웹뷰의 곡을 넘기지 않는다.
   if (view !== fallbackView || !fallbackActive || queue[queueIndex] !== id) return;
-  if (!st || (st.t === 0 && !st.d && !st.ad)) {
+  fallbackAdShowing = !!(st && st.ad);
+  if (st && st.vid === id) {
+    fallbackSeenId = id;
+    // 게스트로는 로그인이 필요한 곡(연령 제한 등) → 로그인돼 있으면 계정 세션으로 다시 연다
+    if (st.ps === 'LOGIN_REQUIRED' && accountState.loggedIn && !accountFallbackIds.has(id)) {
+      accountFallbackIds.add(id);
+      startFallback(id);
+      return;
+    }
+  }
+  // 이 곡의 페이지가 열리기 전(이전 곡 페이지·about:blank·로딩 중)에 읽은 값은 시작 대기로만 센다 —
+  // 곡을 열기 전에 광고 제거 준비를 기다리므로 첫 폴링이 이전 곡 페이지를 읽을 수 있다
+  if (!st || fallbackSeenId !== id || (st.t === 0 && !st.d && !st.ad)) {
     // 워치페이지에서도 재생 시작 실패(삭제/비공개 등) → 10초 후 포기하고 스킵
     if (++fallbackStall >= 10) {
       stopFallback();
@@ -487,15 +523,16 @@ function onFallbackReady(e) {
     ytd-watch-flexy #player { max-height: 100vh; }
     html, body { overflow: hidden !important; }
   `).catch(() => {});
-  // 광고 관련 CSS는 따로 넣어 둔다 — 유튜브가 광고 차단을 감지하면 이 스타일만 걷어내
-  // 워치페이지를 평범한 브라우저처럼 되돌린다(removeInsertedCSS). 숨김·조작이 남아 있으면
-  // 네트워크 차단을 꺼도 계속 감지돼 재생이 막힌다.
-  // 배너·프로모 숨김은 화면 정리용 코스메틱 필터라 항상 적용한다 (재생 동작을 건드리지 않는다)
+  // 광고 요소(#player-ads·#masthead-ad·ytd-ad-slot-renderer 등)는 **숨기지 않는다** — 유튜브가 같은 이름의 미끼 요소를
+  // 만들어 숨겨지는지 검사한다(감지기 e.h_, 예전엔 이 숨김 때문에 매 페이지 걸렸다). 광고는 main이 네트워크 단계에서 걷어낸다.
+  // 차단 안내(팝업·플레이어 안 화면)는 가려 둔다 — 감지되면 곧바로 새 신원으로 다시 연다(handleAdBlockEnforcement).
   fallbackView.insertCSS(`
-    #player-ads, #masthead-ad, ytd-ad-slot-renderer, .ytp-ad-overlay-container,
-    ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
+    ytd-enforcement-message-view-model, yt-enforcement-message-view-model,
+    tp-yt-paper-dialog:has(ytd-enforcement-message-view-model), tp-yt-paper-dialog:has(yt-enforcement-message-view-model),
+    tp-yt-iron-overlay-backdrop, ytd-mealbar-promo-renderer, yt-mealbar-promo-renderer { display: none !important; }
   `).catch(() => {});
-  // 아래는 '광고 강제 스킵'(구식 방식)을 켰을 때만 — 재생 중인 광고를 가리고 감지 팝업을 숨긴다
+  // 아래는 '광고 강제 스킵'(구식 방식)을 켰을 때만 — 재생 중인 광고를 가리고 감지 팝업을 숨긴다.
+  // 따로 넣어 두는 이유: 유튜브가 광고 차단을 감지하면 이 스타일만 걷어낸다(removeInsertedCSS).
   if (adEvasionEnabled) {
     fallbackView.insertCSS(`
       tp-yt-paper-dialog:has(ytd-enforcement-message-view-renderer),
@@ -599,14 +636,15 @@ function onFallbackReady(e) {
           video.play().catch(() => {});
         }
         // 스킵 버튼: 클래스는 자주 바뀌므로 텍스트/aria-label('건너뛰기'/'Skip')로도 찾는다.
-        // 전면 스폰서 카드(인터스티셜)는 영상이 없어 배속/점프가 안 통하므로 버튼 클릭이 유일한 길.
-        // 페이지 내 click()은 유튜브가 신뢰되지 않은 이벤트로 무시할 수 있어, 좌표를
-        // __skipRect에 남겨 호스트가 네이티브 입력(sendInputEvent)으로도 클릭한다.
-        const cands = new Set(window.__adEvade === false ? [] : document.querySelectorAll(
+        // 좌표를 __skipRect에 남기면 호스트가 네이티브 입력(sendInputEvent)으로 누른다 — 신뢰된 클릭이라 감지되지 않는다.
+        // 페이지 안 click()은 구식 강제 스킵(__adEvade)에서만: 플레이어가 isTrusted가 거짓인 건너뛰기 클릭을 감지한다.
+        // 전면 스폰서 카드(인터스티셜)는 .ad-showing 없이 뜰 수 있어 구식 모드에서는 늘 찾던 그대로 둔다.
+        const findSkip = adShowing || window.__adEvade !== false;
+        const cands = new Set(findSkip ? document.querySelectorAll(
           '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, ' +
           '.ytp-ad-skip-button-slot button, .ytp-ad-skip-button-container button'
-        ));
-        for (const b of (window.__adEvade === false ? [] : document.querySelectorAll('#movie_player button, #movie_player [role="button"]'))) {
+        ) : []);
+        for (const b of (findSkip ? document.querySelectorAll('#movie_player button, #movie_player [role="button"]') : [])) {
           const label = (b.textContent || '') + (b.getAttribute('aria-label') || '');
           if (label.includes('건너뛰기') || /skip ?ads?/i.test(label) || /^\\s*skip\\s*$/i.test(label)) cands.add(b);
         }
@@ -616,17 +654,20 @@ function onFallbackReady(e) {
           if (!window.__skipRect && r.width > 0 && r.height > 0) {
             window.__skipRect = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
           }
-          btn.click();
+          if (window.__adEvade !== false) btn.click();
         }
-        // 광고 차단 감지 화면이 **실제로 보이고** 재생도 안 되고 있을 때만 호스트에 알린다.
-        // yt-playability-error-supported-renderers는 아무 문제가 없어도 숨겨진 채 DOM에 상주한다
-        // (실측: enfInDom=true, enfVisible=false) — 존재만 보고 판단하면 멀쩡한 곡을 건너뛴다.
-        // 화면에 떠 있고, 음악이 재생 중이 아니며, 그 상태가 연속 2회(약 200ms) 유지될 때만 확정한다.
+        // 광고 차단 안내가 떴으면 호스트에 알린다(호스트는 새 게스트 신원으로 다시 연다).
+        // 지금의 안내 요소(…-view-model)는 띄울 때만 만들어지고 우리 CSS로 가려져 있으므로 '내용이 있는지'로 본다 —
+        // 영상이 뒤에서 계속 재생되는 팝업도 있어(사용자 스크린샷) 재생 여부를 조건으로 두면 놓친다.
+        // 옛 요소 이름은 아무 문제가 없어도 숨겨진 채 DOM에 상주하므로(실측: enfInDom=true, enfVisible=false)
+        // 예전처럼 화면에 보이고 음악이 재생 중이 아닐 때만 친다. 어느 쪽이든 연속 2회(약 200ms) 유지될 때만 확정한다.
         if (!window.__enforcedReported) {
+          const vm = document.querySelector('ytd-enforcement-message-view-model, yt-enforcement-message-view-model');
           const enf = document.querySelector('ytd-enforcement-message-view-renderer, yt-playability-error-supported-renderers');
-          const shown = !!(enf && enf.getClientRects().length > 0 && enf.offsetParent !== null
-            && (enf.textContent || '').match(/광고 차단|ad ?block/i));
-          if (shown && window.__playReported !== true) {
+          const shown = !!(vm && (vm.textContent || '').trim())
+            || (!!(enf && enf.getClientRects().length > 0 && enf.offsetParent !== null
+              && (enf.textContent || '').match(/광고 차단|ad ?block/i)) && window.__playReported !== true);
+          if (shown) {
             window.__enfStreak = (window.__enfStreak || 0) + 1;
             if (window.__enfStreak >= 2) {
               window.__enforcedReported = true;

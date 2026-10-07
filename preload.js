@@ -113,6 +113,8 @@ contextBridge.exposeInMainWorld('lyricsOverlay', {
 
 contextBridge.exposeInMainWorld('fallbackctl', {
   click: (x, y) => ipcRenderer.send('fallback:click', { x, y }),
+  // 곡을 열기 직전: 광고 제거(네트워크 단계) 준비를 기다리고 유튜브 서비스 워커 등록을 지운다
+  prepare: (webContentsId) => ipcRenderer.invoke('fallback:prepare', webContentsId),
 });
 
 contextBridge.exposeInMainWorld('account', {
